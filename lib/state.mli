@@ -48,6 +48,7 @@ module Result : sig
   val first : ('a, 'error, 'state) t list -> ('a, 'error list, 'state) t
   val ( >>= ) : ('a, 'd, 'e) t -> ('a -> ('b, 'd, 'e) t) -> ('b, 'd, 'e) t
   val ( >>| ) : ('a, 'd, 'e) t -> ('a -> 'b) -> ('b, 'd, 'e) t
+  val ( <|> ) : ('a, 'd, 'e) t -> ('a, 'd, 'e) t -> ('a, 'd, 'e) t
 
   module Let_syntax : sig
     val return : 'a -> ('a, 'b, 'c) t

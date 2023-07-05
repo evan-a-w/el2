@@ -50,6 +50,9 @@ module Result = struct
     in
     fun state -> loop xs state
 
+  let ( <|> ) a b state =
+    match a state with Ok x, state' -> (Ok x, state') | Error _, _ -> b state
+
   let bind x ~f state =
     match x state with
     | Ok x, state' -> f x state'

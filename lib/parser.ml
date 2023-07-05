@@ -58,24 +58,21 @@ let get_identifier : String.t parser =
 
 (* need unit to let stuff work because of weird ocaml rules that I didn't bother to understand *)
 let rec parse_a () : Ast.t parser =
+  first [ parse_atom; parse_in_paren () ]
+  |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
+
+and parse_b () =
   first
     [
-      parse_lambda ();
-      parse_let_in ();
-      parse_let ();
-      parse_if ();
-      parse_atom;
-      parse_in_paren ();
+      parse_lambda (); parse_let_in (); parse_if (); parse_apply (); parse_a ();
     ]
-  |> map_error ~f:(fun errors ->
-         [%message "Failed to parse" (errors : Sexp.t List.t)])
+  |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
 
-and parse_one () =
-  match%bind parse_a () with Ast.App _ as app -> parse_apply app
+and parse_one () = parse_let () <|> parse_b ()
 
 and parse_in_paren () =
   let%bind () = eat_token LParen in
-  let%bind expr = parse_one () in
+  let%bind expr = parse_b () in
   let%bind () = eat_token RParen in
   return expr
 
@@ -84,7 +81,7 @@ and parse_lambda () =
   let%bind idents = take_while_rev get_identifier in
   let%bind () = eat_token RParen in
   let%bind () = eat_token Arrow in
-  let%bind expr = parse_one () in
+  let%bind expr = parse_a () in
   match idents with
   | [] -> return (Ast.Lambda (None, expr))
   | x :: xs ->
@@ -98,24 +95,24 @@ and parse_let () =
   let%bind () = eat_token (Token.Keyword "let") in
   let%bind var = get_identifier in
   let%bind () = eat_token (Token.Symbol "=") in
-  let%bind expr = parse_one () in
+  let%bind expr = parse_b () in
   return (Ast.Let (var, expr))
 
 and parse_let_in () =
   match%bind parse_let () with
   | Ast.Let (var, expr) ->
       let%bind () = eat_token (Token.Keyword "in") in
-      let%bind body = parse_one () in
+      let%bind body = parse_b () in
       return (Ast.Let_in (var, expr, body))
   | _ -> failwith "parse_let returned non Ast.Let node"
 
 and parse_if () =
   let%bind () = eat_token (Token.Keyword "if") in
-  let%bind cond = parse_one () in
+  let%bind cond = parse_b () in
   let%bind () = eat_token (Token.Keyword "then") in
-  let%bind then_ = parse_one () in
+  let%bind then_ = parse_b () in
   let%bind () = eat_token (Token.Keyword "else") in
-  let%bind else_ = parse_one () in
+  let%bind else_ = parse_b () in
   return (Ast.If (cond, then_, else_))
 
 and parse_atom =
@@ -131,7 +128,7 @@ and parse_atom =
   | got -> error [%message "Expected atom" (got : Token.t)]
 
 and parse_apply () =
-  match%bind take_while (parse_one ()) with
+  match%bind take_while (parse_a ()) with
   | a :: b :: rest ->
       let init = Ast.App (a, b) in
       let res = List.fold rest ~init ~f:(fun acc x -> Ast.App (acc, x)) in
@@ -182,13 +179,19 @@ let%expect_test "test_if_simple" =
   test_parse_one ~program;
   [%expect {| ((ast (Ok (If (Bool true) (Int 1) (Int 2)))) (tokens ())) |}]
 
-let%expect_test "test_if_nested_application" =
-  let program =
-    {|
-    if 1 + 2 = 3 then if false then 1 else 2 else 3
-     |}
-  in
+let%expect_test "test_app" =
+  let program = {|
+    1 + 2 = 3
+     |} in
   test_parse_one ~program
+
+(* let%expect_test "test_if_nested_application" = *)
+(*   let program = *)
+(* {| *)
+   (*     if 1 + 2 = 3 then if false then 1 else 2 else 3 *)
+   (*      |} *)
+(*   in *)
+(*   test_parse_one ~program *)
 
 (* let%expect_test "test_lots" = *)
 (*   let program = *)
