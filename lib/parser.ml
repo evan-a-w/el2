@@ -52,12 +52,32 @@ let get_identifier : String.t parser =
   | Symbol s -> return s
   | got -> error [%message "Expected identifier" (got : Token.t)]
 
+(*
+    Apply takes a (not apply)
+*)
+
 (* need unit to let stuff work because of weird ocaml rules that I didn't bother to understand *)
-let rec parse_one () : Ast.t parser =
+let rec parse_a () : Ast.t parser =
   first
-    [ parse_lambda (); parse_let_in (); parse_let (); parse_if (); parse_atom ]
+    [
+      parse_lambda ();
+      parse_let_in ();
+      parse_let ();
+      parse_if ();
+      parse_atom;
+      parse_in_paren ();
+    ]
   |> map_error ~f:(fun errors ->
          [%message "Failed to parse" (errors : Sexp.t List.t)])
+
+and parse_one () =
+  match%bind parse_a () with Ast.App _ as app -> parse_apply app
+
+and parse_in_paren () =
+  let%bind () = eat_token LParen in
+  let%bind expr = parse_one () in
+  let%bind () = eat_token RParen in
+  return expr
 
 and parse_lambda () =
   let%bind () = eat_token LParen in
@@ -109,6 +129,14 @@ and parse_atom =
       let%bind () = eat_token RParen in
       return Ast.Unit
   | got -> error [%message "Expected atom" (got : Token.t)]
+
+and parse_apply () =
+  match%bind take_while (parse_one ()) with
+  | a :: b :: rest ->
+      let init = Ast.App (a, b) in
+      let res = List.fold rest ~init ~f:(fun acc x -> Ast.App (acc, x)) in
+      return res
+  | _ -> error [%message "Expected one or more expressions"]
 
 let parse =
   let%bind program = take_while (parse_one ()) in
