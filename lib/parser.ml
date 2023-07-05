@@ -98,29 +98,40 @@ let type_tag_p : Types.Type_expr.t parser =
   let%bind () = eat_token (Token.Symbol ":") in
   type_expr_p ()
 
-let rec parse_a () : Ast.t parser =
+let rec parse_a_tagged () : Ast.t parser =
+  let%bind () = eat_token LParen in
   let%bind node =
     first [ parse_atom; parse_in_paren () ]
     |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
   in
   let%bind prev_state = get in
-  match%bind.State type_tag_p with
-  | Ok type_expr -> return { Ast.node; type_expr = Some type_expr }
-  | Error _ ->
-      let%bind () = put prev_state in
-      return { Ast.node; type_expr = None }
+  let%bind ast =
+    match%bind.State type_tag_p with
+    | Ok type_expr -> return { Ast.node; type_expr = Some type_expr }
+    | Error _ ->
+        let%bind () = put prev_state in
+        return { Ast.node; type_expr = None }
+  in
+  let%bind () = eat_token RParen in
+  return ast
+
+and parse_a_untagged () : Ast.t parser =
+  let%bind node =
+    first [ parse_atom; parse_in_paren () ]
+    |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
+  in
+  return { Ast.node; type_expr = None }
+
+and parse_a () : Ast.t parser = parse_a_tagged () <|> parse_a_untagged ()
 
 and parse_b () : Ast.t parser =
   match%bind.State parse_a () with
   | Ok _ as a -> State.return a
   | _ ->
-      let%bind b =
-        first [ parse_lambda (); parse_let_in (); parse_if (); parse_apply () ]
-        |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
-      in
-      return { Ast.node = b; type_expr = None }
+      first [ parse_lambda (); parse_let_in (); parse_if (); parse_apply () ]
+      |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
 
-and parse_one () = parse_let () <|> parse_b ()
+and parse_one () = parse_b ()
 
 and parse_in_paren () : Ast.node parser =
   let%bind () = eat_token LParen in
@@ -128,7 +139,7 @@ and parse_in_paren () : Ast.node parser =
   let%bind () = eat_token RParen in
   return (Ast.Wrapped expr)
 
-and parse_lambda () =
+and parse_lambda () : Ast.t parser =
   let%bind () = eat_token LParen in
   let%bind idents = many_sep_rev1 get_identifier ~sep:(eat_token Token.Comma) in
   let%bind () = eat_token RParen in
@@ -143,20 +154,18 @@ and parse_lambda () =
       in
       return lambda
 
-and parse_let () : Ast.node parser =
+and parse_let () : (string * Ast.t) parser =
   let%bind () = eat_token (Token.Keyword "let") in
   let%bind var = get_identifier in
   let%bind () = eat_token (Token.Symbol "=") in
   let%bind expr = parse_b () in
-  return (Ast.Let (var, expr))
+  return (var, expr)
 
-and parse_let_in () : Ast.node parser =
-  match%bind parse_let () with
-  | Ast.Let (var, expr) ->
-      let%bind () = eat_token (Token.Keyword "in") in
-      let%bind body = parse_b () in
-      return (Ast.Let_in (var, expr, body))
-  | _ -> failwith "parse_let returned non Ast.Let node"
+and parse_let_in () : Ast.t parser =
+  let%bind var, expr = parse_let () in
+  let%bind () = eat_token (Token.Keyword "in") in
+  let%bind body = parse_b () in
+  return (Ast.Let_in (var, expr, body) |> Ast.untyped)
 
 and parse_if () : Ast.t parser =
   let%bind () = eat_token (Token.Keyword "if") in
@@ -182,13 +191,15 @@ and parse_atom : Ast.node parser =
 and parse_apply () : Ast.t parser =
   match%bind many (parse_a ()) with
   | a :: b :: rest ->
-      let init = Ast.App (a, b) in
-      let res = List.fold rest ~init ~f:(fun acc x -> Ast.App (acc, x)) in
+      let init = Ast.App (a, b) |> Ast.untyped in
+      let res =
+        List.fold rest ~init ~f:(fun acc x -> Ast.App (acc, x) |> Ast.untyped)
+      in
       return res
   | _ -> error [%message "Expected one or more expressions"]
 
 let parse =
-  let%bind program = many (parse_one ()) in
+  let%bind program = many (parse_let ()) in
   let%bind tokens = get in
   match tokens with
   | [] -> return program
@@ -295,7 +306,7 @@ let%expect_test "test_lots" =
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run parse ~state:tokens in
-  print_s [%message (ast : (Ast.t List.t, Sexp.t) Result.t)];
+  print_s [%message (ast : ((string, Ast.t) Tuple2.t List.t, Sexp.t) Result.t)];
   [%expect
     {|
     (ast
