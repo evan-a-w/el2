@@ -11,4 +11,5 @@ type t =
   | LParen
   | RParen
   | Symbol of string
+  | Keyword of string
 [@@deriving sexp, compare, variants]

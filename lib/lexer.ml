@@ -2,6 +2,7 @@ open! Core
 open Angstrom
 open Angstrom.Let_syntax
 
+let keywords = [ "let"; "in"; "match"; "with"; "then"; "else"; "if" ]
 let is_digit = function '0' .. '9' -> true | _ -> false
 let int_p = take_while1 is_digit >>| Int.of_string >>| Token.int
 
@@ -55,7 +56,9 @@ let symbol_p =
   let%bind first = satisfy is_ident_start in
   let%bind rest = take_while is_ident in
   let ident = String.concat [ String.of_char first; rest ] in
-  return (Token.Symbol ident)
+  match List.find keywords ~f:(String.equal ident) with
+  | Some keyword -> return (Token.Keyword keyword)
+  | None -> return (Token.Symbol ident)
 
 let pipe_p = char '|' *> return Token.Pipe
 let comma_p = char ',' *> return Token.Comma
@@ -85,6 +88,6 @@ let%expect_test "lex" =
   [%expect
     {|
     (Ok
-     ((Symbol let) (Symbol x) (Symbol =) (Int 1) (Symbol in) (Symbol x) Arrow
+     ((Keyword let) (Symbol x) (Symbol =) (Int 1) (Keyword in) (Symbol x) Arrow
       (Symbol hi) (Symbol w.eqwe'eq) (Int 3) Comma (Int 1231230) (Float 12.3123)
-      (Symbol penis) (Symbol match) Pipe Comma)) |}]
+      (Symbol penis) (Keyword match) Pipe Comma)) |}]

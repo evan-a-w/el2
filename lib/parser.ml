@@ -35,22 +35,25 @@ let eat_token expected =
 
 let take_while_rev (type a) (p : a parser) : a List.t parser =
   let rec loop acc =
+    let%bind prev_state = get in
     match%bind.State p with
     | Ok res -> loop (res :: acc)
-    | Error _ -> return acc
+    | Error _ ->
+        let%bind () = put prev_state in
+        return acc
   in
   loop []
 
 let take_while p = take_while_rev p >>| List.rev
 
-let get_symbol : String.t parser =
+let get_identifier : String.t parser =
   let%bind token = next in
   match token with
   | Symbol s -> return s
-  | got -> error [%message "Expected symbol" (got : Token.t)]
+  | got -> error [%message "Expected identifier" (got : Token.t)]
 
 (* need unit to let stuff work because of weird ocaml rules that I didn't bother to understand *)
-let rec parse () : Ast.t parser =
+let rec parse_one () : Ast.t parser =
   first
     [ parse_lambda (); parse_let_in (); parse_let (); parse_if (); parse_atom ]
   |> map_error ~f:(fun errors ->
@@ -58,10 +61,10 @@ let rec parse () : Ast.t parser =
 
 and parse_lambda () =
   let%bind () = eat_token LParen in
-  let%bind idents = take_while_rev get_symbol in
+  let%bind idents = take_while_rev get_identifier in
   let%bind () = eat_token RParen in
   let%bind () = eat_token Arrow in
-  let%bind expr = parse () in
+  let%bind expr = parse_one () in
   match idents with
   | [] -> return (Ast.Lambda (None, expr))
   | x :: xs ->
@@ -72,27 +75,27 @@ and parse_lambda () =
       return lambda
 
 and parse_let () =
-  let%bind () = eat_token (Token.Symbol "let") in
-  let%bind var = get_symbol in
+  let%bind () = eat_token (Token.Keyword "let") in
+  let%bind var = get_identifier in
   let%bind () = eat_token (Token.Symbol "=") in
-  let%bind expr = parse () in
+  let%bind expr = parse_one () in
   return (Ast.Let (var, expr))
 
 and parse_let_in () =
   match%bind parse_let () with
   | Ast.Let (var, expr) ->
-      let%bind () = eat_token (Token.Symbol "in") in
-      let%bind body = parse () in
+      let%bind () = eat_token (Token.Keyword "in") in
+      let%bind body = parse_one () in
       return (Ast.Let_in (var, expr, body))
   | _ -> failwith "parse_let returned non Ast.Let node"
 
 and parse_if () =
-  let%bind () = eat_token (Token.Symbol "if") in
-  let%bind cond = parse () in
-  let%bind () = eat_token (Token.Symbol "then") in
-  let%bind then_ = parse () in
-  let%bind () = eat_token (Token.Symbol "else") in
-  let%bind else_ = parse () in
+  let%bind () = eat_token (Token.Keyword "if") in
+  let%bind cond = parse_one () in
+  let%bind () = eat_token (Token.Keyword "then") in
+  let%bind then_ = parse_one () in
+  let%bind () = eat_token (Token.Keyword "else") in
+  let%bind else_ = parse_one () in
   return (Ast.If (cond, then_, else_))
 
 and parse_atom =
@@ -106,3 +109,86 @@ and parse_atom =
       let%bind () = eat_token RParen in
       return Ast.Unit
   | got -> error [%message "Expected atom" (got : Token.t)]
+
+let parse =
+  let%bind program = take_while (parse_one ()) in
+  let%bind tokens = get in
+  match tokens with
+  | [] -> return program
+  | got -> error [%message "Unexpected tokens" (got : Token.t List.t)]
+
+let test_parse_one ~program =
+  let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
+  let ast, tokens = run (parse_one ()) ~state:tokens in
+  print_s [%message (ast : (Ast.t, Sexp.t) Result.t) (tokens : Token.t List.t)]
+
+let%expect_test "test_function_no_args" =
+  let program = {|
+    let function = () -> 1
+  |} in
+  test_parse_one ~program;
+  [%expect {| ((ast (Ok (Let function (Lambda () (Int 1))))) (tokens ())) |}]
+
+let%expect_test "test_function_one_arg" =
+  let program = {|
+       let function = (x) -> 1
+     |} in
+  test_parse_one ~program;
+  [%expect {| ((ast (Ok (Let function (Lambda (x) (Int 1))))) (tokens ())) |}]
+
+let%expect_test "test_function_two_args_nested" =
+  let program = {|
+       let function = let y = 1 in (x y) -> 1
+     |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+      ((ast
+        (Ok (Let function (Let_in y (Int 1) (Lambda (x) (Lambda (y) (Int 1)))))))
+       (tokens ())) |}]
+
+let%expect_test "test_if_simple" =
+  let program = {|
+    if true then 1 else 2
+     |} in
+  test_parse_one ~program;
+  [%expect {| ((ast (Ok (If (Bool true) (Int 1) (Int 2)))) (tokens ())) |}]
+
+let%expect_test "test_if_nested_application" =
+  let program =
+    {|
+    if 1 + 2 = 3 then if false then 1 else 2 else 3
+     |}
+  in
+  test_parse_one ~program
+
+(* let%expect_test "test_lots" = *)
+(*   let program = *)
+(* {| *)
+   (*        let int = 1 *)
+
+   (*        let float = 1.0 *)
+
+   (*        let string = "hi" *)
+
+   (*        let bool = true *)
+
+   (*        let unit = () *)
+
+   (*        let nested = let x = 1 in let y = 2 in x + y *)
+
+   (*        let function = () -> 1 *)
+
+   (*        let function2 = (x) -> 1 *)
+
+   (*        let function3 = (x y) -> f x + y *)
+
+   (*        let if_ = if true then 1 else 2 *)
+
+   (*        let if_nested = if 1 + 2 = 3 then if false then 1 else 2 else 3 *)
+   (*      |} *)
+(*   in *)
+(*   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in *)
+(*   let ast, tokens = run parse ~state:tokens in *)
+(*   print_s *)
+(*     [%message (ast : (Ast.t List.t, Sexp.t) Result.t) (tokens : Token.t List.t)] *)
