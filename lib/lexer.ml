@@ -2,9 +2,6 @@ open! Core
 open Angstrom
 open Angstrom.Let_syntax
 
-let keywords =
-  String.Set.of_list [ "let"; "in"; "if"; "then"; "else"; "match"; "with" ]
-
 let is_digit = function '0' .. '9' -> true | _ -> false
 let int_p = take_while1 is_digit >>| Int.of_string >>| Token.int
 
@@ -45,7 +42,7 @@ let bool_p =
 
 let arrow_p = string "->" *> return Token.Arrow
 
-let identifier_p =
+let symbol_p =
   let is_ident_start =
     let ident_extras = "!@#$%^&*-+_:<>?/=" in
     function
@@ -58,9 +55,7 @@ let identifier_p =
   let%bind first = satisfy is_ident_start in
   let%bind rest = take_while is_ident in
   let ident = String.concat [ String.of_char first; rest ] in
-  return
-    (if Set.mem keywords ident then Token.keyword ident
-     else Token.Identifer ident)
+  return (Token.Symbol ident)
 
 let pipe_p = char '|' *> return Token.Pipe
 let comma_p = char ',' *> return Token.Comma
@@ -73,7 +68,7 @@ let whitespace_p =
 let parser =
   let%bind () = whitespace_p in
   let%bind token =
-    float_p <|> int_p <|> string_p <|> bool_p <|> arrow_p <|> identifier_p
+    float_p <|> int_p <|> string_p <|> bool_p <|> arrow_p <|> symbol_p
     <|> pipe_p <|> comma_p <|> lparen_p <|> rparen_p
   in
   let%bind () = whitespace_p in
@@ -90,6 +85,6 @@ let%expect_test "lex" =
   [%expect
     {|
     (Ok
-     ((Keyword let) (Identifer x) (Identifer =) (Int 1) (Keyword in)
-      (Identifer x) Arrow (Identifer hi) (Identifer w.eqwe'eq) (Int 3) Comma
-      (Int 1231230) (Float 12.3123) (Identifer penis) (Keyword match) Pipe Comma)) |}]
+     ((Symbol let) (Symbol x) (Symbol =) (Int 1) (Symbol in) (Symbol x) Arrow
+      (Symbol hi) (Symbol w.eqwe'eq) (Int 3) Comma (Int 1231230) (Float 12.3123)
+      (Symbol penis) (Symbol match) Pipe Comma)) |}]

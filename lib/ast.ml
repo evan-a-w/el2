@@ -2,7 +2,8 @@ open! Core
 
 type t =
   | Let of string * t
-  | Lambda of string * t
+  (* if none is thunk *)
+  | Lambda of string option * t
   | App of t * t
   | Let_in of string * t * t
   | If of t * t * t
