@@ -52,11 +52,6 @@ let get_identifier : String.t parser =
   | Symbol s -> return s
   | got -> error [%message "Expected identifier" (got : Token.t)]
 
-(*
-    Apply takes a (not apply)
-*)
-
-(* need unit to let stuff work because of weird ocaml rules that I didn't bother to understand *)
 let rec parse_a () : Ast.t parser =
   first [ parse_atom; parse_in_paren () ]
   |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
@@ -183,43 +178,68 @@ let%expect_test "test_app" =
   let program = {|
     1 + 2 = 3
      |} in
-  test_parse_one ~program
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast (Ok (App (App (App (App (Int 1) (Var +)) (Int 2)) (Var =)) (Int 3))))
+     (tokens ())) |}]
 
-(* let%expect_test "test_if_nested_application" = *)
-(*   let program = *)
-(* {| *)
-   (*     if 1 + 2 = 3 then if false then 1 else 2 else 3 *)
-   (*      |} *)
-(*   in *)
-(*   test_parse_one ~program *)
+let%expect_test "test_if_nested_application" =
+  let program =
+    {|
+       if 1 + 2 = 3 then if false then 1 else 2 else 3
+        |}
+  in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       (If (App (App (App (App (Int 1) (Var +)) (Int 2)) (Var =)) (Int 3))
+        (If (Bool false) (Int 1) (Int 2)) (Int 3))))
+     (tokens ())) |}]
 
-(* let%expect_test "test_lots" = *)
-(*   let program = *)
-(* {| *)
-   (*        let int = 1 *)
+let%expect_test "test_lots" =
+  let program =
+    {|
+          let int = 1
 
-   (*        let float = 1.0 *)
+          let float = 1.0
 
-   (*        let string = "hi" *)
+          let string = "hi"
 
-   (*        let bool = true *)
+          let bool = true
 
-   (*        let unit = () *)
+          let unit = ()
 
-   (*        let nested = let x = 1 in let y = 2 in x + y *)
+          let nested = let x = 1 in let y = 2 in x + y
 
-   (*        let function = () -> 1 *)
+          let function = () -> 1
 
-   (*        let function2 = (x) -> 1 *)
+          let function2 = (x) -> 1
 
-   (*        let function3 = (x y) -> f x + y *)
+          let function3 = (x y) -> f x + y
 
-   (*        let if_ = if true then 1 else 2 *)
+          let if_ = if true then 1 else 2
 
-   (*        let if_nested = if 1 + 2 = 3 then if false then 1 else 2 else 3 *)
-   (*      |} *)
-(*   in *)
-(*   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in *)
-(*   let ast, tokens = run parse ~state:tokens in *)
-(*   print_s *)
-(*     [%message (ast : (Ast.t List.t, Sexp.t) Result.t) (tokens : Token.t List.t)] *)
+          let if_nested = if 1 + 2 = 3 then if false then 1 else 2 else 3
+        |}
+  in
+  let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
+  let ast, _ = run parse ~state:tokens in
+  print_s [%message (ast : (Ast.t List.t, Sexp.t) Result.t)];
+  [%expect
+    {|
+    (ast
+     (Ok
+      ((Let int (Int 1)) (Let float (Float 1)) (Let string (String hi))
+       (Let bool (Bool true)) (Let unit Unit)
+       (Let nested
+        (Let_in x (Int 1) (Let_in y (Int 2) (App (App (Var x) (Var +)) (Var y)))))
+       (Let function (Lambda () (Int 1))) (Let function2 (Lambda (x) (Int 1)))
+       (Let function3 (Lambda (x) (Lambda (y) (Var f))))
+       (App (App (Var x) (Var +)) (Var y))
+       (Let if_ (If (Bool true) (Int 1) (Int 2)))
+       (Let if_nested
+        (If (App (App (App (App (Int 1) (Var +)) (Int 2)) (Var =)) (Int 3))
+         (If (Bool false) (Int 1) (Int 2)) (Int 3)))))) |}]

@@ -1,6 +1,6 @@
 open! Core
 
-type t =
+type node =
   | Let of string * t
   (* if none is thunk *)
   | Lambda of string option * t
@@ -14,3 +14,6 @@ type t =
   | Float of float
   | String of string
 [@@deriving sexp]
+
+and tag = { typ : string } [@@deriving sexp]
+and t = { tag : tag; node : node } [@@deriving sexp]
