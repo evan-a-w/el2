@@ -33,18 +33,39 @@ let eat_token expected =
   | 0 -> return ()
   | _ -> error [%message (expected : Token.t) (got : Token.t)]
 
-let take_while_rev (type a) (p : a parser) : a List.t parser =
+let many_sep_rev p ~sep =
   let rec loop acc =
     let%bind prev_state = get in
     match%bind.State p with
-    | Ok res -> loop (res :: acc)
     | Error _ ->
         let%bind () = put prev_state in
         return acc
+    | Ok res -> (
+        let%bind prev_state = get in
+        match%bind.State sep with
+        | Ok _ -> loop (res :: acc)
+        | Error _ ->
+            let%bind () = put prev_state in
+            return (res :: acc))
   in
   loop []
 
-let take_while p = take_while_rev p >>| List.rev
+let many_sep p ~sep = many_sep_rev p ~sep >>| List.rev
+let many_rev p = many_sep_rev p ~sep:(return ())
+
+let many_sep_rev1 p ~sep =
+  let%bind first = p in
+  let%bind prev_state = get in
+  match%bind.State sep with
+  | Error _ ->
+      let%bind () = put prev_state in
+      return [ first ]
+  | Ok _ ->
+      let%bind rest = many_sep_rev p ~sep in
+      return (first :: rest)
+
+let many_sep1 p ~sep = many_sep_rev1 p ~sep >>| List.rev
+let many p = many_sep p ~sep:(return ())
 
 let get_identifier : String.t parser =
   let%bind token = next in
@@ -52,48 +73,84 @@ let get_identifier : String.t parser =
   | Symbol s -> return s
   | got -> error [%message "Expected identifier" (got : Token.t)]
 
-let rec parse_a () : Ast.t parser =
-  first [ parse_atom; parse_in_paren () ]
-  |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
+let type_expr_p () : Types.Type_expr.t parser =
+  let rec single = get_identifier >>| Types.Type_expr.single
+  and paren () =
+    let%bind () = eat_token LParen in
+    let%bind res = b () in
+    let%bind () = eat_token RParen in
+    return res
+  and a () = single <|> paren ()
+  and list () =
+    let%bind () = eat_token Token.LParen in
+    let%bind res = many_sep_rev1 (b ()) ~sep:(eat_token Token.Comma) in
+    let%bind () = eat_token Token.RParen in
+    return res
+  and multi () =
+    let single_f = single >>| fun x -> [ x ] in
+    let%bind first = single_f <|> list () in
+    let%bind next = b () in
+    return (Types.Type_expr.Multi (first, next))
+  and b () = multi () <|> a () in
+  b ()
 
-and parse_b () =
-  first
-    [
-      parse_lambda (); parse_let_in (); parse_if (); parse_apply (); parse_a ();
-    ]
-  |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
+let type_tag_p : Types.Type_expr.t parser =
+  let%bind () = eat_token (Token.Symbol ":") in
+  type_expr_p ()
+
+let rec parse_a () : Ast.t parser =
+  let%bind node =
+    first [ parse_atom; parse_in_paren () ]
+    |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
+  in
+  let%bind prev_state = get in
+  match%bind.State type_tag_p with
+  | Ok type_expr -> return { Ast.node; type_expr = Some type_expr }
+  | Error _ ->
+      let%bind () = put prev_state in
+      return { Ast.node; type_expr = None }
+
+and parse_b () : Ast.t parser =
+  match%bind.State parse_a () with
+  | Ok _ as a -> State.return a
+  | _ ->
+      let%bind b =
+        first [ parse_lambda (); parse_let_in (); parse_if (); parse_apply () ]
+        |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
+      in
+      return { Ast.node = b; type_expr = None }
 
 and parse_one () = parse_let () <|> parse_b ()
 
-and parse_in_paren () =
+and parse_in_paren () : Ast.node parser =
   let%bind () = eat_token LParen in
   let%bind expr = parse_b () in
   let%bind () = eat_token RParen in
-  return expr
+  return (Ast.Wrapped expr)
 
 and parse_lambda () =
   let%bind () = eat_token LParen in
-  let%bind idents = take_while_rev get_identifier in
+  let%bind idents = many_sep_rev1 get_identifier ~sep:(eat_token Token.Comma) in
   let%bind () = eat_token RParen in
   let%bind () = eat_token Arrow in
   let%bind expr = parse_a () in
   match idents with
-  | [] -> return (Ast.Lambda (None, expr))
+  | [] -> assert false
   | x :: xs ->
-      let init = Ast.Lambda (Some x, expr) in
+      let init = Ast.Lambda (x, expr) |> Ast.untyped in
       let lambda =
-        List.fold xs ~init ~f:(fun acc x -> Ast.Lambda (Some x, acc))
+        List.fold xs ~init ~f:(fun acc x -> Ast.Lambda (x, acc) |> Ast.untyped)
       in
       return lambda
 
-and parse_let () =
+and parse_let () : Ast.node parser =
   let%bind () = eat_token (Token.Keyword "let") in
   let%bind var = get_identifier in
   let%bind () = eat_token (Token.Symbol "=") in
   let%bind expr = parse_b () in
   return (Ast.Let (var, expr))
 
-and parse_let_in () =
+and parse_let_in () : Ast.node parser =
   match%bind parse_let () with
   | Ast.Let (var, expr) ->
       let%bind () = eat_token (Token.Keyword "in") in
@@ -101,16 +158,16 @@ and parse_let_in () =
       return (Ast.Let_in (var, expr, body))
   | _ -> failwith "parse_let returned non Ast.Let node"
 
-and parse_if () =
+and parse_if () : Ast.t parser =
   let%bind () = eat_token (Token.Keyword "if") in
   let%bind cond = parse_b () in
   let%bind () = eat_token (Token.Keyword "then") in
   let%bind then_ = parse_b () in
   let%bind () = eat_token (Token.Keyword "else") in
   let%bind else_ = parse_b () in
-  return (Ast.If (cond, then_, else_))
+  return (Ast.If (cond, then_, else_) |> Ast.untyped)
 
-and parse_atom =
+and parse_atom : Ast.node parser =
   match%bind next with
   | Token.Int x -> Ast.Int x |> return
   | Float f -> Ast.Float f |> return
@@ -122,8 +179,8 @@ and parse_atom =
       return Ast.Unit
   | got -> error [%message "Expected atom" (got : Token.t)]
 
-and parse_apply () =
-  match%bind take_while (parse_a ()) with
+and parse_apply () : Ast.t parser =
+  match%bind many (parse_a ()) with
   | a :: b :: rest ->
       let init = Ast.App (a, b) in
       let res = List.fold rest ~init ~f:(fun acc x -> Ast.App (acc, x)) in
@@ -131,11 +188,22 @@ and parse_apply () =
   | _ -> error [%message "Expected one or more expressions"]
 
 let parse =
-  let%bind program = take_while (parse_one ()) in
+  let%bind program = many (parse_one ()) in
   let%bind tokens = get in
   match tokens with
   | [] -> return program
   | got -> error [%message "Unexpected tokens" (got : Token.t List.t)]
+
+let print_type_expr ~program =
+  let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
+  let ast, _ = run (type_expr_p ()) ~state:tokens in
+  print_s [%message (ast : (Types.Type_expr.t, Sexp.t) Result.t)]
+
+let%expect_test "type_expr_single" = print_type_expr ~program:"int"
+let%expect_test "type_expr_multi1" = print_type_expr ~program:"a int"
+
+let%expect_test "type_expr_multi2" =
+  print_type_expr ~program:"(a, (b int)) int d"
 
 let test_parse_one ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
@@ -158,7 +226,7 @@ let%expect_test "test_function_one_arg" =
 
 let%expect_test "test_function_two_args_nested" =
   let program = {|
-       let function = let y = 1 in (x y) -> 1
+       let function = let y = 1 in (x, y) -> 1
      |} in
   test_parse_one ~program;
   [%expect
@@ -218,7 +286,7 @@ let%expect_test "test_lots" =
 
           let function2 = (x) -> 1
 
-          let function3 = (x y) -> f x + y
+          let function3 = (x, y) -> f x + y
 
           let if_ = if true then 1 else 2
 
