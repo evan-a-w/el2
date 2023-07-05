@@ -62,8 +62,9 @@ let many_sep_rev1 p ~sep =
       return [ first ]
   | Ok _ ->
       let%bind rest = many_sep_rev p ~sep in
-      return (first :: rest)
+      return (rest @ [ first ])
 
+let many_rev1 p = many_sep_rev1 p ~sep:(return ())
 let many_sep1 p ~sep = many_sep_rev1 p ~sep >>| List.rev
 let many p = many_sep p ~sep:(return ())
 
@@ -125,11 +126,11 @@ and parse_a_untagged () : Ast.t parser =
 and parse_a () : Ast.t parser = parse_a_tagged () <|> parse_a_untagged ()
 
 and parse_b () : Ast.t parser =
-  match%bind.State parse_a () with
-  | Ok _ as a -> State.return a
-  | _ ->
-      first [ parse_lambda (); parse_let_in (); parse_if (); parse_apply () ]
-      |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
+  first
+    [
+      parse_lambda (); parse_let_in (); parse_if (); parse_apply (); parse_a ();
+    ]
+  |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
 
 and parse_one () = parse_b ()
 
@@ -140,9 +141,8 @@ and parse_in_paren () : Ast.node parser =
   return (Ast.Wrapped expr)
 
 and parse_lambda () : Ast.t parser =
-  let%bind () = eat_token LParen in
-  let%bind idents = many_sep_rev1 get_identifier ~sep:(eat_token Token.Comma) in
-  let%bind () = eat_token RParen in
+  let%bind () = eat_token (Token.Keyword "fun") in
+  let%bind idents = many_rev1 get_identifier in
   let%bind () = eat_token Arrow in
   let%bind expr = parse_a () in
   match idents with
@@ -165,7 +165,7 @@ and parse_let_in () : Ast.t parser =
   let%bind var, expr = parse_let () in
   let%bind () = eat_token (Token.Keyword "in") in
   let%bind body = parse_b () in
-  return (Ast.Let_in (var, expr, body) |> Ast.untyped)
+  return (Ast.Let (var, expr, body) |> Ast.untyped)
 
 and parse_if () : Ast.t parser =
   let%bind () = eat_token (Token.Keyword "if") in
@@ -210,40 +210,59 @@ let print_type_expr ~program =
   let ast, _ = run (type_expr_p ()) ~state:tokens in
   print_s [%message (ast : (Types.Type_expr.t, Sexp.t) Result.t)]
 
-let%expect_test "type_expr_single" = print_type_expr ~program:"int"
-let%expect_test "type_expr_multi1" = print_type_expr ~program:"a int"
+let%expect_test "type_expr_single" =
+  print_type_expr ~program:"int";
+  [%expect {| (ast (Ok (Single int))) |}]
+
+let%expect_test "type_expr_multi1" =
+  print_type_expr ~program:"a int";
+  [%expect {| (ast (Ok (Multi ((Single a)) (Single int)))) |}]
 
 let%expect_test "type_expr_multi2" =
-  print_type_expr ~program:"(a, (b int)) int d"
+  print_type_expr ~program:"(a, (b int)) int d";
+  [%expect
+    {|
+    (ast
+     (Ok
+      (Multi ((Multi ((Single b)) (Single int)) (Single a))
+       (Multi ((Single int)) (Single d))))) |}]
 
 let test_parse_one ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, tokens = run (parse_one ()) ~state:tokens in
   print_s [%message (ast : (Ast.t, Sexp.t) Result.t) (tokens : Token.t List.t)]
 
-let%expect_test "test_function_no_args" =
-  let program = {|
-    let function = () -> 1
-  |} in
-  test_parse_one ~program;
-  [%expect {| ((ast (Ok (Let function (Lambda () (Int 1))))) (tokens ())) |}]
-
 let%expect_test "test_function_one_arg" =
   let program = {|
-       let function = (x) -> 1
-     |} in
-  test_parse_one ~program;
-  [%expect {| ((ast (Ok (Let function (Lambda (x) (Int 1))))) (tokens ())) |}]
-
-let%expect_test "test_function_two_args_nested" =
-  let program = {|
-       let function = let y = 1 in (x, y) -> 1
+       let function = fun x -> 1 in function
      |} in
   test_parse_one ~program;
   [%expect
     {|
+    ((ast
+      (Ok
+       ((node
+         (Let function ((node (Lambda x ((node (Int 1))))))
+          ((node (Var function))))))))
+     (tokens ())) |}]
+
+let%expect_test "test_function_two_args_nested" =
+  let program =
+    {|
+       let function = let y = 1 in fun x y -> 1 in function
+     |}
+  in
+  test_parse_one ~program;
+  [%expect
+    {|
       ((ast
-        (Ok (Let function (Let_in y (Int 1) (Lambda (x) (Lambda (y) (Int 1)))))))
+        (Ok
+         ((node
+           (Let function
+            ((node
+              (Let y ((node (Int 1)))
+               ((node (Lambda x ((node (Lambda y ((node (Int 1))))))))))))
+            ((node (Var function))))))))
        (tokens ())) |}]
 
 let%expect_test "test_if_simple" =
@@ -251,7 +270,11 @@ let%expect_test "test_if_simple" =
     if true then 1 else 2
      |} in
   test_parse_one ~program;
-  [%expect {| ((ast (Ok (If (Bool true) (Int 1) (Int 2)))) (tokens ())) |}]
+  [%expect
+    {|
+    ((ast
+      (Ok ((node (If ((node (Bool true))) ((node (Int 1))) ((node (Int 2))))))))
+     (tokens ())) |}]
 
 let%expect_test "test_app" =
   let program = {|
@@ -260,7 +283,17 @@ let%expect_test "test_app" =
   test_parse_one ~program;
   [%expect
     {|
-    ((ast (Ok (App (App (App (App (Int 1) (Var +)) (Int 2)) (Var =)) (Int 3))))
+    ((ast
+      (Ok
+       ((node
+         (App
+          ((node
+            (App
+             ((node
+               (App ((node (App ((node (Int 1))) ((node (Var +))))))
+                ((node (Int 2))))))
+             ((node (Var =))))))
+          ((node (Int 3))))))))
      (tokens ())) |}]
 
 let%expect_test "test_if_nested_application" =
@@ -274,8 +307,51 @@ let%expect_test "test_if_nested_application" =
     {|
     ((ast
       (Ok
-       (If (App (App (App (App (Int 1) (Var +)) (Int 2)) (Var =)) (Int 3))
-        (If (Bool false) (Int 1) (Int 2)) (Int 3))))
+       ((node
+         (If
+          ((node
+            (App
+             ((node
+               (App
+                ((node
+                  (App ((node (App ((node (Int 1))) ((node (Var +))))))
+                   ((node (Int 2))))))
+                ((node (Var =))))))
+             ((node (Int 3))))))
+          ((node (If ((node (Bool false))) ((node (Int 1))) ((node (Int 2))))))
+          ((node (Int 3))))))))
+     (tokens ())) |}]
+
+let%expect_test "test_let_nested" =
+  let program =
+    {|
+    let nested = let x = 1 in let y = 2 in x + y in nested
+  |}
+  in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       ((node
+         (Let nested
+          ((node
+            (Let x ((node (Int 1)))
+             ((node
+               (Let y ((node (Int 2)))
+                ((node
+                  (App ((node (App ((node (Var x))) ((node (Var +))))))
+                   ((node (Var y))))))))))))
+          ((node (Var nested))))))))
+     (tokens ())) |}]
+
+let%expect_test "test_unit_value" =
+  let program = {|
+    let unit = () in unit
+  |} in
+  test_parse_one ~program;
+  [%expect {|
+    ((ast (Ok ((node (Let unit ((node Unit)) ((node (Var unit))))))))
      (tokens ())) |}]
 
 let%expect_test "test_lots" =
@@ -293,11 +369,9 @@ let%expect_test "test_lots" =
 
           let nested = let x = 1 in let y = 2 in x + y
 
-          let function = () -> 1
+          let function2 = fun x -> 1
 
-          let function2 = (x) -> 1
-
-          let function3 = (x, y) -> f x + y
+          let function3 = fun x y -> f x + y
 
           let if_ = if true then 1 else 2
 
@@ -310,15 +384,12 @@ let%expect_test "test_lots" =
   [%expect
     {|
     (ast
-     (Ok
-      ((Let int (Int 1)) (Let float (Float 1)) (Let string (String hi))
-       (Let bool (Bool true)) (Let unit Unit)
-       (Let nested
-        (Let_in x (Int 1) (Let_in y (Int 2) (App (App (Var x) (Var +)) (Var y)))))
-       (Let function (Lambda () (Int 1))) (Let function2 (Lambda (x) (Int 1)))
-       (Let function3 (Lambda (x) (Lambda (y) (Var f))))
-       (App (App (Var x) (Var +)) (Var y))
-       (Let if_ (If (Bool true) (Int 1) (Int 2)))
-       (Let if_nested
-        (If (App (App (App (App (Int 1) (Var +)) (Int 2)) (Var =)) (Int 3))
-         (If (Bool false) (Int 1) (Int 2)) (Int 3)))))) |}]
+     (Error
+      ("Unexpected tokens"
+       (got
+        ((Symbol x) (Symbol +) (Symbol y) (Keyword let) (Symbol if_) (Symbol =)
+         (Keyword if) (Bool true) (Keyword then) (Int 1) (Keyword else) (Int 2)
+         (Keyword let) (Symbol if_nested) (Symbol =) (Keyword if) (Int 1)
+         (Symbol +) (Int 2) (Symbol =) (Int 3) (Keyword then) (Keyword if)
+         (Bool false) (Keyword then) (Int 1) (Keyword else) (Int 2)
+         (Keyword else) (Int 3)))))) |}]

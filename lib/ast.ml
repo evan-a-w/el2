@@ -3,7 +3,7 @@ open! Core
 type node =
   | Lambda of string * t
   | App of t * t
-  | Let_in of string * t * t
+  | Let of string * t * t
   | If of t * t * t
   | Var of string
   | Unit
@@ -14,7 +14,7 @@ type node =
   | Wrapped of t
 [@@deriving sexp]
 
-and t = { type_expr : Types.Type_expr.t Option.t; node : node }
+and t = { type_expr : Types.Type_expr.t option; [@sexp.option] node : node }
 [@@deriving sexp]
 
 let untyped node = { type_expr = None; node }
