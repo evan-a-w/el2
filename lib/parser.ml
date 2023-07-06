@@ -54,15 +54,10 @@ let many_sep p ~sep = many_sep_rev p ~sep >>| List.rev
 let many_rev p = many_sep_rev p ~sep:(return ())
 
 let many_sep_rev1 p ~sep =
-  let%bind first = p in
-  let%bind prev_state = get in
-  match%bind.State sep with
-  | Error _ ->
-      let%bind () = put prev_state in
-      return [ first ]
-  | Ok _ ->
-      let%bind rest = many_sep_rev p ~sep in
-      return (rest @ [ first ])
+  let%bind ps = many_sep_rev p ~sep in
+  match ps with
+  | [] -> error [%message "Expected at least one element"]
+  | _ :: _ -> return ps
 
 let many_rev1 p = many_sep_rev1 p ~sep:(return ())
 let many_sep1 p ~sep = many_sep_rev1 p ~sep >>| List.rev
@@ -116,22 +111,28 @@ let parse_maybe_tagged p =
 
 let binding_p = parse_maybe_tagged get_identifier
 
-let rec parse_a () : Ast.t parser =
-  let inner =
-    first [ parse_atom; parse_in_paren () ]
-    |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
-  in
-  let%bind node, type_expr = parse_maybe_tagged inner in
+let rec parse_a () : Ast.node parser =
+  first [ parse_atom; parse_in_paren () ]
+  |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
+
+and parse_a_tagged () : Ast.t parser =
+  let%bind node, type_expr = parse_maybe_tagged (parse_a ()) in
   return { Ast.node; type_expr }
 
 and parse_b () : Ast.t parser =
-  first
-    [
-      parse_lambda (); parse_let_in (); parse_if (); parse_apply (); parse_a ();
-    ]
-  |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
-
-and parse_one () = parse_b ()
+  let inner =
+    first
+      [
+        parse_lambda ();
+        parse_let_in ();
+        parse_if ();
+        parse_apply ();
+        parse_a ();
+      ]
+    |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
+  in
+  let%bind node, type_expr = parse_maybe_tagged inner in
+  return { Ast.node; type_expr }
 
 and parse_in_paren () : Ast.node parser =
   let%bind () = eat_token LParen in
@@ -139,7 +140,7 @@ and parse_in_paren () : Ast.node parser =
   let%bind () = eat_token RParen in
   return (Ast.Wrapped expr)
 
-and parse_lambda () : Ast.t parser =
+and parse_lambda () : Ast.node parser =
   let%bind () = eat_token (Token.Keyword "fun") in
   let%bind bindings = many_rev1 binding_p in
   let%bind () = eat_token Arrow in
@@ -147,9 +148,9 @@ and parse_lambda () : Ast.t parser =
   match bindings with
   | [] -> assert false
   | x :: xs ->
-      let init = Ast.Lambda (x, expr) |> Ast.untyped in
+      let init = Ast.Lambda (x, expr) in
       let lambda =
-        List.fold xs ~init ~f:(fun acc x -> Ast.Lambda (x, acc) |> Ast.untyped)
+        List.fold xs ~init ~f:(fun acc x -> Ast.Lambda (x, Ast.untyped acc))
       in
       return lambda
 
@@ -160,20 +161,20 @@ and parse_let () : (Ast.binding * Ast.t) parser =
   let%bind expr = parse_b () in
   return (binding, expr)
 
-and parse_let_in () : Ast.t parser =
+and parse_let_in () : Ast.node parser =
   let%bind var, expr = parse_let () in
   let%bind () = eat_token (Token.Keyword "in") in
   let%bind body = parse_b () in
-  return (Ast.Let (var, expr, body) |> Ast.untyped)
+  return (Ast.Let (var, expr, body))
 
-and parse_if () : Ast.t parser =
+and parse_if () : Ast.node parser =
   let%bind () = eat_token (Token.Keyword "if") in
   let%bind cond = parse_b () in
   let%bind () = eat_token (Token.Keyword "then") in
   let%bind then_ = parse_b () in
   let%bind () = eat_token (Token.Keyword "else") in
   let%bind else_ = parse_b () in
-  return (Ast.If (cond, then_, else_) |> Ast.untyped)
+  return (Ast.If (cond, then_, else_))
 
 and parse_atom : Ast.node parser =
   let non_binding =
@@ -190,15 +191,17 @@ and parse_atom : Ast.node parser =
   let binding = binding_p >>| fun x -> Ast.Var x in
   non_binding <|> binding
 
-and parse_apply () : Ast.t parser =
-  match%bind many (parse_a ()) with
+and parse_apply () : Ast.node parser =
+  match%bind many (parse_a_tagged ()) with
   | a :: b :: rest ->
-      let init = Ast.App (a, b) |> Ast.untyped in
+      let init = Ast.App (a, b) in
       let res =
-        List.fold rest ~init ~f:(fun acc x -> Ast.App (acc, x) |> Ast.untyped)
+        List.fold rest ~init ~f:(fun acc x -> Ast.App (Ast.untyped acc, x))
       in
       return res
   | _ -> error [%message "Expected one or more expressions"]
+
+let parse_one = parse_b ()
 
 let parse =
   let%bind program = many (parse_let ()) in
@@ -235,7 +238,7 @@ let%expect_test "type_expr_multi2" =
 
 let test_parse_one ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
-  let ast, tokens = run (parse_one ()) ~state:tokens in
+  let ast, tokens = run parse_one ~state:tokens in
   print_s [%message (ast : (Ast.t, Sexp.t) Result.t) (tokens : Token.t List.t)]
 
 let%expect_test "test_function_one_arg" =
@@ -482,3 +485,25 @@ let%expect_test "test_lots_type_tags" =
         ((node
           (Lambda (x ((Single string)))
            ((type_expr (Single int)) (node (Int 1)))))))))) |}]
+
+let%expect_test "test_apply_tags" =
+  let program = {| g (1 : int) |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       ((node
+         (App ((node (Var (g ())))) ((type_expr (Single int)) (node (Int 1))))))))
+     (tokens ())) |}]
+
+let%expect_test "test_nested_typed_application" =
+  let program = {| g (f (1 : int) (a b (c d : int) : int)) |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast (Ok ((node (Var (g ()))))))
+     (tokens
+      (LParen (Symbol f) LParen (Int 1) Colon (Symbol int) RParen LParen
+       (Symbol a) (Symbol b) LParen (Symbol c) (Symbol d) Colon (Symbol int)
+       RParen Colon (Symbol int) RParen RParen))) |}]
