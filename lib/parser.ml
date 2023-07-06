@@ -555,14 +555,18 @@ let%expect_test "test_unary_bang" =
     ((ast
       (Ok
        ((node
-         (App ((node (App ((node (Int 1))) ((node (Var (+ ())))))))
-          ((node (Var (!2 ())))))))))
+         (App
+          ((node
+            (App ((node (App ((node (Int 1))) ((node (Var (+ ())))))))
+             ((node (Var (! ())))))))
+          ((node (Int 2))))))))
      (tokens ())) |}]
 
 let%expect_test "test_apply_left_assoc" =
   let program = {| f x y |} in
   test_parse_one ~program;
-  [%expect {|
+  [%expect
+    {|
     ((ast
       (Ok
        ((node
