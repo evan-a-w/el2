@@ -119,25 +119,31 @@ and parse_a_tagged () : Ast.t parser =
   let%bind node, type_expr = parse_maybe_tagged (parse_a ()) in
   return { Ast.node; type_expr }
 
+and parse_b_untagged () : Ast.node parser =
+  first
+    [
+      parse_lambda (); parse_let_in (); parse_if (); parse_apply (); parse_a ();
+    ]
+  |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
+
 and parse_b () : Ast.t parser =
-  let inner =
-    first
-      [
-        parse_lambda ();
-        parse_let_in ();
-        parse_if ();
-        parse_apply ();
-        parse_a ();
-      ]
-    |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
-  in
-  let%bind node, type_expr = parse_maybe_tagged inner in
+  let%bind node, type_expr = parse_maybe_tagged (parse_b_untagged ()) in
   return { Ast.node; type_expr }
 
 and parse_in_paren () : Ast.node parser =
   let%bind () = eat_token LParen in
-  let%bind expr = parse_b () in
-  let%bind () = eat_token RParen in
+  let%bind node = parse_b_untagged () in
+  let without_type_tag =
+    let%bind () = eat_token RParen in
+    return None
+  in
+  let with_type_tag =
+    let%bind type_tag = type_tag_p in
+    let%bind () = eat_token RParen in
+    return (Some type_tag)
+  in
+  let%bind type_expr = with_type_tag <|> without_type_tag in
+  let expr = { Ast.node; type_expr } in
   return (Ast.Wrapped expr)
 
 and parse_lambda () : Ast.node parser =
@@ -497,13 +503,46 @@ let%expect_test "test_apply_tags" =
          (App ((node (Var (g ())))) ((type_expr (Single int)) (node (Int 1))))))))
      (tokens ())) |}]
 
+let%expect_test "test_apply_b" =
+  let program = {| g (if 1 then 1 else 1 : int) |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       ((node
+         (App ((node (Var (g ()))))
+          ((node
+            (Wrapped
+             ((type_expr (Single int))
+              (node (If ((node (Int 1))) ((node (Int 1))) ((node (Int 1))))))))))))))
+     (tokens ())) |}]
+
 let%expect_test "test_nested_typed_application" =
   let program = {| g (f (1 : int) (a b (c d : int) : int)) |} in
   test_parse_one ~program;
   [%expect
     {|
-    ((ast (Ok ((node (Var (g ()))))))
-     (tokens
-      (LParen (Symbol f) LParen (Int 1) Colon (Symbol int) RParen LParen
-       (Symbol a) (Symbol b) LParen (Symbol c) (Symbol d) Colon (Symbol int)
-       RParen Colon (Symbol int) RParen RParen))) |}]
+    ((ast
+      (Ok
+       ((node
+         (App ((node (Var (g ()))))
+          ((node
+            (Wrapped
+             ((node
+               (App
+                ((node
+                  (App ((node (Var (f ()))))
+                   ((type_expr (Single int)) (node (Int 1))))))
+                ((node
+                  (Wrapped
+                   ((type_expr (Single int))
+                    (node
+                     (App
+                      ((node (App ((node (Var (a ())))) ((node (Var (b ())))))))
+                      ((node
+                        (Wrapped
+                         ((type_expr (Single int))
+                          (node
+                           (App ((node (Var (c ())))) ((node (Var (d ())))))))))))))))))))))))))))
+     (tokens ())) |}]
