@@ -204,7 +204,7 @@ and parse_apply () : Ast.node parser =
       let res =
         List.fold rest ~init ~f:(fun acc x -> Ast.App (Ast.untyped acc, x))
       in
-      return res
+      return (Pratt.parse res)
   | _ -> error [%message "Expected one or more expressions"]
 
 let parse_one = parse_b ()
