@@ -546,3 +546,26 @@ let%expect_test "test_nested_typed_application" =
                           (node
                            (App ((node (Var (c ())))) ((node (Var (d ())))))))))))))))))))))))))))
      (tokens ())) |}]
+
+let%expect_test "test_unary_bang" =
+  let program = {| 1 + !2 |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       ((node
+         (App ((node (App ((node (Int 1))) ((node (Var (+ ())))))))
+          ((node (Var (!2 ())))))))))
+     (tokens ())) |}]
+
+let%expect_test "test_apply_left_assoc" =
+  let program = {| f x y |} in
+  test_parse_one ~program;
+  [%expect {|
+    ((ast
+      (Ok
+       ((node
+         (App ((node (App ((node (Var (f ())))) ((node (Var (x ())))))))
+          ((node (Var (y ())))))))))
+     (tokens ())) |}]
