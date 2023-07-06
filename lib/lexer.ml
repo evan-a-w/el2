@@ -64,6 +64,7 @@ let pipe_p = char '|' *> return Token.Pipe
 let comma_p = char ',' *> return Token.Comma
 let lparen_p = char '(' *> return Token.LParen
 let rparen_p = char ')' *> return Token.RParen
+let colon_p = char ':' *> return Token.Colon
 
 let whitespace_p =
   skip_while (function ' ' | '\n' | '\t' -> true | _ -> false)
@@ -71,8 +72,8 @@ let whitespace_p =
 let parser =
   let%bind () = whitespace_p in
   let%bind token =
-    float_p <|> int_p <|> string_p <|> bool_p <|> arrow_p <|> symbol_p
-    <|> pipe_p <|> comma_p <|> lparen_p <|> rparen_p
+    colon_p <|> float_p <|> int_p <|> string_p <|> bool_p <|> arrow_p
+    <|> symbol_p <|> pipe_p <|> comma_p <|> lparen_p <|> rparen_p
   in
   let%bind () = whitespace_p in
   return token

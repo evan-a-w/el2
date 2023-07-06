@@ -10,6 +10,7 @@ type t =
   | Comma
   | LParen
   | RParen
+  | Colon
   | Symbol of string
   | Keyword of string
 [@@deriving sexp, compare, variants]

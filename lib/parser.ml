@@ -84,7 +84,7 @@ let type_expr_p () : Types.Type_expr.t parser =
   and a () = single <|> paren ()
   and list () =
     let%bind () = eat_token Token.LParen in
-    let%bind res = many_sep_rev1 (b ()) ~sep:(eat_token Token.Comma) in
+    let%bind res = many_sep1 (b ()) ~sep:(eat_token Token.Comma) in
     let%bind () = eat_token Token.RParen in
     return res
   and multi () =
@@ -96,34 +96,33 @@ let type_expr_p () : Types.Type_expr.t parser =
   b ()
 
 let type_tag_p : Types.Type_expr.t parser =
-  let%bind () = eat_token (Token.Symbol ":") in
+  let%bind () = eat_token Token.Colon in
   type_expr_p ()
 
-let rec parse_a_tagged () : Ast.t parser =
+let parse_tagged p =
   let%bind () = eat_token LParen in
-  let%bind node =
-    first [ parse_atom; parse_in_paren () ]
-    |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
-  in
-  let%bind prev_state = get in
-  let%bind ast =
-    match%bind.State type_tag_p with
-    | Ok type_expr -> return { Ast.node; type_expr = Some type_expr }
-    | Error _ ->
-        let%bind () = put prev_state in
-        return { Ast.node; type_expr = None }
-  in
+  let%bind inner = p in
+  let%bind type_expr = type_tag_p in
   let%bind () = eat_token RParen in
-  return ast
+  return (inner, type_expr)
 
-and parse_a_untagged () : Ast.t parser =
-  let%bind node =
+let parse_maybe_tagged p =
+  let fst =
+    let%bind a, b = parse_tagged p in
+    return (a, Some b)
+  in
+  let snd = p >>| fun x -> (x, None) in
+  fst <|> snd
+
+let binding_p = parse_maybe_tagged get_identifier
+
+let rec parse_a () : Ast.t parser =
+  let inner =
     first [ parse_atom; parse_in_paren () ]
     |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
   in
-  return { Ast.node; type_expr = None }
-
-and parse_a () : Ast.t parser = parse_a_tagged () <|> parse_a_untagged ()
+  let%bind node, type_expr = parse_maybe_tagged inner in
+  return { Ast.node; type_expr }
 
 and parse_b () : Ast.t parser =
   first
@@ -142,10 +141,10 @@ and parse_in_paren () : Ast.node parser =
 
 and parse_lambda () : Ast.t parser =
   let%bind () = eat_token (Token.Keyword "fun") in
-  let%bind idents = many_rev1 get_identifier in
+  let%bind bindings = many_rev1 binding_p in
   let%bind () = eat_token Arrow in
-  let%bind expr = parse_a () in
-  match idents with
+  let%bind expr = parse_b () in
+  match bindings with
   | [] -> assert false
   | x :: xs ->
       let init = Ast.Lambda (x, expr) |> Ast.untyped in
@@ -154,12 +153,12 @@ and parse_lambda () : Ast.t parser =
       in
       return lambda
 
-and parse_let () : (string * Ast.t) parser =
+and parse_let () : (Ast.binding * Ast.t) parser =
   let%bind () = eat_token (Token.Keyword "let") in
-  let%bind var = get_identifier in
+  let%bind binding = binding_p in
   let%bind () = eat_token (Token.Symbol "=") in
   let%bind expr = parse_b () in
-  return (var, expr)
+  return (binding, expr)
 
 and parse_let_in () : Ast.t parser =
   let%bind var, expr = parse_let () in
@@ -177,16 +176,19 @@ and parse_if () : Ast.t parser =
   return (Ast.If (cond, then_, else_) |> Ast.untyped)
 
 and parse_atom : Ast.node parser =
-  match%bind next with
-  | Token.Int x -> Ast.Int x |> return
-  | Float f -> Ast.Float f |> return
-  | Bool b -> Ast.Bool b |> return
-  | String s -> Ast.String s |> return
-  | Symbol s -> Ast.Var s |> return
-  | LParen ->
-      let%bind () = eat_token RParen in
-      return Ast.Unit
-  | got -> error [%message "Expected atom" (got : Token.t)]
+  let non_binding =
+    match%bind next with
+    | Token.Int x -> Ast.Int x |> return
+    | Float f -> Ast.Float f |> return
+    | Bool b -> Ast.Bool b |> return
+    | String s -> Ast.String s |> return
+    | LParen ->
+        let%bind () = eat_token RParen in
+        return Ast.Unit
+    | got -> error [%message "Expected atom" (got : Token.t)]
+  in
+  let binding = binding_p >>| fun x -> Ast.Var x in
+  non_binding <|> binding
 
 and parse_apply () : Ast.t parser =
   match%bind many (parse_a ()) with
@@ -214,6 +216,10 @@ let%expect_test "type_expr_single" =
   print_type_expr ~program:"int";
   [%expect {| (ast (Ok (Single int))) |}]
 
+let%expect_test "type_expr_single_extra_paren" =
+  print_type_expr ~program:"int)";
+  [%expect {| (ast (Ok (Single int))) |}]
+
 let%expect_test "type_expr_multi1" =
   print_type_expr ~program:"a int";
   [%expect {| (ast (Ok (Multi ((Single a)) (Single int)))) |}]
@@ -224,7 +230,7 @@ let%expect_test "type_expr_multi2" =
     {|
     (ast
      (Ok
-      (Multi ((Multi ((Single b)) (Single int)) (Single a))
+      (Multi ((Single a) (Multi ((Single b)) (Single int)))
        (Multi ((Single int)) (Single d))))) |}]
 
 let test_parse_one ~program =
@@ -242,8 +248,8 @@ let%expect_test "test_function_one_arg" =
     ((ast
       (Ok
        ((node
-         (Let function ((node (Lambda x ((node (Int 1))))))
-          ((node (Var function))))))))
+         (Let (function ()) ((node (Lambda (x ()) ((node (Int 1))))))
+          ((node (Var (function ())))))))))
      (tokens ())) |}]
 
 let%expect_test "test_function_two_args_nested" =
@@ -258,11 +264,11 @@ let%expect_test "test_function_two_args_nested" =
       ((ast
         (Ok
          ((node
-           (Let function
+           (Let (function ())
             ((node
-              (Let y ((node (Int 1)))
-               ((node (Lambda x ((node (Lambda y ((node (Int 1))))))))))))
-            ((node (Var function))))))))
+              (Let (y ()) ((node (Int 1)))
+               ((node (Lambda (x ()) ((node (Lambda (y ()) ((node (Int 1))))))))))))
+            ((node (Var (function ())))))))))
        (tokens ())) |}]
 
 let%expect_test "test_if_simple" =
@@ -290,9 +296,9 @@ let%expect_test "test_app" =
           ((node
             (App
              ((node
-               (App ((node (App ((node (Int 1))) ((node (Var +))))))
+               (App ((node (App ((node (Int 1))) ((node (Var (+ ())))))))
                 ((node (Int 2))))))
-             ((node (Var =))))))
+             ((node (Var (= ())))))))
           ((node (Int 3))))))))
      (tokens ())) |}]
 
@@ -314,9 +320,9 @@ let%expect_test "test_if_nested_application" =
              ((node
                (App
                 ((node
-                  (App ((node (App ((node (Int 1))) ((node (Var +))))))
+                  (App ((node (App ((node (Int 1))) ((node (Var (+ ())))))))
                    ((node (Int 2))))))
-                ((node (Var =))))))
+                ((node (Var (= ())))))))
              ((node (Int 3))))))
           ((node (If ((node (Bool false))) ((node (Int 1))) ((node (Int 2))))))
           ((node (Int 3))))))))
@@ -334,15 +340,15 @@ let%expect_test "test_let_nested" =
     ((ast
       (Ok
        ((node
-         (Let nested
+         (Let (nested ())
           ((node
-            (Let x ((node (Int 1)))
+            (Let (x ()) ((node (Int 1)))
              ((node
-               (Let y ((node (Int 2)))
+               (Let (y ()) ((node (Int 2)))
                 ((node
-                  (App ((node (App ((node (Var x))) ((node (Var +))))))
-                   ((node (Var y))))))))))))
-          ((node (Var nested))))))))
+                  (App ((node (App ((node (Var (x ())))) ((node (Var (+ ())))))))
+                   ((node (Var (y ())))))))))))))
+          ((node (Var (nested ())))))))))
      (tokens ())) |}]
 
 let%expect_test "test_unit_value" =
@@ -350,8 +356,9 @@ let%expect_test "test_unit_value" =
     let unit = () in unit
   |} in
   test_parse_one ~program;
-  [%expect {|
-    ((ast (Ok ((node (Let unit ((node Unit)) ((node (Var unit))))))))
+  [%expect
+    {|
+    ((ast (Ok ((node (Let (unit ()) ((node Unit)) ((node (Var (unit ())))))))))
      (tokens ())) |}]
 
 let%expect_test "test_lots" =
@@ -380,16 +387,98 @@ let%expect_test "test_lots" =
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run parse ~state:tokens in
-  print_s [%message (ast : ((string, Ast.t) Tuple2.t List.t, Sexp.t) Result.t)];
+  print_s
+    [%message (ast : ((Ast.binding, Ast.t) Tuple2.t List.t, Sexp.t) Result.t)];
   [%expect
     {|
     (ast
-     (Error
-      ("Unexpected tokens"
-       (got
-        ((Symbol x) (Symbol +) (Symbol y) (Keyword let) (Symbol if_) (Symbol =)
-         (Keyword if) (Bool true) (Keyword then) (Int 1) (Keyword else) (Int 2)
-         (Keyword let) (Symbol if_nested) (Symbol =) (Keyword if) (Int 1)
-         (Symbol +) (Int 2) (Symbol =) (Int 3) (Keyword then) (Keyword if)
-         (Bool false) (Keyword then) (Int 1) (Keyword else) (Int 2)
-         (Keyword else) (Int 3)))))) |}]
+     (Ok
+      (((int ()) ((node (Int 1)))) ((float ()) ((node (Float 1))))
+       ((string ()) ((node (String hi)))) ((bool ()) ((node (Bool true))))
+       ((unit ()) ((node Unit)))
+       ((nested ())
+        ((node
+          (Let (x ()) ((node (Int 1)))
+           ((node
+             (Let (y ()) ((node (Int 2)))
+              ((node
+                (App ((node (App ((node (Var (x ())))) ((node (Var (+ ())))))))
+                 ((node (Var (y ()))))))))))))))
+       ((function2 ()) ((node (Lambda (x ()) ((node (Int 1)))))))
+       ((function3 ())
+        ((node
+          (Lambda (x ())
+           ((node
+             (Lambda (y ())
+              ((node
+                (App
+                 ((node
+                   (App
+                    ((node (App ((node (Var (f ())))) ((node (Var (x ())))))))
+                    ((node (Var (+ ())))))))
+                 ((node (Var (y ()))))))))))))))
+       ((if_ ())
+        ((node (If ((node (Bool true))) ((node (Int 1))) ((node (Int 2)))))))
+       ((if_nested ())
+        ((node
+          (If
+           ((node
+             (App
+              ((node
+                (App
+                 ((node
+                   (App ((node (App ((node (Int 1))) ((node (Var (+ ())))))))
+                    ((node (Int 2))))))
+                 ((node (Var (= ())))))))
+              ((node (Int 3))))))
+           ((node (If ((node (Bool false))) ((node (Int 1))) ((node (Int 2))))))
+           ((node (Int 3)))))))))) |}]
+
+let%expect_test "test_atom_untagged" =
+  let program = {| 1 |} in
+  test_parse_one ~program;
+  [%expect {| ((ast (Ok ((node (Int 1))))) (tokens ())) |}]
+
+let%expect_test "test_atom_tagged" =
+  let program = {| (1 : int) |} in
+  test_parse_one ~program;
+  [%expect
+    {| ((ast (Ok ((type_expr (Single int)) (node (Int 1))))) (tokens ())) |}]
+
+let%expect_test "test_lots_type_tags" =
+  let program =
+    {|
+    let (int : int) = (1 : int t)
+
+    let nested = ((let x = 1 in let y = 2 in x + y) : (a, b, c) int t)
+
+    let function2 = fun (x : string) -> (1 : int) |}
+  in
+  let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
+  let ast, _ = run parse ~state:tokens in
+  print_s
+    [%message (ast : ((Ast.binding, Ast.t) Tuple2.t List.t, Sexp.t) Result.t)];
+  [%expect
+    {|
+    (ast
+     (Ok
+      (((int ((Single int)))
+        ((type_expr (Multi ((Single int)) (Single t))) (node (Int 1))))
+       ((nested ())
+        ((type_expr
+          (Multi ((Single a) (Single b) (Single c))
+           (Multi ((Single int)) (Single t))))
+         (node
+          (Wrapped
+           ((node
+             (Let (x ()) ((node (Int 1)))
+              ((node
+                (Let (y ()) ((node (Int 2)))
+                 ((node
+                   (App
+                    ((node (App ((node (Var (x ())))) ((node (Var (+ ())))))))
+                    ((node (Var (y ())))))))))))))))))
+       ((function2 ())
+        ((node
+          (Lambda (x ((Single string)))
+           ((type_expr (Single int)) (node (Int 1)))))))))) |}]
