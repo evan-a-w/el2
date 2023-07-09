@@ -84,13 +84,15 @@ let parser =
   let%bind () = whitespace_p in
   return token
 
-let lex ~program = Angstrom.parse_string ~consume:All (many1 parser) program
+let lex ~program =
+  Angstrom.parse_string ~consume:All (many1 parser) program
+  |> Result.map ~f:Sequence.of_list
 
 let%expect_test "lex" =
   let program =
     "let x = 1 in x -> hi weqwe'eq 31231230 123123 penis match | ,"
   in
-  let lexed = lex ~program in
+  let lexed = lex ~program |> Result.map ~f:Sequence.to_list in
   print_s [%sexp (lexed : (Token.t List.t, String.t) Result.t)];
   [%expect
     {|

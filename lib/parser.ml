@@ -1,67 +1,7 @@
 open! Core
-
-module Parse_state = struct
-  include State.Result
-
-  type 'a t = ('a, Sexp.t, Token.t List.t) State.Result.t
-
-  let end_of_input = error [%message "Unexpected end of input"]
-
-  let next : Token.t t =
-    let open Let_syntax in
-    let%bind tokens = get in
-    match tokens with
-    | [] -> end_of_input
-    | token :: tokens ->
-        let%bind () = put tokens in
-        return token
-
-  let put_back token =
-    let open Let_syntax in
-    let%bind tokens = get in
-    put (token :: tokens)
-end
-
-open Parse_state
-open Parse_state.Let_syntax
-
-type 'a parser = 'a t
-
-let eat_token expected =
-  let%bind got = next in
-  match Token.compare got expected with
-  | 0 -> return ()
-  | _ -> error [%message (expected : Token.t) (got : Token.t)]
-
-let many_sep_rev p ~sep =
-  let rec loop acc =
-    let%bind prev_state = get in
-    match%bind.State p with
-    | Error _ ->
-        let%bind () = put prev_state in
-        return acc
-    | Ok res -> (
-        let%bind prev_state = get in
-        match%bind.State sep with
-        | Ok _ -> loop (res :: acc)
-        | Error _ ->
-            let%bind () = put prev_state in
-            return (res :: acc))
-  in
-  loop []
-
-let many_sep p ~sep = many_sep_rev p ~sep >>| List.rev
-let many_rev p = many_sep_rev p ~sep:(return ())
-
-let many_sep_rev1 p ~sep =
-  let%bind ps = many_sep_rev p ~sep in
-  match ps with
-  | [] -> error [%message "Expected at least one element"]
-  | _ :: _ -> return ps
-
-let many_rev1 p = many_sep_rev1 p ~sep:(return ())
-let many_sep1 p ~sep = many_sep_rev1 p ~sep >>| List.rev
-let many p = many_sep p ~sep:(return ())
+module Parser_comb = Comb.Make (Token)
+open Parser_comb
+open Parser_comb.Let_syntax
 
 let get_identifier : String.t parser =
   let%bind token = next in
@@ -212,13 +152,13 @@ let parse_one = parse_b ()
 let parse =
   let%bind program = many (parse_let ()) in
   let%bind tokens = get in
-  match tokens with
-  | [] -> return program
-  | got -> error [%message "Unexpected tokens" (got : Token.t List.t)]
+  match Sequence.next tokens with
+  | None -> return program
+  | Some (got, _) -> error [%message "Unexpected token" (got : Token.t)]
 
 let print_type_expr ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
-  let ast, _ = run (type_expr_p ()) ~state:tokens in
+  let ast, _ = run (type_expr_p ()) ~tokens in
   print_s [%message (ast : (Types.Type_expr.t, Sexp.t) Result.t)]
 
 let%expect_test "type_expr_single" =
@@ -244,7 +184,8 @@ let%expect_test "type_expr_multi2" =
 
 let test_parse_one ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
-  let ast, tokens = run parse_one ~state:tokens in
+  let ast, tokens = run parse_one ~tokens in
+  let tokens = Sequence.to_list tokens in
   print_s [%message (ast : (Ast.t, Sexp.t) Result.t) (tokens : Token.t List.t)]
 
 let%expect_test "test_function_one_arg" =
@@ -395,7 +336,7 @@ let%expect_test "test_lots" =
         |}
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
-  let ast, _ = run parse ~state:tokens in
+  let ast, _ = run parse ~tokens in
   print_s
     [%message (ast : ((Ast.binding, Ast.t) Tuple2.t List.t, Sexp.t) Result.t)];
   [%expect
@@ -464,7 +405,7 @@ let%expect_test "test_lots_type_tags" =
     let function2 = fun (x : string) -> (1 : int) |}
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
-  let ast, _ = run parse ~state:tokens in
+  let ast, _ = run parse ~tokens in
   print_s
     [%message (ast : ((Ast.binding, Ast.t) Tuple2.t List.t, Sexp.t) Result.t)];
   [%expect
