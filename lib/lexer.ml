@@ -44,6 +44,7 @@ let bool_p =
 let arrow_p = string "->" *> return Token.Arrow
 let ident_op_chars = "!@#$%^&*-+_:<>?/=~"
 let ident_extras = "_?'"
+let is_operator = String.for_all ~f:(String.mem ident_op_chars)
 
 let op_symbol_p =
   let matches = String.mem ident_op_chars in

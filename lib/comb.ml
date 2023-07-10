@@ -21,6 +21,15 @@ module Make (Token : S) = struct
         let%bind () = put tokens in
         return token
 
+  let next_opt : Token.t Option.t parser =
+    let open Let_syntax in
+    let%bind tokens = get in
+    match Sequence.next tokens with
+    | None -> return None
+    | Some (token, tokens) ->
+        let%bind () = put tokens in
+        return (Some token)
+
   let put_back token =
     let%bind tokens = get in
     put (Sequence.shift_right tokens token)

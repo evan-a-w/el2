@@ -3,14 +3,23 @@ module Parser_comb = Comb.Make (Token)
 open Parser_comb
 open Parser_comb.Let_syntax
 
-let get_identifier : String.t parser =
+let symbol_p =
+  match%bind next with
+  | Token.Symbol s -> return s
+  | got -> error [%message "Expected symbol" (got : Token.t)]
+
+let rec get_identifier () : String.t parser =
   let%bind token = next in
   match token with
-  | Symbol s -> return s
-  | got -> error [%message "Expected identifier" (got : Token.t)]
+  | Symbol s when not (Lexer.is_operator s) -> return s
+  | LParen ->
+      let%bind inner = symbol_p <|> get_identifier () in
+      let%bind () = eat_token RParen in
+      return inner
+  | got -> error [%message "Expected binding" (got : Token.t)]
 
 let type_expr_p () : Types.Type_expr.t parser =
-  let rec single = get_identifier >>| Types.Type_expr.single
+  let rec single = get_identifier () >>| Types.Type_expr.single
   and paren () =
     let%bind () = eat_token LParen in
     let%bind res = b () in
@@ -49,7 +58,7 @@ let parse_maybe_tagged p =
   let snd = p >>| fun x -> (x, None) in
   fst <|> snd
 
-let binding_p = parse_maybe_tagged get_identifier
+let binding_p : Ast.binding parser = parse_maybe_tagged (get_identifier ())
 
 let rec parse_a () : Ast.node parser =
   first [ parse_atom; parse_in_paren () ]
@@ -137,6 +146,18 @@ and parse_atom : Ast.node parser =
   let binding = binding_p >>| fun x -> Ast.Var x in
   non_binding <|> binding
 
+and parse_op () : string parser =
+  match%bind next with
+  | Token.Symbol s when Lexer.is_operator s -> return s
+  | got -> error [%message "Expected operator" (got : Token.t)]
+
+(* and parse_apply () : Ast.node parser = *)
+(*   let%bind lhs = parse_a_tagged () in *)
+(*   let rec inner lhs = *)
+(*     match%bind next_opt with None -> return lhs | Some _ -> return lhs *)
+(*   in *)
+(*   inner lhs *)
+
 and parse_apply () : Ast.node parser =
   match%bind many (parse_a_tagged ()) with
   | a :: b :: rest ->
@@ -144,7 +165,7 @@ and parse_apply () : Ast.node parser =
       let res =
         List.fold rest ~init ~f:(fun acc x -> Ast.App (Ast.untyped acc, x))
       in
-      return (Pratt.parse res)
+      return res
   | _ -> error [%message "Expected one or more expressions"]
 
 let parse_one = parse_b ()
@@ -514,3 +535,36 @@ let%expect_test "test_apply_left_assoc" =
          (App ((node (App ((node (Var (f ())))) ((node (Var (x ())))))))
           ((node (Var (y ())))))))))
      (tokens ())) |}]
+
+let%expect_test "test_operator_binding" =
+  let program = {|
+    let (+) = 1
+    |} in
+  let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
+  let ast, _ = run parse ~tokens in
+  print_s
+    [%message (ast : ((Ast.binding, Ast.t) Tuple2.t List.t, Sexp.t) Result.t)];
+  [%expect {| (ast (Ok (((+ ()) ((node (Int 1))))))) |}]
+
+let%expect_test "test_operator_binding_fail" =
+  let program = {|
+    let + = 1
+    |} in
+  let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
+  let ast, _ = run parse ~tokens in
+  print_s
+    [%message (ast : ((Ast.binding, Ast.t) Tuple2.t List.t, Sexp.t) Result.t)];
+  [%expect {| (ast (Error ("Unexpected token" (got (Keyword let))))) |}]
+
+let print_binding ~program =
+  let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
+  let ast, _ = run binding_p ~tokens in
+  print_s [%message (ast : (Ast.binding, Sexp.t) Result.t)]
+
+let%expect_test "bindings" =
+  print_binding ~program:"var";
+  [%expect {| (ast (Ok (var ()))) |}];
+  print_binding ~program:"(+)";
+  [%expect {| (ast (Ok (+ ()))) |}];
+  print_binding ~program:"+";
+  [%expect {| (ast (Error ("Expected binding" (got (Symbol +))))) |}]
