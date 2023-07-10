@@ -164,71 +164,71 @@ and parse_op () : string parser =
   | Token.Symbol s when Lexer.is_operator s -> return s
   | got -> error [%message "Expected operator" (got : Token.t)]
 
-(* and parse_op_or_a () = *)
-(*   let op = *)
-(*     let%map op = parse_op () in *)
-(*     `Op op *)
-(*   in *)
-(*   let a = *)
-(*     let%map a = parse_a_node () in *)
-(*     `A a *)
-(*   in *)
-(*   op <|> a *)
+and parse_op_or_a () =
+  let op =
+    let%map op = parse_op () in
+    `Op op
+  in
+  let a =
+    let%map a = parse_a_node () in
+    `A a
+  in
+  op <|> a
 
-(* and parse_op_or_a_node () : Ast.node parser = *)
-(*   let op = *)
-(*     let%bind operator = parse_op () in *)
-(*     let var = Ast.Var (operator, None) in *)
-(*     let%bind min_bp = *)
-(*       match Pratt.prefix_binding_power ~operator with *)
-(*       | Some bp -> return bp *)
-(*       | None -> *)
-(*           error [%message "Expected prefix operator" ~got:(operator : string)] *)
-(*     in *)
-(*     let%bind rhs = parse_apply ~min_bp () in *)
-(*     return (Ast.App (var, rhs)) *)
-(*   in *)
-(*   op <|> parse_a_node () *)
+and parse_op_or_a_node () : Ast.node parser =
+  let op =
+    let%bind operator = parse_op () in
+    let var = Ast.Var (operator, None) in
+    let%bind min_bp =
+      match Pratt.prefix_binding_power ~operator with
+      | Some bp -> return bp
+      | None ->
+          error [%message "Expected prefix operator" ~got:(operator : string)]
+    in
+    let%bind rhs = parse_apply ~min_bp () in
+    return (Ast.App (var, rhs))
+  in
+  op <|> parse_a_node ()
 
-(* and parse_apply ?(min_bp = 0) () : Ast.node parser = *)
-(*   let%bind lhs = parse_op_or_a_node () in *)
-(*   let rec inner (lhs : Ast.node) = *)
-(*     match%bind is_eof with *)
-(*     | true -> return lhs *)
-(*     | false -> *)
-(*         let%bind prev_state = get in *)
-(*         let%bind op_or_a = parse_op_or_a () in *)
-(*         let%bind op, l_bp, r_bp = *)
-(*           match op_or_a with *)
-(*           | `A a -> *)
-(*               let bp = Pratt.infix_function_binding_power in *)
-(*               return (a, bp, bp + 1) *)
-(*           | `Op operator -> ( *)
-(*               match Pratt.infix_binding_power ~operator with *)
-(*               | Some (l_bp, r_bp) -> *)
-(*                   return (Ast.Var (operator, None), l_bp, r_bp) *)
-(*               | None -> *)
-(*                   error *)
-(*                     [%message *)
-(*                       "Expected infix operator" ~got:(operator : string)]) *)
-(*         in *)
-(*         if l_bp < min_bp then *)
-(*           let%bind () = put prev_state in *)
-(*           return lhs *)
-(*         else *)
-(*           let%bind rhs = parse_apply ~min_bp:r_bp () in *)
-(*           let app = Ast.App (op, lhs) in *)
-(*           inner (Ast.App (app, rhs)) *)
-(*   in *)
-(*   inner lhs *)
+and parse_apply ?(min_bp = 0) () : Ast.node parser =
+  let%bind lhs = parse_op_or_a_node () in
+  let rec inner (lhs : Ast.node) =
+    match%bind is_eof with
+    | true -> return lhs
+    | false ->
+        let%bind prev_state = get in
+        let%bind op_or_a = parse_op_or_a () in
+        let%bind op, l_bp, r_bp =
+          match op_or_a with
+          | `A a ->
+              let bp = Pratt.infix_function_binding_power in
+              return (a, bp, bp + 1)
+          | `Op operator -> (
+              match Pratt.infix_binding_power ~operator with
+              | Some (l_bp, r_bp) ->
+                  return (Ast.Var (operator, None), l_bp, r_bp)
+              | None ->
+                  error
+                    [%message
+                      "Expected infix operator" ~got:(operator : string)])
+        in
+        if l_bp < min_bp then
+          let%bind () = put prev_state in
+          return lhs
+        else
+          let%bind rhs = parse_apply ~min_bp:r_bp () in
+          let app = Ast.App (op, lhs) in
+          inner (Ast.App (app, rhs))
+  in
+  inner lhs
 
-and parse_apply () : Ast.node parser =
-  match%bind many (parse_a_node ()) with
-  | a :: b :: rest ->
-      let init = Ast.App (a, b) in
-      let res = List.fold rest ~init ~f:(fun acc x -> Ast.App (acc, x)) in
-      return res
-  | _ -> error [%message "Expected one or more expressions"]
+(* and parse_apply () : Ast.node parser = *)
+(*   match%bind many (parse_a_node ()) with *)
+(*   | a :: b :: rest -> *)
+(*       let init = Ast.App (a, b) in *)
+(*       let res = List.fold rest ~init ~f:(fun acc x -> Ast.App (acc, x)) in *)
+(*       return res *)
+(*   | _ -> error [%message "Expected one or more expressions"] *)
 
 let parse_one = parse_b ()
 
