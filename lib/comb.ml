@@ -30,6 +30,11 @@ module Make (Token : S) = struct
         let%bind () = put tokens in
         return (Some token)
 
+  let is_eof : bool parser =
+    let open Let_syntax in
+    let%bind tokens = get in
+    return (Sequence.is_empty tokens)
+
   let put_back token =
     let%bind tokens = get in
     put (Sequence.shift_right tokens token)

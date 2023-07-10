@@ -11,7 +11,7 @@ let symbol_p =
 let rec get_identifier () : String.t parser =
   let%bind token = next in
   match token with
-  | Symbol s when not (Lexer.is_operator s) -> return s
+  | Symbol s when not (Lexer.is_operator s || Lexer.is_keyword s) -> return s
   | LParen ->
       let%bind inner = symbol_p <|> get_identifier () in
       let%bind () = eat_token RParen in
@@ -60,28 +60,15 @@ let parse_maybe_tagged p =
 
 let binding_p : Ast.binding parser = parse_maybe_tagged (get_identifier ())
 
-let rec parse_a () : Ast.node parser =
-  first [ parse_atom; parse_in_paren () ]
-  |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
-
-and parse_a_tagged () : Ast.t parser =
-  let%bind node, type_expr = parse_maybe_tagged (parse_a ()) in
-  return { Ast.node; type_expr }
-
-and parse_b_untagged () : Ast.node parser =
-  first
-    [
-      parse_lambda (); parse_let_in (); parse_if (); parse_apply (); parse_a ();
-    ]
-  |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
-
-and parse_b () : Ast.t parser =
-  let%bind node, type_expr = parse_maybe_tagged (parse_b_untagged ()) in
-  return { Ast.node; type_expr }
-
-and parse_in_paren () : Ast.node parser =
+let parse_in_paren p =
   let%bind () = eat_token LParen in
-  let%bind node = parse_b_untagged () in
+  let%bind inner = p in
+  let%bind () = eat_token RParen in
+  return inner
+
+let[@inline] parse_in_paren_maybe_typed p =
+  let%bind () = eat_token LParen in
+  let%bind inner = p () in
   let without_type_tag =
     let%bind () = eat_token RParen in
     return None
@@ -92,8 +79,34 @@ and parse_in_paren () : Ast.node parser =
     return (Some type_tag)
   in
   let%bind type_expr = with_type_tag <|> without_type_tag in
-  let expr = { Ast.node; type_expr } in
-  return (Ast.Wrapped expr)
+  return (inner, type_expr)
+
+let rec parse_a_node () : Ast.node parser =
+  first [ parse_atom; parse_a_in_paren () ]
+  |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
+
+and parse_a () : Ast.t parser =
+  let%bind node, type_expr = parse_maybe_tagged (parse_a_node ()) in
+  return { Ast.node; type_expr }
+
+and parse_b_node () : Ast.node parser =
+  first
+    [
+      parse_lambda ();
+      parse_let_in ();
+      parse_if ();
+      parse_apply ();
+      parse_a_node ();
+    ]
+  |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
+
+and parse_b () : Ast.t parser =
+  let%bind node, type_expr = parse_maybe_tagged (parse_b_node ()) in
+  return { Ast.node; type_expr }
+
+and parse_a_in_paren () : Ast.node parser =
+  let%bind node, type_expr = parse_in_paren_maybe_typed parse_b_node in
+  return Ast.({ node; type_expr } |> Wrapped)
 
 and parse_lambda () : Ast.node parser =
   let%bind () = eat_token (Token.Keyword "fun") in
@@ -151,20 +164,69 @@ and parse_op () : string parser =
   | Token.Symbol s when Lexer.is_operator s -> return s
   | got -> error [%message "Expected operator" (got : Token.t)]
 
-(* and parse_apply () : Ast.node parser = *)
-(*   let%bind lhs = parse_a_tagged () in *)
-(*   let rec inner lhs = *)
-(*     match%bind next_opt with None -> return lhs | Some _ -> return lhs *)
+(* and parse_op_or_a () = *)
+(*   let op = *)
+(*     let%map op = parse_op () in *)
+(*     `Op op *)
+(*   in *)
+(*   let a = *)
+(*     let%map a = parse_a_node () in *)
+(*     `A a *)
+(*   in *)
+(*   op <|> a *)
+
+(* and parse_op_or_a_node () : Ast.node parser = *)
+(*   let op = *)
+(*     let%bind operator = parse_op () in *)
+(*     let var = Ast.Var (operator, None) in *)
+(*     let%bind min_bp = *)
+(*       match Pratt.prefix_binding_power ~operator with *)
+(*       | Some bp -> return bp *)
+(*       | None -> *)
+(*           error [%message "Expected prefix operator" ~got:(operator : string)] *)
+(*     in *)
+(*     let%bind rhs = parse_apply ~min_bp () in *)
+(*     return (Ast.App (var, rhs)) *)
+(*   in *)
+(*   op <|> parse_a_node () *)
+
+(* and parse_apply ?(min_bp = 0) () : Ast.node parser = *)
+(*   let%bind lhs = parse_op_or_a_node () in *)
+(*   let rec inner (lhs : Ast.node) = *)
+(*     match%bind is_eof with *)
+(*     | true -> return lhs *)
+(*     | false -> *)
+(*         let%bind prev_state = get in *)
+(*         let%bind op_or_a = parse_op_or_a () in *)
+(*         let%bind op, l_bp, r_bp = *)
+(*           match op_or_a with *)
+(*           | `A a -> *)
+(*               let bp = Pratt.infix_function_binding_power in *)
+(*               return (a, bp, bp + 1) *)
+(*           | `Op operator -> ( *)
+(*               match Pratt.infix_binding_power ~operator with *)
+(*               | Some (l_bp, r_bp) -> *)
+(*                   return (Ast.Var (operator, None), l_bp, r_bp) *)
+(*               | None -> *)
+(*                   error *)
+(*                     [%message *)
+(*                       "Expected infix operator" ~got:(operator : string)]) *)
+(*         in *)
+(*         if l_bp < min_bp then *)
+(*           let%bind () = put prev_state in *)
+(*           return lhs *)
+(*         else *)
+(*           let%bind rhs = parse_apply ~min_bp:r_bp () in *)
+(*           let app = Ast.App (op, lhs) in *)
+(*           inner (Ast.App (app, rhs)) *)
 (*   in *)
 (*   inner lhs *)
 
 and parse_apply () : Ast.node parser =
-  match%bind many (parse_a_tagged ()) with
+  match%bind many (parse_a_node ()) with
   | a :: b :: rest ->
       let init = Ast.App (a, b) in
-      let res =
-        List.fold rest ~init ~f:(fun acc x -> Ast.App (Ast.untyped acc, x))
-      in
+      let res = List.fold rest ~init ~f:(fun acc x -> Ast.App (acc, x)) in
       return res
   | _ -> error [%message "Expected one or more expressions"]
 
@@ -568,3 +630,11 @@ let%expect_test "bindings" =
   [%expect {| (ast (Ok (+ ()))) |}];
   print_binding ~program:"+";
   [%expect {| (ast (Error ("Expected binding" (got (Symbol +))))) |}]
+
+let%expect_test "test_wrapped_addition" =
+  let program = {| (4 + 5) |} in
+  test_parse_one ~program
+
+let%expect_test "test_addition_and_times_binding" =
+  let program = {| 1 * 2 + 3 * (4 + 5) |} in
+  test_parse_one ~program

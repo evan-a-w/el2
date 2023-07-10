@@ -2,7 +2,7 @@ open! Core
 
 type node =
   | Lambda of binding * t
-  | App of t * t
+  | App of node * node
   | Let of binding * t * t
   | If of t * t * t
   | Var of binding
@@ -21,3 +21,6 @@ and t = { type_expr : Types.Type_expr.t option; [@sexp.option] node : node }
 [@@deriving sexp]
 
 let untyped node = { type_expr = None; node }
+
+let node_of_t (t : t) =
+  match t.type_expr with Some _ -> Wrapped t | None -> t.node

@@ -98,6 +98,8 @@ module Trie = struct
         | Some child -> search_node child ~chars)
 end
 
+let function_bp = ref 0
+
 let bp_map =
   let trie = Trie.empty () in
   let data =
@@ -123,6 +125,9 @@ let bp_map =
       in
       let binding_power = Trie.get_bp trie ~operator_type in
       Array.iter operators ~f:(fun operator ->
+          (match operator with
+          | "#" -> function_bp := Trie.get_bp trie ~operator_type:Binary
+          | _ -> ());
           match associativity with
           | `Unary ->
               Trie.insert_unary trie ~operator ~binding_power ~match_type
@@ -131,21 +136,17 @@ let bp_map =
                 ~binding_power));
   trie
 
-let infix_binding_power (node : Ast.node) =
-  match node with
-  | Ast.Var (name, None) when Lexer.is_operator name -> (
-      match Trie.search bp_map ~operator_type:Binary ~operator:name with
-      | Some { binding_power; associativity } -> (
-          match associativity with
-          | `Left -> Some (binding_power, binding_power + 1)
-          | `Right -> Some (binding_power + 1, binding_power))
-      | None -> None)
-  | _ -> None
+let infix_binding_power ~operator =
+  match Trie.search bp_map ~operator_type:Binary ~operator with
+  | Some { binding_power; associativity } -> (
+      match associativity with
+      | `Left -> Some (binding_power, binding_power + 1)
+      | `Right -> Some (binding_power + 1, binding_power))
+  | None -> None
 
-let prefix_binding_power (node : Ast.node) =
-  match node with
-  | Ast.Var (name, None) when Lexer.is_operator name -> (
-      match Trie.search bp_map ~operator_type:Unary ~operator:name with
-      | Some { binding_power; _ } -> Some binding_power
-      | None -> None)
-  | _ -> None
+let infix_function_binding_power = !function_bp
+
+let prefix_binding_power ~operator =
+  match Trie.search bp_map ~operator_type:Unary ~operator with
+  | Some { binding_power; _ } -> Some binding_power
+  | None -> None
