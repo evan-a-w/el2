@@ -8,18 +8,46 @@ let symbol_p =
   | Token.Symbol s -> return s
   | got -> error [%message "Expected symbol" (got : Token.t)]
 
-let rec get_identifier () : String.t parser =
+let lowercase_p =
+  match%bind next with
+  | Token.Symbol s when s.[0] |> Char.is_lowercase -> return s
+  | got -> error [%message "Expected symbol" (got : Token.t)]
+
+let uppercase_p =
+  match%bind next with
+  | Token.Symbol s when s.[0] |> Char.is_uppercase -> return s
+  | got -> error [%message "Expected symbol" (got : Token.t)]
+
+let rec identifier_p () : String.t parser =
   let%bind token = next in
   match token with
   | Symbol s when not (Lexer.is_operator s || Lexer.is_keyword s) -> return s
   | LParen ->
-      let%bind inner = symbol_p <|> get_identifier () in
+      let%bind inner = symbol_p <|> identifier_p () in
       let%bind () = eat_token RParen in
       return inner
   | got -> error [%message "Expected binding" (got : Token.t)]
 
-let type_expr_p () : Types.Type_expr.t parser =
-  let rec single = get_identifier () >>| Types.Type_expr.single
+let module_name_p = uppercase_p
+
+let qualified_p p : 'a Ast.Qualified.t parser =
+  let rec inner () =
+    let indexed =
+      let%bind name = module_name_p in
+      let%bind () = eat_token Token.Dot in
+      let%bind rest = inner () in
+      return Ast.Qualified.(Qualified (name, rest))
+    in
+    let base =
+      let%map res = p in
+      Ast.Qualified.Unqualified res
+    in
+    indexed <|> base
+  in
+  inner ()
+
+let type_expr_p () : Ast.Type_expr.t parser =
+  let rec single = qualified_p (identifier_p ()) >>| Ast.Type_expr.single
   and paren () =
     let%bind () = eat_token LParen in
     let%bind res = b () in
@@ -35,7 +63,7 @@ let type_expr_p () : Types.Type_expr.t parser =
     let single_f = single >>| fun x -> [ x ] in
     let%bind first = single_f <|> list () in
     let%bind next = b () in
-    return (Types.Type_expr.Multi (first, next))
+    return (Ast.Type_expr.Multi (first, next))
   and b () = multi () <|> a () in
   b ()
 
@@ -121,7 +149,7 @@ let parse_maybe_tagged p =
   let snd = p >>| fun x -> (x, None) in
   fst <|> snd
 
-let binding_p : Ast.binding parser = parse_maybe_tagged (get_identifier ())
+let binding_p : Ast.binding parser = parse_maybe_tagged (identifier_p ())
 
 let parse_in_paren p =
   let%bind () = eat_token LParen in
@@ -314,19 +342,19 @@ let parse =
 let print_type_expr ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run (type_expr_p ()) ~tokens in
-  print_s [%message (ast : (Types.Type_expr.t, Sexp.t) Result.t)]
+  print_s [%message (ast : (Ast.Type_expr.t, Sexp.t) Result.t)]
 
 let%expect_test "type_expr_single" =
   print_type_expr ~program:"int";
-  [%expect {| (ast (Ok (Single int))) |}]
+  [%expect {| (ast (Ok (Single (Unqualified int)))) |}]
 
 let%expect_test "type_expr_single_extra_paren" =
   print_type_expr ~program:"int)";
-  [%expect {| (ast (Ok (Single int))) |}]
+  [%expect {| (ast (Ok (Single (Unqualified int)))) |}]
 
 let%expect_test "type_expr_multi1" =
   print_type_expr ~program:"a int";
-  [%expect {| (ast (Ok (Multi ((Single a)) (Single int)))) |}]
+  [%expect {| (ast (Ok (Multi ((Single (Unqualified a))) (Single (Unqualified int))))) |}]
 
 let%expect_test "type_expr_multi2" =
   print_type_expr ~program:"(a, (b int)) int d";
@@ -334,8 +362,10 @@ let%expect_test "type_expr_multi2" =
     {|
     (ast
      (Ok
-      (Multi ((Single a) (Multi ((Single b)) (Single int)))
-       (Multi ((Single int)) (Single d))))) |}]
+      (Multi
+       ((Single (Unqualified a))
+        (Multi ((Single (Unqualified b))) (Single (Unqualified int))))
+       (Multi ((Single (Unqualified int))) (Single (Unqualified d)))))) |}]
 
 let test_parse_one ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
@@ -538,7 +568,9 @@ let%expect_test "test_atom_tagged" =
   let program = {| (1 : int) |} in
   test_parse_one ~program;
   [%expect
-    {| ((ast (Ok ((tag ((type_expr (Single int)))) (node (Int 1))))) (tokens ())) |}]
+    {|
+      ((ast (Ok ((tag ((type_expr (Single (Unqualified int))))) (node (Int 1)))))
+       (tokens ())) |}]
 
 let%expect_test "test_lots_type_tags" =
   let program =
@@ -557,13 +589,18 @@ let%expect_test "test_lots_type_tags" =
     {|
     (ast
      (Ok
-      (((int (((type_expr (Single int)))))
-        ((tag ((type_expr (Multi ((Single int)) (Single t))))) (node (Int 1))))
+      (((int (((type_expr (Single (Unqualified int))))))
+        ((tag
+          ((type_expr
+            (Multi ((Single (Unqualified int))) (Single (Unqualified t))))))
+         (node (Int 1))))
        ((nested ())
         ((tag
           ((type_expr
-            (Multi ((Single a) (Single b) (Single c))
-             (Multi ((Single int)) (Single t))))))
+            (Multi
+             ((Single (Unqualified a)) (Single (Unqualified b))
+              (Single (Unqualified c)))
+             (Multi ((Single (Unqualified int))) (Single (Unqualified t)))))))
          (node
           (Wrapped
            ((node
@@ -573,8 +610,8 @@ let%expect_test "test_lots_type_tags" =
                  ((node (App (App (Var (+ ())) (Var (x ()))) (Var (y ())))))))))))))))
        ((function2 ())
         ((node
-          (Lambda (x (((type_expr (Single string)))))
-           ((tag ((type_expr (Single int)))) (node (Int 1)))))))))) |}]
+          (Lambda (x (((type_expr (Single (Unqualified string))))))
+           ((tag ((type_expr (Single (Unqualified int))))) (node (Int 1)))))))))) |}]
 
 let%expect_test "test_apply_tags" =
   let program = {| g (1 : int) |} in
@@ -585,7 +622,8 @@ let%expect_test "test_apply_tags" =
       (Ok
        ((node
          (App (Var (g ()))
-          (Wrapped ((tag ((type_expr (Single int)))) (node (Int 1)))))))))
+          (Wrapped
+           ((tag ((type_expr (Single (Unqualified int))))) (node (Int 1)))))))))
      (tokens ())) |}]
 
 let%expect_test "test_apply_b" =
@@ -598,7 +636,7 @@ let%expect_test "test_apply_b" =
        ((node
          (App (Var (g ()))
           (Wrapped
-           ((tag ((type_expr (Single int))))
+           ((tag ((type_expr (Single (Unqualified int)))))
             (node (If ((node (Int 1))) ((node (Int 1))) ((node (Int 1))))))))))))
      (tokens ())) |}]
 
@@ -615,13 +653,14 @@ let%expect_test "test_nested_typed_application" =
            ((node
              (App
               (App (Var (f ()))
-               (Wrapped ((tag ((type_expr (Single int)))) (node (Int 1)))))
+               (Wrapped
+                ((tag ((type_expr (Single (Unqualified int))))) (node (Int 1)))))
               (Wrapped
-               ((tag ((type_expr (Single int))))
+               ((tag ((type_expr (Single (Unqualified int)))))
                 (node
                  (App (App (Var (a ())) (Var (b ())))
                   (Wrapped
-                   ((tag ((type_expr (Single int))))
+                   ((tag ((type_expr (Single (Unqualified int)))))
                     (node (App (Var (c ())) (Var (d ())))))))))))))))))))
      (tokens ())) |}]
 
@@ -748,7 +787,7 @@ let%expect_test "test_tag_p" =
     {|
       (ast
        (Ok
-        ((type_expr (Single int)) (mode (Allocation Local))
+        ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
          (others ((deriving ((Symbol string) (Symbol int)))))))) |}]
 
 let%expect_test "test_tags" =
@@ -759,7 +798,7 @@ let%expect_test "test_tags" =
     ((ast
       (Ok
        ((tag
-         ((type_expr (Single int)) (mode (Allocation Local))
+         ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
           (others ((name ((String x)))))))
         (node (Var (f ()))))))
      (tokens ())) |}]
@@ -772,7 +811,7 @@ let%expect_test "test_tags_both" =
     ((ast
       (Ok
        ((tag
-         ((type_expr (Single string)) (mode (Allocation Local))
+         ((type_expr (Single (Unqualified string))) (mode (Allocation Local))
           (others ((name ((String x)))))))
         (node (Var (f ()))))))
      (tokens ())) |}]

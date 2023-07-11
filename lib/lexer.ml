@@ -75,6 +75,7 @@ let lbrack_p = char '[' *> return Token.LBrack
 let rbrack_p = char ']' *> return Token.RBrack
 let colon_p = char ':' *> return Token.Colon
 let at_p = char '@' *> return Token.At
+let dot_p = char '.' *> return Token.Dot
 
 let whitespace_p =
   skip_while (function ' ' | '\n' | '\t' -> true | _ -> false)
@@ -84,7 +85,7 @@ let parser =
   let%bind token =
     colon_p <|> float_p <|> int_p <|> string_p <|> bool_p <|> arrow_p
     <|> op_symbol_p <|> ident_symbol_p <|> pipe_p <|> comma_p <|> lparen_p
-    <|> rparen_p <|> lbrack_p <|> rbrack_p <|> at_p
+    <|> rparen_p <|> lbrack_p <|> rbrack_p <|> at_p <|> dot_p
   in
   let%bind () = whitespace_p in
   return token

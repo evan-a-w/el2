@@ -14,6 +14,7 @@ type t =
   | RBrack
   | Colon
   | At
+  | Dot
   | Symbol of string
   | Keyword of string
 [@@deriving sexp, compare, variants, equal, hash]
