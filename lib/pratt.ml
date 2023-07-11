@@ -110,7 +110,7 @@ let bp_map =
       (`Right, Prefix, [| "**" |]);
       (`Left, Prefix, [| "*"; "/"; "%" |]);
       (`Left, Prefix, [| "+"; "-" |]);
-      (`Right, Prefix, [| "@"; "^" |]);
+      (`Right, Prefix, [| "^" |]);
       (`Left, Prefix, [| "="; "<"; ">"; "|"; "&"; "$"; "!=" |]);
       (`Right, Full, [| "&"; "&&" |]);
       (`Right, Full, [| "||" |]);

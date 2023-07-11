@@ -1,5 +1,6 @@
 open! Core
 
 module Type_expr = struct
-  type t = Single of string | Multi of t list * t [@@deriving sexp, variants]
+  type t = Single of string | Multi of t list * t
+  [@@deriving sexp, variants, compare, hash, equal]
 end

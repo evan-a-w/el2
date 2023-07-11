@@ -39,16 +39,64 @@ let type_expr_p () : Types.Type_expr.t parser =
   and b () = multi () <|> a () in
   b ()
 
-let type_tag_p : Types.Type_expr.t parser =
+let type_tag_p =
   let%bind () = eat_token Token.Colon in
-  type_expr_p ()
+  let%bind type_expr_ = type_expr_p () in
+  return Ast.Tag.{ type_expr = Some type_expr_; mode = None; others = [] }
+
+let tag_list_p : Ast.Tag.t parser =
+  let%bind () = eat_token Token.At in
+  let inner_type_p =
+    let%bind () = eat_token (Token.Symbol "type") in
+    let%bind () = eat_token Token.Colon in
+    let%bind res = type_expr_p () in
+    return (`Type_expr res)
+  in
+  let allocation_p =
+    eat_token (Token.Symbol "local")
+    >>| Fn.const `Local
+    <|> (eat_token (Token.Symbol "global") >>| Fn.const `Global)
+    >>| Ast.Mode.allocation
+  in
+  let mode_p =
+    let%bind () = eat_token (Token.Symbol "mode") in
+    let%bind () = eat_token Token.Colon in
+    let%bind res = allocation_p in
+    return (`Mode res)
+  in
+  let other_p =
+    let%bind tag = symbol_p in
+    let with_tag =
+      let%bind () = eat_token Token.Colon in
+      let%bind type_expr = type_expr_p () in
+      return (`Other (tag, type_expr))
+    in
+    let without_tag = return (`Other (tag, Types.Type_expr.single tag)) in
+    with_tag <|> without_tag
+  in
+  let%bind list =
+    many_sep
+      (first [ inner_type_p; mode_p; other_p ])
+      ~sep:(eat_token Token.Comma)
+  in
+  let tag =
+    List.fold list ~init:Ast.Tag.empty ~f:(fun acc x ->
+        match x with
+        | `Type_expr type_expr -> { acc with type_expr = Some type_expr }
+        | `Mode mode -> { acc with mode = Some mode }
+        | `Other (tag, type_expr) ->
+            { acc with others = (tag, type_expr) :: acc.others })
+  in
+  return { tag with others = List.rev tag.others }
+
+let tag_p = tag_list_p <|> type_tag_p
 
 let parse_tagged p =
   let%bind () = eat_token LParen in
   let%bind inner = p in
-  let%bind type_expr = type_tag_p in
+  let%bind tag = tag_p in
   let%bind () = eat_token RParen in
-  return (inner, type_expr)
+  return (inner, tag)
 
 let parse_maybe_tagged p =
   let fst =
@@ -74,12 +122,12 @@ let[@inline] parse_in_paren_maybe_typed p =
     return None
   in
   let with_type_tag =
-    let%bind type_tag = type_tag_p in
+    let%bind tag = tag_p in
     let%bind () = eat_token RParen in
-    return (Some type_tag)
+    return (Some tag)
   in
-  let%bind type_expr = with_type_tag <|> without_type_tag in
-  return (inner, type_expr)
+  let%bind tag = with_type_tag <|> without_type_tag in
+  return (inner, tag)
 
 let binding_power ~lhs ~operator =
   match Pratt.infix_binding_power ~operator with
@@ -91,8 +139,8 @@ let rec parse_a_node () : Ast.node parser =
   |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
 
 and parse_a () : Ast.t parser =
-  let%bind node, type_expr = parse_maybe_tagged (parse_a_node ()) in
-  return { Ast.node; type_expr }
+  let%bind node, tag = parse_maybe_tagged (parse_a_node ()) in
+  return { Ast.node; tag }
 
 and parse_b_node () : Ast.node parser =
   first
@@ -107,12 +155,12 @@ and parse_b_node () : Ast.node parser =
   |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
 
 and parse_b () : Ast.t parser =
-  let%bind node, type_expr = parse_maybe_tagged (parse_b_node ()) in
-  return { Ast.node; type_expr }
+  let%bind node, tag = parse_maybe_tagged (parse_b_node ()) in
+  return { Ast.node; tag }
 
 and parse_a_in_paren () : Ast.node parser =
-  let%bind node, type_expr = parse_in_paren_maybe_typed parse_b_node in
-  return Ast.({ node; type_expr } |> Wrapped)
+  let%bind node, tag = parse_in_paren_maybe_typed parse_b_node in
+  return Ast.({ node; tag } |> Wrapped)
 
 and parse_lambda () : Ast.node parser =
   let%bind () = eat_token (Token.Keyword "fun") in
@@ -124,7 +172,7 @@ and parse_lambda () : Ast.node parser =
   | x :: xs ->
       let init = Ast.Lambda (x, expr) in
       let lambda =
-        List.fold xs ~init ~f:(fun acc x -> Ast.Lambda (x, Ast.untyped acc))
+        List.fold xs ~init ~f:(fun acc x -> Ast.Lambda (x, Ast.untagged acc))
       in
       return lambda
 
@@ -475,7 +523,7 @@ let%expect_test "test_atom_tagged" =
   let program = {| (1 : int) |} in
   test_parse_one ~program;
   [%expect
-    {| ((ast (Ok ((type_expr (Single int)) (node (Int 1))))) (tokens ())) |}]
+    {| ((ast (Ok ((tag ((type_expr (Single int)))) (node (Int 1))))) (tokens ())) |}]
 
 let%expect_test "test_lots_type_tags" =
   let program =
@@ -494,12 +542,13 @@ let%expect_test "test_lots_type_tags" =
     {|
     (ast
      (Ok
-      (((int ((Single int)))
-        ((type_expr (Multi ((Single int)) (Single t))) (node (Int 1))))
+      (((int (((type_expr (Single int)))))
+        ((tag ((type_expr (Multi ((Single int)) (Single t))))) (node (Int 1))))
        ((nested ())
-        ((type_expr
-          (Multi ((Single a) (Single b) (Single c))
-           (Multi ((Single int)) (Single t))))
+        ((tag
+          ((type_expr
+            (Multi ((Single a) (Single b) (Single c))
+             (Multi ((Single int)) (Single t))))))
          (node
           (Wrapped
            ((node
@@ -509,8 +558,8 @@ let%expect_test "test_lots_type_tags" =
                  ((node (App (App (Var (+ ())) (Var (x ()))) (Var (y ())))))))))))))))
        ((function2 ())
         ((node
-          (Lambda (x ((Single string)))
-           ((type_expr (Single int)) (node (Int 1)))))))))) |}]
+          (Lambda (x (((type_expr (Single string)))))
+           ((tag ((type_expr (Single int)))) (node (Int 1)))))))))) |}]
 
 let%expect_test "test_apply_tags" =
   let program = {| g (1 : int) |} in
@@ -520,7 +569,8 @@ let%expect_test "test_apply_tags" =
     ((ast
       (Ok
        ((node
-         (App (Var (g ())) (Wrapped ((type_expr (Single int)) (node (Int 1)))))))))
+         (App (Var (g ()))
+          (Wrapped ((tag ((type_expr (Single int)))) (node (Int 1)))))))))
      (tokens ())) |}]
 
 let%expect_test "test_apply_b" =
@@ -533,7 +583,7 @@ let%expect_test "test_apply_b" =
        ((node
          (App (Var (g ()))
           (Wrapped
-           ((type_expr (Single int))
+           ((tag ((type_expr (Single int))))
             (node (If ((node (Int 1))) ((node (Int 1))) ((node (Int 1))))))))))))
      (tokens ())) |}]
 
@@ -550,13 +600,13 @@ let%expect_test "test_nested_typed_application" =
            ((node
              (App
               (App (Var (f ()))
-               (Wrapped ((type_expr (Single int)) (node (Int 1)))))
+               (Wrapped ((tag ((type_expr (Single int)))) (node (Int 1)))))
               (Wrapped
-               ((type_expr (Single int))
+               ((tag ((type_expr (Single int))))
                 (node
                  (App (App (Var (a ())) (Var (b ())))
                   (Wrapped
-                   ((type_expr (Single int))
+                   ((tag ((type_expr (Single int))))
                     (node (App (Var (c ())) (Var (d ())))))))))))))))))))
      (tokens ())) |}]
 
@@ -668,7 +718,18 @@ let%expect_test "simple_apply2" =
 let%expect_test "simple_apply3" =
   let program = {| f 1 - 2 |} in
   test_parse_one ~program;
-  [%expect {|
+  [%expect
+    {|
     ((ast
       (Ok ((node (App (App (Var (- ())) (App (Var (f ())) (Int 1))) (Int 2))))))
      (tokens ())) |}]
+
+let%expect_test "test_tag_p" =
+  let program = {| @[type : int, mode : local, name : "x"] |} in
+  let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
+  let ast, _ = run tag_p ~tokens in
+  print_s [%message (ast : (Ast.Tag.t, Sexp.t) Result.t)]
+
+let%expect_test "test_tags" =
+  let program = {| (f @[type : int, mode : local, name : "x"]) |} in
+  test_parse_one ~program

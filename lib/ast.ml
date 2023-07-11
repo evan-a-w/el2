@@ -1,5 +1,21 @@
 open! Core
 
+module Mode = struct
+  type t = Allocation of [ `Local | `Global ]
+  [@@deriving sexp, compare, equal, hash, variants]
+end
+
+module Tag = struct
+  type t = {
+    type_expr : Types.Type_expr.t option; [@sexp.option]
+    mode : Mode.t option; [@sexp.option]
+    others : (string * Types.Type_expr.t) list; [@sexp.list]
+  }
+  [@@deriving sexp, compare, equal, hash, fields]
+
+  let empty = { type_expr = None; mode = None; others = [] }
+end
+
 type node =
   | Lambda of binding * t
   | App of node * node
@@ -14,13 +30,8 @@ type node =
   | Wrapped of t
 [@@deriving sexp]
 
-and binding = (string * Types.Type_expr.t option[@sexp.option])
-[@@deriving sexp]
+and binding = (string * Tag.t option[@sexp.option]) [@@deriving sexp]
+and t = { tag : Tag.t option; [@sexp.option] node : node } [@@deriving sexp]
 
-and t = { type_expr : Types.Type_expr.t option; [@sexp.option] node : node }
-[@@deriving sexp]
-
-let untyped node = { type_expr = None; node }
-
-let node_of_t (t : t) =
-  match t.type_expr with Some _ -> Wrapped t | None -> t.node
+let untagged node = { tag = None; node }
+let node_of_t (t : t) = match t.tag with Some _ -> Wrapped t | None -> t.node
