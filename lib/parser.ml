@@ -664,3 +664,11 @@ let%expect_test "simple_apply2" =
     ((ast
       (Ok ((node (App (App (Var (+ ())) (App (Var (f ())) (Int 1))) (Int 2))))))
      (tokens ())) |}]
+
+let%expect_test "simple_apply3" =
+  let program = {| f 1 - 2 |} in
+  test_parse_one ~program;
+  [%expect {|
+    ((ast
+      (Ok ((node (App (App (Var (- ())) (App (Var (f ())) (Int 1))) (Int 2))))))
+     (tokens ())) |}]
