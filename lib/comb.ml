@@ -74,6 +74,7 @@ module Make (Token : S) = struct
   let many_rev1 p = many_sep_rev1 p ~sep:(return ())
   let many_sep1 p ~sep = many_sep_rev1 p ~sep >>| List.rev
   let many p = many_sep p ~sep:(return ())
+  let many1 p = many_sep1 p ~sep:(return ())
   let run p ~tokens = run p ~state:tokens
   let matches_prefix p ~tokens = Result.is_ok (run p ~tokens |> Tuple2.get1)
 
@@ -85,4 +86,16 @@ module Make (Token : S) = struct
     match match_type with
     | `Full -> matches_full p ~tokens
     | `Prefix -> matches_prefix p ~tokens
+
+  let maybe p =
+    let%bind prev_state = get in
+    match%bind.State p with
+    | Ok res -> return (Some res)
+    | Error _ ->
+        let%bind () = put prev_state in
+        return None
+
+  let satisfies f =
+    let%bind token = next in
+    if f token then return token else error [%message "Unexpected token"]
 end

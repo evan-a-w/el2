@@ -16,4 +16,4 @@ type t =
   | At
   | Symbol of string
   | Keyword of string
-[@@deriving sexp, compare, variants]
+[@@deriving sexp, compare, variants, equal, hash]

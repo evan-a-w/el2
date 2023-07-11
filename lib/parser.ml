@@ -68,10 +68,13 @@ let tag_list_p : Ast.Tag.t parser =
     let%bind tag = symbol_p in
     let with_tag =
       let%bind () = eat_token Token.Colon in
-      let%bind type_expr = type_expr_p () in
-      return (`Other (tag, type_expr))
+      let accepted_token token =
+        not (List.exists ~f:(Token.equal token) [ Token.Comma; Token.RBrack ])
+      in
+      let%bind list = many1 (satisfies accepted_token) in
+      return (`Other (tag, list))
     in
-    let without_tag = return (`Other (tag, Types.Type_expr.single tag)) in
+    let without_tag = return (`Other (tag, [])) in
     with_tag <|> without_tag
   in
   let%bind list =
@@ -89,12 +92,19 @@ let tag_list_p : Ast.Tag.t parser =
         match x with
         | `Type_expr type_expr -> { acc with type_expr = Some type_expr }
         | `Mode mode -> { acc with mode = Some mode }
-        | `Other (tag, type_expr) ->
-            { acc with others = (tag, type_expr) :: acc.others })
+        | `Other x -> { acc with others = x :: acc.others })
   in
   return { tag with others = List.rev tag.others }
 
-let tag_p : Ast.Tag.t parser = tag_list_p <|> type_tag_p
+let tag_p : Ast.Tag.t parser =
+  let%bind type_tag = maybe type_tag_p in
+  let%bind tag_list = maybe tag_list_p in
+  match (type_tag, tag_list) with
+  | Some type_tag, Some tag_list ->
+      return Ast.Tag.{ tag_list with type_expr = type_tag.type_expr }
+  | Some type_tag, None -> return type_tag
+  | None, Some tag_list -> return tag_list
+  | None, None -> error [%message "Expected tag"]
 
 let parse_tagged p =
   let%bind () = eat_token LParen in
@@ -730,11 +740,39 @@ let%expect_test "simple_apply3" =
      (tokens ())) |}]
 
 let%expect_test "test_tag_p" =
-  let program = {| @[type : int, mode : local, name : "x"] |} in
+  let program = {| @[type : int, mode : local, deriving : string int] |} in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
-  let ast, _ = run tag_p ~tokens in
-  print_s [%message (ast : (Ast.Tag.t, Sexp.t) Result.t)]
+  let ast, _ = run tag_list_p ~tokens in
+  print_s [%message (ast : (Ast.Tag.t, Sexp.t) Result.t)];
+  [%expect
+    {|
+      (ast
+       (Ok
+        ((type_expr (Single int)) (mode (Allocation Local))
+         (others ((deriving ((Symbol string) (Symbol int)))))))) |}]
 
 let%expect_test "test_tags" =
   let program = {| (f @[type : int, mode : local, name : "x"]) |} in
-  test_parse_one ~program
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       ((tag
+         ((type_expr (Single int)) (mode (Allocation Local))
+          (others ((name ((String x)))))))
+        (node (Var (f ()))))))
+     (tokens ())) |}]
+
+let%expect_test "test_tags_both" =
+  let program = {| (f : string @[type : int, mode : local, name : "x"]) |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       ((tag
+         ((type_expr (Single string)) (mode (Allocation Local))
+          (others ((name ((String x)))))))
+        (node (Var (f ()))))))
+     (tokens ())) |}]

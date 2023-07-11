@@ -9,7 +9,7 @@ module Tag = struct
   type t = {
     type_expr : Types.Type_expr.t option; [@sexp.option]
     mode : Mode.t option; [@sexp.option]
-    others : (string * Types.Type_expr.t) list; [@sexp.list]
+    others : (string * Token.t list) list; [@sexp.list]
   }
   [@@deriving sexp, compare, equal, hash, fields]
 
