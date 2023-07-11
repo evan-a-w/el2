@@ -75,9 +75,14 @@ let tag_list_p : Ast.Tag.t parser =
     with_tag <|> without_tag
   in
   let%bind list =
-    many_sep
-      (first [ inner_type_p; mode_p; other_p ])
-      ~sep:(eat_token Token.Comma)
+    let%bind () = eat_token Token.LBrack in
+    let%bind res =
+      many_sep
+        (first [ inner_type_p; mode_p; other_p ])
+        ~sep:(eat_token Token.Comma)
+    in
+    let%map () = eat_token Token.RBrack in
+    res
   in
   let tag =
     List.fold list ~init:Ast.Tag.empty ~f:(fun acc x ->
@@ -89,7 +94,7 @@ let tag_list_p : Ast.Tag.t parser =
   in
   return { tag with others = List.rev tag.others }
 
-let tag_p = tag_list_p <|> type_tag_p
+let tag_p : Ast.Tag.t parser = tag_list_p <|> type_tag_p
 
 let parse_tagged p =
   let%bind () = eat_token LParen in
