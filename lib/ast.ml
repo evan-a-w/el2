@@ -34,17 +34,21 @@ type node =
   | App of node * node
   | Let of binding * t * t
   | If of t * t * t
-  | Var of binding
+  | Var of binding Qualified.t
   | Unit
   | Int of int
   | Bool of bool
   | Float of float
   | String of string
-  | Wrapped of t
+  | Wrapped of t Qualified.t
 [@@deriving sexp]
 
 and binding = (lowercase * Tag.t option[@sexp.option]) [@@deriving sexp]
 and t = { tag : Tag.t option; [@sexp.option] node : node } [@@deriving sexp]
 
 let untagged node = { tag = None; node }
-let node_of_t (t : t) = match t.tag with Some _ -> Wrapped t | None -> t.node
+
+let node_of_t (t : t) =
+  match t.tag with
+  | Some _ -> Wrapped (Qualified.Unqualified t)
+  | None -> t.node
