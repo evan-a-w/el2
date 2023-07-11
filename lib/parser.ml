@@ -81,6 +81,11 @@ let[@inline] parse_in_paren_maybe_typed p =
   let%bind type_expr = with_type_tag <|> without_type_tag in
   return (inner, type_expr)
 
+let binding_power ~lhs ~operator =
+  match Pratt.infix_binding_power ~operator with
+  | Some (l_bp, r_bp) -> return (Ast.Var (operator, None), lhs, l_bp, r_bp)
+  | None -> error [%message "Expected infix operator" ~got:(operator : string)]
+
 let rec parse_a_node () : Ast.node parser =
   first [ parse_atom; parse_a_in_paren () ]
   |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
@@ -95,6 +100,7 @@ and parse_b_node () : Ast.node parser =
       parse_lambda ();
       parse_let_in ();
       parse_if ();
+      parse_apply ();
       parse_pratt ();
       parse_a_node ();
     ]
@@ -176,7 +182,7 @@ and parse_op_or_a () =
   op <|> a
 
 and parse_a_with_prefix ?(min_bp = 0) () : Ast.node parser =
-  let op =
+  let prefixed =
     let%bind operator = parse_op () in
     let var = Ast.Var (operator, None) in
     let%bind min_bp =
@@ -189,7 +195,7 @@ and parse_a_with_prefix ?(min_bp = 0) () : Ast.node parser =
     let%bind rhs = parse_pratt ~min_bp () in
     return (Ast.App (var, rhs))
   in
-  op <|> parse_a_node ()
+  prefixed <|> parse_a_node ()
 
 and parse_pratt ?(min_bp = 0) ?lhs () : Ast.node parser =
   let%bind lhs =
@@ -206,24 +212,16 @@ and parse_pratt ?(min_bp = 0) ?lhs () : Ast.node parser =
         | `A a ->
             let bp = Pratt.infix_function_binding_power () in
             return (lhs, a, bp, bp + 1)
-        | `Op operator -> (
-            match Pratt.infix_binding_power ~operator with
-            | Some (l_bp, r_bp) ->
-                return (Ast.Var (operator, None), lhs, l_bp, r_bp)
-            | None ->
-                error
-                  [%message "Expected infix operator" ~got:(operator : string)])
+        | `Op operator -> binding_power ~operator ~lhs
+      in
+      let curr = Ast.App (op, lhs) in
+      let without_rhs =
+        match op_or_a with `A _ -> return curr | `Op _ -> error [%message ""]
       in
       if l_bp < min_bp then
         let%bind () = put prev_state in
         return lhs
       else
-        let curr = Ast.App (op, lhs) in
-        let without_rhs =
-          match op_or_a with
-          | `A _ -> return curr
-          | `Op _ -> error [%message ""]
-        in
         let with_rhs =
           let%bind rhs = parse_pratt ~min_bp:r_bp () in
           inner (Ast.App (curr, rhs))
@@ -234,13 +232,12 @@ and parse_pratt ?(min_bp = 0) ?lhs () : Ast.node parser =
   in
   inner lhs
 
-(* and parse_pratt () : Ast.node parser = *)
-(*   match%bind many (parse_a_node ()) with *)
-(*   | a :: b :: rest -> *)
-(*       let init = Ast.App (a, b) in *)
-(*       let res = List.fold rest ~init ~f:(fun acc x -> Ast.App (acc, x)) in *)
-(*       return res *)
-(*   | _ -> error [%message "Expected one or more expressions"] *)
+and parse_apply () : Ast.node parser =
+  let%bind first = parse_pratt () in
+  let%bind operator = parse_op () in
+  let%bind operator, _, _, r_bp = binding_power ~operator ~lhs:first in
+  let%bind second = parse_pratt ~min_bp:r_bp () <|> parse_a_node () in
+  return (Ast.App (Ast.App (operator, first), second))
 
 let parse_one = parse_b ()
 
@@ -378,9 +375,7 @@ let%expect_test "test_let_nested" =
             (Let (x ()) ((node (Int 1)))
              ((node
                (Let (y ()) ((node (Int 2)))
-                ((node
-                  (App ((node (App ((node (Var (x ())))) ((node (Var (+ ())))))))
-                   ((node (Var (y ())))))))))))))
+                ((node (App (App (Var (+ ())) (Var (x ()))) (Var (y ())))))))))))
           ((node (Var (nested ())))))))))
      (tokens ())) |}]
 
@@ -388,7 +383,17 @@ let%expect_test "test_let_nested2" =
   let program = {|
     let x = 1 in let y = 2 in x + y
   |} in
-  test_parse_one ~program
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       ((node
+         (Let (x ()) ((node (Int 1)))
+          ((node
+            (Let (y ()) ((node (Int 2)))
+             ((node (App (App (Var (+ ())) (Var (x ()))) (Var (y ())))))))))))))
+     (tokens ())) |}]
 
 let%expect_test "test_unit_value" =
   let program = {|
@@ -440,9 +445,7 @@ let%expect_test "test_lots" =
           (Let (x ()) ((node (Int 1)))
            ((node
              (Let (y ()) ((node (Int 2)))
-              ((node
-                (App ((node (App ((node (Var (x ())))) ((node (Var (+ ())))))))
-                 ((node (Var (y ()))))))))))))))
+              ((node (App (App (Var (+ ())) (Var (x ()))) (Var (y ()))))))))))))
        ((function2 ()) ((node (Lambda (x ()) ((node (Int 1)))))))
        ((function3 ())
         ((node
@@ -450,26 +453,16 @@ let%expect_test "test_lots" =
            ((node
              (Lambda (y ())
               ((node
-                (App
-                 ((node
-                   (App
-                    ((node (App ((node (Var (f ())))) ((node (Var (x ())))))))
-                    ((node (Var (+ ())))))))
-                 ((node (Var (y ()))))))))))))))
+                (App (App (Var (+ ())) (App (Var (f ())) (Var (x ()))))
+                 (Var (y ()))))))))))))
        ((if_ ())
         ((node (If ((node (Bool true))) ((node (Int 1))) ((node (Int 2)))))))
        ((if_nested ())
         ((node
           (If
            ((node
-             (App
-              ((node
-                (App
-                 ((node
-                   (App ((node (App ((node (Int 1))) ((node (Var (+ ())))))))
-                    ((node (Int 2))))))
-                 ((node (Var (= ())))))))
-              ((node (Int 3))))))
+             (App (App (Var (= ())) (App (App (Var (+ ())) (Int 1)) (Int 2)))
+              (Int 3))))
            ((node (If ((node (Bool false))) ((node (Int 1))) ((node (Int 2))))))
            ((node (Int 3)))))))))) |}]
 
@@ -513,10 +506,7 @@ let%expect_test "test_lots_type_tags" =
              (Let (x ()) ((node (Int 1)))
               ((node
                 (Let (y ()) ((node (Int 2)))
-                 ((node
-                   (App
-                    ((node (App ((node (Var (x ())))) ((node (Var (+ ())))))))
-                    ((node (Var (y ())))))))))))))))))
+                 ((node (App (App (Var (+ ())) (Var (x ()))) (Var (y ())))))))))))))))
        ((function2 ())
         ((node
           (Lambda (x ((Single string)))
@@ -530,7 +520,7 @@ let%expect_test "test_apply_tags" =
     ((ast
       (Ok
        ((node
-         (App ((node (Var (g ())))) ((type_expr (Single int)) (node (Int 1))))))))
+         (App (Var (g ())) (Wrapped ((type_expr (Single int)) (node (Int 1)))))))))
      (tokens ())) |}]
 
 let%expect_test "test_apply_b" =
@@ -541,11 +531,10 @@ let%expect_test "test_apply_b" =
     ((ast
       (Ok
        ((node
-         (App ((node (Var (g ()))))
-          ((node
-            (Wrapped
-             ((type_expr (Single int))
-              (node (If ((node (Int 1))) ((node (Int 1))) ((node (Int 1))))))))))))))
+         (App (Var (g ()))
+          (Wrapped
+           ((type_expr (Single int))
+            (node (If ((node (Int 1))) ((node (Int 1))) ((node (Int 1))))))))))))
      (tokens ())) |}]
 
 let%expect_test "test_nested_typed_application" =
@@ -556,25 +545,19 @@ let%expect_test "test_nested_typed_application" =
     ((ast
       (Ok
        ((node
-         (App ((node (Var (g ()))))
-          ((node
-            (Wrapped
-             ((node
-               (App
-                ((node
-                  (App ((node (Var (f ()))))
-                   ((type_expr (Single int)) (node (Int 1))))))
-                ((node
+         (App (Var (g ()))
+          (Wrapped
+           ((node
+             (App
+              (App (Var (f ()))
+               (Wrapped ((type_expr (Single int)) (node (Int 1)))))
+              (Wrapped
+               ((type_expr (Single int))
+                (node
+                 (App (App (Var (a ())) (Var (b ())))
                   (Wrapped
                    ((type_expr (Single int))
-                    (node
-                     (App
-                      ((node (App ((node (Var (a ())))) ((node (Var (b ())))))))
-                      ((node
-                        (Wrapped
-                         ((type_expr (Single int))
-                          (node
-                           (App ((node (Var (c ())))) ((node (Var (d ())))))))))))))))))))))))))))
+                    (node (App (Var (c ())) (Var (d ())))))))))))))))))))
      (tokens ())) |}]
 
 let%expect_test "test_unary_bang" =
@@ -656,16 +639,28 @@ let print ~parser ~program =
 
 let%expect_test "super_simple_apply" =
   let program = {| f 1 |} in
-  print ~parser:(parse_pratt ()) ~program
+  print ~parser:(parse_pratt ()) ~program;
+  [%expect {| (ast (Ok (App (Var (f ())) (Int 1)))) |}]
 
 let%expect_test "simple_apply" =
-  (* let program = {| g (f (1 : int)) |} in *)
-  (* let program = {| (f (1 : int)) |} in *)
   let program = {| (f 1) |} in
-  print ~parser:(parse_a_in_paren ()) ~program
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast (Ok ((node (Wrapped ((node (App (Var (f ())) (Int 1)))))))))
+     (tokens ())) |}]
 
 let%expect_test "simple_prefix_apply" =
   let program = {| -f |} in
   test_parse_one ~program;
   [%expect
     {| ((ast (Ok ((node (App (Var (- ())) (Var (f ()))))))) (tokens ())) |}]
+
+let%expect_test "simple_apply2" =
+  let program = {| f 1 + 2 |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok ((node (App (App (Var (+ ())) (App (Var (f ())) (Int 1))) (Int 2))))))
+     (tokens ())) |}]
