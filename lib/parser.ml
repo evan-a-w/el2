@@ -95,7 +95,7 @@ and parse_b_node () : Ast.node parser =
       parse_lambda ();
       parse_let_in ();
       parse_if ();
-      parse_apply ();
+      parse_pratt ();
       parse_a_node ();
     ]
   |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
@@ -175,54 +175,66 @@ and parse_op_or_a () =
   in
   op <|> a
 
-and parse_op_or_a_node () : Ast.node parser =
+and parse_a_with_prefix ?(min_bp = 0) () : Ast.node parser =
   let op =
     let%bind operator = parse_op () in
     let var = Ast.Var (operator, None) in
     let%bind min_bp =
       match Pratt.prefix_binding_power ~operator with
-      | Some bp -> return bp
+      | Some bp when bp >= min_bp -> return bp
+      | Some _ -> error [%message "Expected higher binding power"]
       | None ->
           error [%message "Expected prefix operator" ~got:(operator : string)]
     in
-    let%bind rhs = parse_apply ~min_bp () in
+    let%bind rhs = parse_pratt ~min_bp () in
     return (Ast.App (var, rhs))
   in
   op <|> parse_a_node ()
 
-and parse_apply ?(min_bp = 0) () : Ast.node parser =
-  let%bind lhs = parse_op_or_a_node () in
+and parse_pratt ?(min_bp = 0) ?lhs () : Ast.node parser =
+  let%bind lhs =
+    match lhs with
+    | Some lhs -> return lhs
+    | None -> parse_a_with_prefix ~min_bp ()
+  in
   let rec inner (lhs : Ast.node) =
-    match%bind is_eof with
-    | true -> return lhs
-    | false ->
-        let%bind prev_state = get in
-        let%bind op_or_a = parse_op_or_a () in
-        let%bind op, l_bp, r_bp =
+    let get_more =
+      let%bind prev_state = get in
+      let%bind op_or_a = parse_op_or_a () in
+      let%bind op, lhs, l_bp, r_bp =
+        match op_or_a with
+        | `A a ->
+            let bp = Pratt.infix_function_binding_power () in
+            return (lhs, a, bp, bp + 1)
+        | `Op operator -> (
+            match Pratt.infix_binding_power ~operator with
+            | Some (l_bp, r_bp) ->
+                return (Ast.Var (operator, None), lhs, l_bp, r_bp)
+            | None ->
+                error
+                  [%message "Expected infix operator" ~got:(operator : string)])
+      in
+      if l_bp < min_bp then
+        let%bind () = put prev_state in
+        return lhs
+      else
+        let curr = Ast.App (op, lhs) in
+        let without_rhs =
           match op_or_a with
-          | `A a ->
-              let bp = Pratt.infix_function_binding_power in
-              return (a, bp, bp + 1)
-          | `Op operator -> (
-              match Pratt.infix_binding_power ~operator with
-              | Some (l_bp, r_bp) ->
-                  return (Ast.Var (operator, None), l_bp, r_bp)
-              | None ->
-                  error
-                    [%message
-                      "Expected infix operator" ~got:(operator : string)])
+          | `A _ -> return curr
+          | `Op _ -> error [%message ""]
         in
-        if l_bp < min_bp then
-          let%bind () = put prev_state in
-          return lhs
-        else
-          let%bind rhs = parse_apply ~min_bp:r_bp () in
-          let app = Ast.App (op, lhs) in
-          inner (Ast.App (app, rhs))
+        let with_rhs =
+          let%bind rhs = parse_pratt ~min_bp:r_bp () in
+          inner (Ast.App (curr, rhs))
+        in
+        with_rhs <|> without_rhs
+    in
+    get_more <|> return lhs
   in
   inner lhs
 
-(* and parse_apply () : Ast.node parser = *)
+(* and parse_pratt () : Ast.node parser = *)
 (*   match%bind many (parse_a_node ()) with *)
 (*   | a :: b :: rest -> *)
 (*       let init = Ast.App (a, b) in *)
@@ -325,14 +337,8 @@ let%expect_test "test_app" =
     ((ast
       (Ok
        ((node
-         (App
-          ((node
-            (App
-             ((node
-               (App ((node (App ((node (Int 1))) ((node (Var (+ ())))))))
-                ((node (Int 2))))))
-             ((node (Var (= ())))))))
-          ((node (Int 3))))))))
+         (App (App (Var (= ())) (App (App (Var (+ ())) (Int 1)) (Int 2)))
+          (Int 3))))))
      (tokens ())) |}]
 
 let%expect_test "test_if_nested_application" =
@@ -349,14 +355,8 @@ let%expect_test "test_if_nested_application" =
        ((node
          (If
           ((node
-            (App
-             ((node
-               (App
-                ((node
-                  (App ((node (App ((node (Int 1))) ((node (Var (+ ())))))))
-                   ((node (Int 2))))))
-                ((node (Var (= ())))))))
-             ((node (Int 3))))))
+            (App (App (Var (= ())) (App (App (Var (+ ())) (Int 1)) (Int 2)))
+             (Int 3))))
           ((node (If ((node (Bool false))) ((node (Int 1))) ((node (Int 2))))))
           ((node (Int 3))))))))
      (tokens ())) |}]
@@ -383,6 +383,12 @@ let%expect_test "test_let_nested" =
                    ((node (Var (y ())))))))))))))
           ((node (Var (nested ())))))))))
      (tokens ())) |}]
+
+let%expect_test "test_let_nested2" =
+  let program = {|
+    let x = 1 in let y = 2 in x + y
+  |} in
+  test_parse_one ~program
 
 let%expect_test "test_unit_value" =
   let program = {|
@@ -577,13 +583,7 @@ let%expect_test "test_unary_bang" =
   [%expect
     {|
     ((ast
-      (Ok
-       ((node
-         (App
-          ((node
-            (App ((node (App ((node (Int 1))) ((node (Var (+ ())))))))
-             ((node (Var (! ())))))))
-          ((node (Int 2))))))))
+      (Ok ((node (App (App (Var (+ ())) (Int 1)) (App (Var (! ())) (Int 2)))))))
      (tokens ())) |}]
 
 let%expect_test "test_apply_left_assoc" =
@@ -591,11 +591,7 @@ let%expect_test "test_apply_left_assoc" =
   test_parse_one ~program;
   [%expect
     {|
-    ((ast
-      (Ok
-       ((node
-         (App ((node (App ((node (Var (f ())))) ((node (Var (x ())))))))
-          ((node (Var (y ())))))))))
+    ((ast (Ok ((node (App (App (Var (f ())) (Var (x ()))) (Var (y ())))))))
      (tokens ())) |}]
 
 let%expect_test "test_operator_binding" =
@@ -633,8 +629,43 @@ let%expect_test "bindings" =
 
 let%expect_test "test_wrapped_addition" =
   let program = {| (4 + 5) |} in
-  test_parse_one ~program
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok ((node (Wrapped ((node (App (App (Var (+ ())) (Int 4)) (Int 5)))))))))
+     (tokens ())) |}]
 
 let%expect_test "test_addition_and_times_binding" =
   let program = {| 1 * 2 + 3 * (4 + 5) |} in
-  test_parse_one ~program
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       ((node
+         (App (App (Var (+ ())) (App (App (Var (* ())) (Int 1)) (Int 2)))
+          (App (App (Var (* ())) (Int 3))
+           (Wrapped ((node (App (App (Var (+ ())) (Int 4)) (Int 5)))))))))))
+     (tokens ())) |}]
+
+let print ~parser ~program =
+  let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
+  let ast, _ = run parser ~tokens in
+  print_s [%message (ast : (Ast.node, Sexp.t) Result.t)]
+
+let%expect_test "super_simple_apply" =
+  let program = {| f 1 |} in
+  print ~parser:(parse_pratt ()) ~program
+
+let%expect_test "simple_apply" =
+  (* let program = {| g (f (1 : int)) |} in *)
+  (* let program = {| (f (1 : int)) |} in *)
+  let program = {| (f 1) |} in
+  print ~parser:(parse_a_in_paren ()) ~program
+
+let%expect_test "simple_prefix_apply" =
+  let program = {| -f |} in
+  test_parse_one ~program;
+  [%expect
+    {| ((ast (Ok ((node (App (Var (- ())) (Var (f ()))))))) (tokens ())) |}]

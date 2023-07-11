@@ -144,7 +144,7 @@ let infix_binding_power ~operator =
       | `Right -> Some (binding_power + 1, binding_power))
   | None -> None
 
-let infix_function_binding_power = !function_bp
+let infix_function_binding_power () = !function_bp
 
 let prefix_binding_power ~operator =
   match Trie.search bp_map ~operator_type:Unary ~operator with
