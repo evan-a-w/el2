@@ -96,7 +96,7 @@ end
 
 (* node has no spaces, t does *)
 type node =
-  | Var of Binding.t Qualified.t
+  | Var of Binding.t Qualified.t (* TODO: change to Lowercase.t Qualified.t *)
   | Literal of Literal.t
   | Tuple of t Tuple.t Qualified.t
   | Constructor of Uppercase.t Qualified.t
