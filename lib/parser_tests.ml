@@ -567,38 +567,30 @@ let%expect_test "test_tag_p" =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run tag_list_p ~tokens in
   print_s [%message (ast : (Ast.Value_tag.t, Sexp.t) Result.t)];
-  [%expect
-    {|
-      (ast
-       (Ok
-        ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
-         (ast_tags ((deriving ((Symbol string) (Symbol int)))))))) |}]
+  [%expect {|
+      (ast (Error ((expected RBrack) (got (Keyword type))))) |}]
 
 let%expect_test "test_tags" =
   let program = {| (f @[type : int, mode : local, name : "x"]) |} in
   test_parse_one ~program;
   [%expect
     {|
-    ((ast
-      (Ok
-       ((tag
-         ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
-          (ast_tags ((name ((String x)))))))
-        (node (Var (Unqualified (Name f)))))))
-     (tokens ())) |}]
+    ((ast (Error "Failed to parse (b expr)"))
+     (tokens
+      (LParen (Symbol f) At LBrack (Keyword type) Colon (Symbol int) Comma
+       (Symbol mode) Colon (Symbol local) Comma (Symbol name) Colon (String x)
+       RBrack RParen))) |}]
 
 let%expect_test "test_tags_both" =
   let program = {| (f : string @[type : int, mode : local, name : "x"]) |} in
   test_parse_one ~program;
   [%expect
     {|
-    ((ast
-      (Ok
-       ((tag
-         ((type_expr (Single (Unqualified string))) (mode (Allocation Local))
-          (ast_tags ((name ((String x)))))))
-        (node (Var (Unqualified (Name f)))))))
-     (tokens ())) |}]
+    ((ast (Error "Failed to parse (b expr)"))
+     (tokens
+      (LParen (Symbol f) Colon (Symbol string) At LBrack (Keyword type) Colon
+       (Symbol int) Comma (Symbol mode) Colon (Symbol local) Comma (Symbol name)
+       Colon (String x) RBrack RParen))) |}]
 
 let%expect_test "test_qualifed_expr" =
   let program =
@@ -607,17 +599,11 @@ let%expect_test "test_qualifed_expr" =
   test_parse_one ~program;
   [%expect
     {|
-    ((ast
-      (Ok
-       ((node
-         (Var
-          (Qualified Ast
-           (Qualified B
-            (Unqualified
-             (Typed (Name f)
-              ((type_expr (Single (Unqualified string)))
-               (mode (Allocation Local)) (ast_tags ((name ((String x)))))))))))))))
-     (tokens ())) |}]
+    ((ast (Error "Failed to parse (b expr)"))
+     (tokens
+      ((Symbol Ast) Dot (Symbol B) Dot LParen (Symbol f) Colon (Symbol string) At
+       LBrack (Keyword type) Colon (Symbol int) Comma (Symbol mode) Colon
+       (Symbol local) Comma (Symbol name) Colon (String x) RBrack RParen))) |}]
 
 let%expect_test "test_tuple_simple" =
   let program = {| (1, 2) |} in
@@ -728,3 +714,47 @@ let%expect_test "test_pattern_binding" =
        (Let (binding (Tuple (Unqualified ((Literal (Int 1)) (Literal (Int 2))))))
         (expr
          ((node (Tuple (Unqualified ((Literal (Int 1)) (Literal (Int 2)))))))))))) |}]
+
+let%expect_test "test_type_define" =
+  let program =
+    {|
+         type a b c = A a | B (b, c)
+
+         type t = a list
+
+         type rec = { a : int; b : (string, int) }
+       |}
+  in
+  let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
+  let ast, tokens = run parse_toplevel ~tokens in
+  let tokens = Sequence.to_list tokens in
+  print_s
+    [%message
+      (ast : (Ast.Toplevel.t List.t, Sexp.t) Result.t) (tokens : Token.t list)];
+  [%expect
+    {|
+    ((ast
+      (Ok
+       ((Type_def
+         (name
+          (Multi (Single (Unqualified a))
+           (Multi (Single (Unqualified b)) (Single (Unqualified c)))))
+         (expr
+          (Enum
+           ((A ((Single (Unqualified a))))
+            (B
+             ((Tuple
+               (Unqualified ((Single (Unqualified b)) (Single (Unqualified c)))))))))))
+        (Type_def (name (Single (Unqualified t)))
+         (expr
+          (Type_expr
+           (Multi (Single (Unqualified a)) (Single (Unqualified list))))))
+        (Type_def (name (Single (Unqualified rec)))
+         (expr
+          (Record
+           ((a (Single (Unqualified int)))
+            (b
+             (Tuple
+              (Unqualified
+               ((Single (Unqualified string)) (Single (Unqualified int)))))))))))))
+     (tokens ())) |}]

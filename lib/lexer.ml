@@ -2,7 +2,9 @@ open! Core
 open Angstrom
 open Angstrom.Let_syntax
 
-let keywords = [ "let"; "in"; "match"; "with"; "then"; "else"; "if"; "fun" ]
+let keywords =
+  [ "let"; "in"; "match"; "with"; "then"; "else"; "if"; "fun"; "type" ]
+
 let is_digit = function '0' .. '9' -> true | _ -> false
 let int_p = take_while1 is_digit >>| Int.of_string >>| Token.int
 let is_keyword s = List.mem keywords s ~equal:String.equal

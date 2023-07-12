@@ -77,14 +77,15 @@ let tuple_p p : 'a Ast.Tuple.t parser =
   let%map () = eat_token Token.RParen in
   res
 
+let single_type_expr_p = qualified_p (identifier_p ()) >>| Ast.Type_expr.single
+
 let type_expr_p () : Ast.Type_expr.t parser =
-  let rec single = qualified_p (identifier_p ()) >>| Ast.Type_expr.single
-  and paren () =
+  let rec paren () =
     let%bind () = eat_token LParen in
     let%bind res = whole () in
     let%bind () = eat_token RParen in
     return res
-  and a () = single <|> paren ()
+  and a () = single_type_expr_p <|> paren ()
   and tuple () = qualified_p (tuple_p whole) >>| Ast.Type_expr.tuple
   and multi () =
     let%bind first = a () <|> tuple () in
@@ -92,6 +93,11 @@ let type_expr_p () : Ast.Type_expr.t parser =
     return (Ast.Type_expr.Multi (first, next))
   and whole () = multi () <|> a () <|> tuple () in
   whole ()
+
+let type_expr_no_spaces_p =
+  parse_in_paren (type_expr_p ())
+  <|> single_type_expr_p
+  <|> (qualified_p (tuple_p type_expr_p) >>| Ast.Type_expr.tuple)
 
 let ast_tag_p : (Ast.Tag.t * Token.t list) parser =
   let%bind tag = symbol_p in
@@ -423,25 +429,28 @@ let enum_type_def_lit_p =
   let%bind _ = optional (eat_token Token.Pipe) in
   let each =
     let%bind constructor = uppercase_p in
-    let%bind value_type = optional (type_expr_p ()) in
+    let%bind value_type = optional type_expr_no_spaces_p in
     return (constructor, value_type)
   in
-  let%bind list = many_sep each ~sep:(eat_token Token.Pipe) in
+  let%bind list = many_sep1 each ~sep:(eat_token Token.Pipe) in
   let map = Ast.Uppercase.Map.of_alist_exn list in
   return (Ast.Type_def_lit.Enum map)
 
 let typedef_toplevel_p : Ast.Toplevel.t parser =
+  let type_expr_lit_p = type_expr_p () >>| Ast.Type_def_lit.type_expr in
   let%bind () = eat_token (Token.Keyword "type") in
   let%bind name = type_expr_p () in
   let%bind () = eat_token (Token.Symbol "=") in
-  let%bind expr = record_type_def_lit_p <|> enum_type_def_lit_p in
+  let%bind expr =
+    record_type_def_lit_p <|> enum_type_def_lit_p <|> type_expr_lit_p
+  in
   return (Ast.Toplevel.Type_def { name; expr })
 
 let parse_toplevel : Ast.Toplevel.t List.t parser =
-  let parse_let =
+  let let_toplevel_p =
     parse_let () >>| fun (binding, expr) -> Ast.Toplevel.Let { binding; expr }
   in
-  let inner = parse_let in
+  let inner = let_toplevel_p <|> typedef_toplevel_p in
   let%bind program = many inner in
   let%bind tokens = get in
   match Sequence.next tokens with
