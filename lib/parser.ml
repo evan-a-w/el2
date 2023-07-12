@@ -284,18 +284,14 @@ let binding_power ~lhs ~operator =
           r_bp )
   | None -> error [%message "Expected infix operator" ~got:(operator : string)]
 
-let rec parse_a_node () : Ast.node parser =
-  first [ parse_atom; parse_a_in_paren (); parse_tuple () ]
+let rec parse_node () : Ast.node parser =
+  first [ parse_atom; parse_wrapped_node (); parse_tuple () ]
   |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
-
-and parse_a () : Ast.t parser =
-  let%bind node, tag = parse_maybe_tagged (parse_a_node ()) in
-  return { Ast.node; tag }
 
 and parse_tuple () : Ast.node parser =
   qualified_p (tuple_p parse_b_node) >>| fun x -> Ast.Tuple x
 
-and parse_b_node () : Ast.node parser =
+and parse_t_no_type () : Ast.t parser =
   first
     [
       parse_lambda ();
@@ -304,61 +300,62 @@ and parse_b_node () : Ast.node parser =
       parse_match ();
       parse_apply ();
       parse_pratt ();
-      parse_a_node ();
+      (parse_node () >>| fun x -> Ast.Node x);
     ]
   |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
 
-and parse_b () : Ast.t parser =
-  let%bind node, tag = parse_maybe_tagged (parse_b_node ()) in
-  return { Ast.node; tag }
+and parse_t () : Ast.t parser =
+  let%bind t = parse_t_no_type () in
+  let%map tag = optional type_tag_p in
+  match tag with None -> t | Some tag -> Ast.Typed (t, tag)
 
-and parse_a_in_paren () : Ast.node parser =
+and parse_wrapped_node () : Ast.node parser =
   let in_paren =
-    let%bind node, tag = parse_in_paren_maybe_typed parse_b_node in
-    return Ast.{ node; tag }
+    let%bind () = eat_token LParen in
+    let%bind inner = parse_t () in
+    let%map () = eat_token RParen in
+    inner
   in
   let%map qualified = qualified_p in_paren in
   Ast.Wrapped qualified
 
-and parse_lambda () : Ast.node parser =
+and parse_lambda () : Ast.t parser =
   let%bind () = eat_token (Token.Keyword "fun") <|> eat_token Token.Backslash in
   let%bind bindings = many_rev1 (binding_p ()) in
   let%bind () = eat_token Arrow in
-  let%bind expr = parse_b () in
+  let%bind expr = parse_t () in
   match bindings with
   | [] -> assert false
   | x :: xs ->
       let init = Ast.Lambda (x, expr) in
-      let lambda =
-        List.fold xs ~init ~f:(fun acc x -> Ast.Lambda (x, Ast.untagged acc))
-      in
+      let lambda = List.fold xs ~init ~f:(fun acc x -> Ast.Lambda (x, acc)) in
       return lambda
 
 and parse_let () : (Ast.Binding.t * Ast.t) parser =
   let%bind () = eat_token (Token.Keyword "let") in
   let%bind binding = binding_p () in
   let%bind () = eat_token (Token.Symbol "=") in
-  let%bind expr = parse_b () in
+  let%bind expr = parse_t () in
   return (binding, expr)
 
-and parse_let_in () : Ast.node parser =
+and parse_let_in () : Ast.t parser =
   let%bind var, expr = parse_let () in
   let%bind () = eat_token (Token.Keyword "in") in
-  let%bind body = parse_b () in
+  let%bind body = parse_t () in
   return (Ast.Let (var, expr, body))
 
-and parse_if () : Ast.node parser =
+and parse_if () : Ast.t parser =
   let%bind () = eat_token (Token.Keyword "if") in
-  let%bind cond = parse_b () in
+  let%bind cond = parse_t () in
   let%bind () = eat_token (Token.Keyword "then") in
-  let%bind then_ = parse_b () in
+  let%bind then_ = parse_t () in
   let%bind () = eat_token (Token.Keyword "else") in
-  let%bind else_ = parse_b () in
+  let%bind else_ = parse_t () in
   return (Ast.If (cond, then_, else_))
 
-and parse_match () : Ast.node parser =
+and parse_match () : Ast.t parser =
   let%bind () = eat_token (Token.Keyword "match") in
-  let%bind first = parse_b () in
+  let%bind first = parse_t () in
   let%bind () = eat_token (Token.Keyword "with") in
   let one =
     let%bind binding = binding_p () in
