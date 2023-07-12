@@ -77,7 +77,7 @@ let%expect_test "test_function_two_args_nested" =
 
 let%expect_test "test_if_simple" =
   let program = {|
-    if true then 1 else 2
+    if (true : int) then 1 else 2
      |} in
   test_parse_one ~program;
   [%expect
@@ -85,8 +85,10 @@ let%expect_test "test_if_simple" =
     ((ast
       (Ok
        ((node
-         (If ((node (Literal (Bool true)))) ((node (Literal (Int 1))))
-          ((node (Literal (Int 2)))))))))
+         (If
+          ((tag ((type_expr (Single (Unqualified int))) (ast_tags ())))
+           (node (Literal (Bool true))))
+          ((node (Literal (Int 1)))) ((node (Literal (Int 2)))))))))
      (tokens ())) |}]
 
 let%expect_test "test_app" =
@@ -292,7 +294,8 @@ let%expect_test "test_lots_type_tags" =
 
     let nested = ((let x = 1 in let y = 2 in x + y) : (a, b, c) int t)
 
-    let function2 = fun (x : string) -> (1 : int) |}
+    let function2 = fun (x : string) -> (1 : int)
+    let ((a, (b : int), 1) : (int, int)) = 1 |}
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run parse_toplevel ~tokens in
@@ -341,7 +344,22 @@ let%expect_test "test_lots_type_tags" =
             (Typed (Name x)
              ((type_expr (Single (Unqualified string))) (ast_tags ())))
             ((tag ((type_expr (Single (Unqualified int))) (ast_tags ())))
-             (node (Literal (Int 1)))))))))))) |}]
+             (node (Literal (Int 1)))))))))
+       (Let
+        (binding
+         (Typed
+          (Tuple
+           (Unqualified
+            ((Name a)
+             (Typed (Name b)
+              ((type_expr (Single (Unqualified int))) (ast_tags ())))
+             (Literal (Int 1)))))
+          ((type_expr
+            (Tuple
+             (Unqualified
+              ((Single (Unqualified int)) (Single (Unqualified int))))))
+           (ast_tags ()))))
+        (expr ((node (Literal (Int 1))))))))) |}]
 
 let%expect_test "test_apply_tags" =
   let program = {| g (1 : int) |} in
@@ -669,9 +687,9 @@ let%expect_test "test_pattern_binding" =
 
           let Ast.Cons (a) = _
 
-          let Ast.(Cons) (a, Pee e, c) = _
+          let Ast.(Cons) (a, (Pee e as x), c) = _
 
-          let Ast.Cons (Ast.Cons a) = _
+          let (Ast.Cons (Ast.Cons a) as y) = _
 
           let { a : b; c : (d, e) } = _
 
@@ -698,12 +716,15 @@ let%expect_test "test_pattern_binding" =
          (Constructor (Qualified Ast (Unqualified Cons))
           ((Tuple
             (Unqualified
-             ((Name a) (Constructor (Unqualified Pee) ((Name e))) (Name c)))))))
+             ((Name a) (Renamed (Constructor (Unqualified Pee) ((Name e))) x)
+              (Name c)))))))
         (expr ((node (Var (Unqualified (Name _)))))))
        (Let
         (binding
-         (Constructor (Qualified Ast (Unqualified Cons))
-          ((Constructor (Qualified Ast (Unqualified Cons)) ((Name a))))))
+         (Renamed
+          (Constructor (Qualified Ast (Unqualified Cons))
+           ((Constructor (Qualified Ast (Unqualified Cons)) ((Name a)))))
+          y))
         (expr ((node (Var (Unqualified (Name _)))))))
        (Let
         (binding
@@ -758,3 +779,39 @@ let%expect_test "test_type_define" =
               (Unqualified
                ((Single (Unqualified string)) (Single (Unqualified int)))))))))))))
      (tokens ())) |}]
+
+let%expect_test "test_match" =
+  let program = {|
+      match 1 with
+      | Cons a -> a
+      | Nil -> 1 |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       ((node
+         (Match ((node (Literal (Int 1))))
+          (((Constructor (Unqualified Cons) ((Name a)))
+            ((node (Var (Unqualified (Name a))))))
+           ((Constructor (Unqualified Nil) ()) ((node (Literal (Int 1)))))))))))
+     (tokens ())) |}]
+
+let%expect_test "test_constructor_with_infix" =
+  let program = {| Cons 1 + 2 |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast (Error "Failed to parse (b expr)"))
+     (tokens ((Symbol Cons) (Int 1) (Symbol +) (Int 2)))) |}]
+
+let%expect_test "test_type_expr_no_paren" =
+  let program = {| a b c : int |} in
+  test_parse_one ~program;
+  [%expect {|
+    ((ast
+      (Ok
+       ((node
+         (App (App (Var (Unqualified (Name a))) (Var (Unqualified (Name b))))
+          (Var (Unqualified (Name c))))))))
+     (tokens (Colon (Symbol int)))) |}]

@@ -3,7 +3,20 @@ open Angstrom
 open Angstrom.Let_syntax
 
 let keywords =
-  [ "let"; "in"; "match"; "with"; "then"; "else"; "if"; "fun"; "type" ]
+  [
+    "let";
+    "in";
+    "match";
+    "with";
+    "then";
+    "else";
+    "if";
+    "fun";
+    "type";
+    "match";
+    "with";
+    "as";
+  ]
 
 let is_digit = function '0' .. '9' -> true | _ -> false
 let int_p = take_while1 is_digit >>| Int.of_string >>| Token.int
@@ -79,6 +92,7 @@ let rbrace_p = char '}' *> return Token.RBrace
 let lbrace_p = char '{' *> return Token.LBrace
 let colon_p = char ':' *> return Token.Colon
 let semicolon_p = char ';' *> return Token.Semicolon
+let backslash_p = char '\\' *> return Token.Backslash
 let at_p = char '@' *> return Token.At
 let dot_p = char '.' *> return Token.Dot
 
@@ -91,7 +105,7 @@ let parser =
     colon_p <|> float_p <|> int_p <|> string_p <|> bool_p <|> arrow_p
     <|> op_symbol_p <|> ident_symbol_p <|> pipe_p <|> comma_p <|> lparen_p
     <|> rparen_p <|> lbrack_p <|> rbrack_p <|> at_p <|> dot_p <|> semicolon_p
-    <|> lbrace_p <|> rbrace_p
+    <|> lbrace_p <|> rbrace_p <|> backslash_p
   in
   let%bind () = whitespace_p in
   return token

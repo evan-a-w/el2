@@ -90,22 +90,27 @@ module Binding = struct
     | Record of t Lowercase.Map.t Qualified.t
     | Tuple of t Tuple.t Qualified.t
     | Typed of t * Value_tag.t
+    | Renamed of t * Lowercase.t
   [@@deriving sexp, equal, hash, compare, variants]
 end
 
+(* node has no spaces, t does *)
 type node =
-  | Lambda of Binding.t * t
-  | App of node * node
-  | Let of Binding.t * t * t
-  | If of t * t * t
   | Var of Binding.t Qualified.t
   | Literal of Literal.t
   | Tuple of node Tuple.t Qualified.t
   | Wrapped of t Qualified.t
 [@@deriving sexp, equal, hash, compare]
 
-and t = { tag : Value_tag.t option; [@sexp.option] node : node }
-[@@deriving sexp]
+and t =
+  | Node of node
+  | If of t * t * t
+  | Lambda of Binding.t * t
+  | App of node * node
+  | Let of Binding.t * t * t
+  | Match of t * (Binding.t * t) list
+  | Typed of t * Value_tag.t
+[@@deriving sexp, equal, hash, compare]
 
 module Toplevel = struct
   type nonrec t =
@@ -113,10 +118,3 @@ module Toplevel = struct
     | Let of { binding : Binding.t; expr : t }
   [@@deriving sexp, equal, hash, compare]
 end
-
-let untagged node = { tag = None; node }
-
-let node_of_t (t : t) =
-  match t.tag with
-  | Some _ -> Wrapped (Qualified.Unqualified t)
-  | None -> t.node

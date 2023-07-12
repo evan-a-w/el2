@@ -18,6 +18,7 @@ type t =
   | At
   | Semicolon
   | Dot
+  | Backslash
   | Symbol of string
   | Keyword of string
 [@@deriving sexp, compare, variants, equal, hash]

@@ -205,9 +205,8 @@ let record_p ?(from_name = Fn.const None) p : 'a Ast.Lowercase.Map.t parser =
   Ast.Lowercase.Map.of_alist_exn list
 
 let name_binding_p : Ast.Binding.t parser =
-  let%map name, tag = parse_maybe_tagged (identifier_p ()) in
-  let name = Ast.Binding.Name name in
-  match tag with None -> name | Some tag -> Ast.Binding.Typed (name, tag)
+  let%map name = identifier_p () in
+  Ast.Binding.Name name
 
 let literal_binding_p : Ast.Binding.t parser =
   let%map literal = literal_p in
@@ -216,13 +215,32 @@ let literal_binding_p : Ast.Binding.t parser =
 let rec binding_p () : Ast.Binding.t parser =
   first
     [
-      name_binding_p;
-      literal_binding_p;
       constructor_binding_p ();
       tuple_binding_p ();
       record_binding_p ();
+      renamed_binding_p ();
+      typed_binding_p ();
+      name_binding_p;
+      literal_binding_p;
     ]
   |> map_error ~f:(fun _ -> [%message "Expected binding"])
+
+and renamed_binding_p () =
+  let%bind () = eat_token Token.LParen in
+  let%bind first = binding_p () in
+  let%bind () = eat_token (Token.Keyword "as") in
+  let%bind second = identifier_p () in
+  let res = Ast.Binding.Renamed (first, second) in
+  let%map () = eat_token Token.RParen in
+  res
+
+and typed_binding_p () =
+  let%bind () = eat_token Token.LParen in
+  let%bind first = binding_p () in
+  let%bind second = type_tag_p in
+  let res = Ast.Binding.Typed (first, second) in
+  let%map () = eat_token Token.RParen in
+  res
 
 and constructor_binding_p () =
   let%bind name = constructor_name_p in
@@ -283,6 +301,7 @@ and parse_b_node () : Ast.node parser =
       parse_lambda ();
       parse_let_in ();
       parse_if ();
+      parse_match ();
       parse_apply ();
       parse_pratt ();
       parse_a_node ();
@@ -302,7 +321,7 @@ and parse_a_in_paren () : Ast.node parser =
   Ast.Wrapped qualified
 
 and parse_lambda () : Ast.node parser =
-  let%bind () = eat_token (Token.Keyword "fun") in
+  let%bind () = eat_token (Token.Keyword "fun") <|> eat_token Token.Backslash in
   let%bind bindings = many_rev1 (binding_p ()) in
   let%bind () = eat_token Arrow in
   let%bind expr = parse_b () in
@@ -336,6 +355,20 @@ and parse_if () : Ast.node parser =
   let%bind () = eat_token (Token.Keyword "else") in
   let%bind else_ = parse_b () in
   return (Ast.If (cond, then_, else_))
+
+and parse_match () : Ast.node parser =
+  let%bind () = eat_token (Token.Keyword "match") in
+  let%bind first = parse_b () in
+  let%bind () = eat_token (Token.Keyword "with") in
+  let one =
+    let%bind binding = binding_p () in
+    let%bind () = eat_token Token.Arrow in
+    let%bind expr = parse_b () in
+    return (binding, expr)
+  in
+  let%bind _ = optional (eat_token Token.Pipe) in
+  let%bind rest = many_sep1 one ~sep:(eat_token Token.Pipe) in
+  return (Ast.Match (first, rest))
 
 and parse_atom : Ast.node parser =
   let literal =
