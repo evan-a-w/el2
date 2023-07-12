@@ -98,7 +98,9 @@ end
 type node =
   | Var of Binding.t Qualified.t
   | Literal of Literal.t
-  | Tuple of node Tuple.t Qualified.t
+  | Tuple of t Tuple.t Qualified.t
+  | Constructor of Uppercase.t Qualified.t
+  | Record of t Lowercase.Map.t Qualified.t
   | Wrapped of t Qualified.t
 [@@deriving sexp, equal, hash, compare]
 
@@ -106,7 +108,8 @@ and t =
   | Node of node
   | If of t * t * t
   | Lambda of Binding.t * t
-  | App of node * node
+  | App of
+      t * t (* these should just be node | App but that makes it more clunky *)
   | Let of Binding.t * t * t
   | Match of t * (Binding.t * t) list
   | Typed of t * Value_tag.t
