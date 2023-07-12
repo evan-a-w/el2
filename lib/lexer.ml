@@ -43,8 +43,8 @@ let bool_p =
   string "true" *> return true <|> string "false" *> return false >>| Token.bool
 
 let arrow_p = string "->" *> return Token.Arrow
-let ident_op_chars = "!#$%^&*-+_:<>?/=~"
-let ident_extras = "_?'"
+let ident_op_chars = "!#$%^&*-+:<>?/=~"
+let ident_extras = "?'"
 let is_operator = String.for_all ~f:(String.mem ident_op_chars)
 
 let op_symbol_p =
@@ -73,7 +73,10 @@ let lparen_p = char '(' *> return Token.LParen
 let rparen_p = char ')' *> return Token.RParen
 let lbrack_p = char '[' *> return Token.LBrack
 let rbrack_p = char ']' *> return Token.RBrack
+let rbrace_p = char '}' *> return Token.RBrace
+let lbrace_p = char '{' *> return Token.LBrace
 let colon_p = char ':' *> return Token.Colon
+let semicolon_p = char ';' *> return Token.Semicolon
 let at_p = char '@' *> return Token.At
 let dot_p = char '.' *> return Token.Dot
 
@@ -85,7 +88,8 @@ let parser =
   let%bind token =
     colon_p <|> float_p <|> int_p <|> string_p <|> bool_p <|> arrow_p
     <|> op_symbol_p <|> ident_symbol_p <|> pipe_p <|> comma_p <|> lparen_p
-    <|> rparen_p <|> lbrack_p <|> rbrack_p <|> at_p <|> dot_p
+    <|> rparen_p <|> lbrack_p <|> rbrack_p <|> at_p <|> dot_p <|> semicolon_p
+    <|> lbrace_p <|> rbrace_p
   in
   let%bind () = whitespace_p in
   return token

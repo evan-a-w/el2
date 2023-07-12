@@ -8,6 +8,14 @@ let symbol_p =
   | Token.Symbol s -> return s
   | got -> error [%message "Expected symbol" (got : Token.t)]
 
+let parse_in_paren p =
+  let%bind () = eat_token LParen in
+  let%bind inner = p in
+  let%bind () = eat_token RParen in
+  return inner
+
+let maybe_in_paren p = parse_in_paren p <|> p
+
 let lowercase_p =
   match%bind next with
   | Token.Symbol s when s.[0] |> Char.is_lowercase -> return s
@@ -21,7 +29,11 @@ let uppercase_p =
 let rec identifier_p () : String.t parser =
   let%bind token = next in
   match token with
-  | Symbol s when not (Lexer.is_operator s || Lexer.is_keyword s) -> return s
+  | Symbol s
+    when not
+           (Lexer.is_operator s || Lexer.is_keyword s || Char.is_uppercase s.[0])
+    ->
+      return s
   | LParen ->
       let%bind inner = symbol_p <|> identifier_p () in
       let%bind () = eat_token RParen in
@@ -45,6 +57,19 @@ let qualified_p p : 'a Ast.Qualified.t parser =
     indexed <|> base
   in
   inner ()
+
+let literal_p : Ast.Literal.t parser =
+  match%bind next with
+  | Token.Int x -> Ast.Literal.Int x |> return
+  | Float f -> Ast.Literal.Float f |> return
+  | Bool b -> Ast.Literal.Bool b |> return
+  | String s -> Ast.Literal.String s |> return
+  | LParen ->
+      let%bind () = eat_token RParen in
+      return Ast.Literal.Unit
+  | got -> error [%message "Expected atom" (got : Token.t)]
+
+let constructor_name_p = qualified_p (maybe_in_paren uppercase_p)
 
 let tuple_p p : 'a Ast.Tuple.t parser =
   let%bind () = eat_token Token.LParen in
@@ -126,8 +151,8 @@ let tag_list_p : Ast.Tag.t parser =
   return { tag with others = List.rev tag.others }
 
 let tag_p : Ast.Tag.t parser =
-  let%bind type_tag = maybe type_tag_p in
-  let%bind tag_list = maybe tag_list_p in
+  let%bind type_tag = optional type_tag_p in
+  let%bind tag_list = optional tag_list_p in
   match (type_tag, tag_list) with
   | Some type_tag, Some tag_list ->
       return Ast.Tag.{ tag_list with type_expr = type_tag.type_expr }
@@ -150,13 +175,60 @@ let parse_maybe_tagged p =
   let snd = p >>| fun x -> (x, None) in
   fst <|> snd
 
-let binding_p : Ast.Binding.t parser = parse_maybe_tagged (identifier_p ())
+let record_p ?(from_name = Fn.const None) p : 'a Ast.Lowercase.Map.t parser =
+  let%bind () = eat_token Token.LBrace in
+  let each =
+    let%bind name = lowercase_p in
+    let%bind value =
+      if_ (eat_token Token.Colon)
+        ~then_:(p () >>| Option.some)
+        ~else_:(return (from_name name))
+    in
+    match value with
+    | None -> error [%message "Expected value"]
+    | Some value -> return (name, value)
+  in
+  let%bind list = many_sep each ~sep:(eat_token Token.Semicolon) in
+  let%bind _ = optional (eat_token Token.Semicolon) in
+  let%map () = eat_token Token.RBrace in
+  Ast.Lowercase.Map.of_alist_exn list
 
-let parse_in_paren p =
-  let%bind () = eat_token LParen in
-  let%bind inner = p in
-  let%bind () = eat_token RParen in
-  return inner
+let name_binding_p : Ast.Binding.t parser =
+  let%map name, tag = parse_maybe_tagged (identifier_p ()) in
+  let name = Ast.Binding.Name name in
+  match tag with None -> name | Some tag -> Ast.Binding.Typed (name, tag)
+
+let literal_binding_p : Ast.Binding.t parser =
+  let%map literal = literal_p in
+  Ast.Binding.Literal literal
+
+let rec binding_p () : Ast.Binding.t parser =
+  first
+    [
+      name_binding_p;
+      literal_binding_p;
+      constructor_binding_p ();
+      tuple_binding_p ();
+      record_binding_p ();
+    ]
+  |> map_error ~f:(fun _ -> [%message "Expected binding"])
+
+and constructor_binding_p () =
+  let%bind name = constructor_name_p in
+  let%map inner = optional (maybe_in_paren (binding_p ())) in
+  Ast.Binding.Constructor (name, inner)
+
+and tuple_binding_p () =
+  let%map tuple =
+    (fun () -> maybe_in_paren (binding_p ())) |> tuple_p |> qualified_p
+  in
+  Ast.Binding.Tuple tuple
+
+and record_binding_p () =
+  let inner =
+    record_p ~from_name:(Fn.compose Option.some Ast.Binding.name) binding_p
+  in
+  qualified_p inner >>| Ast.Binding.record
 
 let[@inline] parse_in_paren_maybe_typed p =
   let%bind () = eat_token LParen in
@@ -177,7 +249,10 @@ let binding_power ~lhs ~operator =
   match Pratt.infix_binding_power ~operator with
   | Some (l_bp, r_bp) ->
       return
-        (Ast.Var (Ast.Qualified.Unqualified (operator, None)), lhs, l_bp, r_bp)
+        ( Ast.Var (Ast.Qualified.Unqualified (Ast.Binding.name operator)),
+          lhs,
+          l_bp,
+          r_bp )
   | None -> error [%message "Expected infix operator" ~got:(operator : string)]
 
 let rec parse_a_node () : Ast.node parser =
@@ -217,7 +292,7 @@ and parse_a_in_paren () : Ast.node parser =
 
 and parse_lambda () : Ast.node parser =
   let%bind () = eat_token (Token.Keyword "fun") in
-  let%bind bindings = many_rev1 binding_p in
+  let%bind bindings = many_rev1 (binding_p ()) in
   let%bind () = eat_token Arrow in
   let%bind expr = parse_b () in
   match bindings with
@@ -231,7 +306,7 @@ and parse_lambda () : Ast.node parser =
 
 and parse_let () : (Ast.Binding.t * Ast.t) parser =
   let%bind () = eat_token (Token.Keyword "let") in
-  let%bind binding = binding_p in
+  let%bind binding = binding_p () in
   let%bind () = eat_token (Token.Symbol "=") in
   let%bind expr = parse_b () in
   return (binding, expr)
@@ -252,19 +327,12 @@ and parse_if () : Ast.node parser =
   return (Ast.If (cond, then_, else_))
 
 and parse_atom : Ast.node parser =
-  let non_binding =
-    match%bind next with
-    | Token.Int x -> Ast.Int x |> return
-    | Float f -> Ast.Float f |> return
-    | Bool b -> Ast.Bool b |> return
-    | String s -> Ast.String s |> return
-    | LParen ->
-        let%bind () = eat_token RParen in
-        return Ast.Unit
-    | got -> error [%message "Expected atom" (got : Token.t)]
+  let literal =
+    let%map literal = literal_p in
+    Ast.Literal literal
   in
-  let binding = qualified_p binding_p >>| fun x -> Ast.Var x in
-  non_binding <|> binding
+  let binding = qualified_p name_binding_p >>| fun x -> Ast.Var x in
+  literal <|> binding
 
 and parse_op () : string parser =
   match%bind next with
@@ -285,7 +353,7 @@ and parse_op_or_a () =
 and parse_a_with_prefix ?(min_bp = 0) () : Ast.node parser =
   let prefixed =
     let%bind operator = parse_op () in
-    let var = Ast.Var (Ast.Qualified.Unqualified (operator, None)) in
+    let var = Ast.Var (Ast.Qualified.Unqualified (Ast.Binding.name operator)) in
     let%bind min_bp =
       match Pratt.prefix_binding_power ~operator with
       | Some bp when bp >= min_bp -> return bp

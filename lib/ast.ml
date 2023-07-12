@@ -65,9 +65,25 @@ module Tag = struct
   let empty = { type_expr = None; mode = None; others = [] }
 end
 
-module Binding = struct
-  type t = (Lowercase.t * Tag.t option[@sexp.option])
+module Literal = struct
+  type t =
+    | Unit
+    | Int of int
+    | Bool of bool
+    | Float of float
+    | String of string
   [@@deriving sexp, equal, hash, compare]
+end
+
+module Binding = struct
+  type t =
+    | Name of Lowercase.t
+    | Constructor of Uppercase.t Qualified.t * t option
+    | Literal of Literal.t
+    | Record of t Lowercase.Map.t Qualified.t
+    | Tuple of t Tuple.t Qualified.t
+    | Typed of t * Tag.t
+  [@@deriving sexp, equal, hash, compare, variants]
 end
 
 type node =
@@ -76,11 +92,7 @@ type node =
   | Let of Binding.t * t * t
   | If of t * t * t
   | Var of Binding.t Qualified.t
-  | Unit
-  | Int of int
-  | Bool of bool
-  | Float of float
-  | String of string
+  | Literal of Literal.t
   | Tuple of node Tuple.t Qualified.t
   | Wrapped of t Qualified.t
 [@@deriving sexp, equal, hash, compare]

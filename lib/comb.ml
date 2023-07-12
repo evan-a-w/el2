@@ -94,13 +94,21 @@ module Make (Token : S) = struct
     | `Full -> matches_full p ~tokens
     | `Prefix -> matches_prefix p ~tokens
 
-  let maybe p =
+  let optional p =
     let%bind prev_state = get in
     match%bind.State p with
     | Ok res -> return (Some res)
     | Error _ ->
         let%bind () = put prev_state in
         return None
+
+  let if_ p ~then_ ~else_ =
+    let%bind prev_state = get in
+    match%bind.State p with
+    | Ok _ -> then_
+    | Error _ ->
+        let%bind () = put prev_state in
+        else_
 
   let satisfies f =
     let%bind token = next in

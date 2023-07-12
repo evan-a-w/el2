@@ -12,8 +12,11 @@ type t =
   | RParen
   | LBrack
   | RBrack
+  | LBrace
+  | RBrace
   | Colon
   | At
+  | Semicolon
   | Dot
   | Symbol of string
   | Keyword of string
