@@ -431,7 +431,8 @@ let%expect_test "test_operator_binding" =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run parse_toplevel ~tokens in
   print_s [%message (ast : (Ast.Toplevel.t List.t, Sexp.t) Result.t)];
-  [%expect {| (ast (Ok ((Let (binding (Name +)) (expr ((node (Literal (Int 1))))))))) |}]
+  [%expect
+    {| (ast (Ok ((Let (binding (Name +)) (expr ((node (Literal (Int 1))))))))) |}]
 
 let%expect_test "test_operator_binding_fail" =
   let program = {|
@@ -498,7 +499,8 @@ let print ~parser ~program =
 let%expect_test "super_simple_apply" =
   let program = {| f 1 |} in
   print ~parser:(parse_pratt ()) ~program;
-  [%expect {| (ast (Ok (App (Var (Unqualified (Name f))) (Literal (Int 1))))) |}]
+  [%expect
+    {| (ast (Ok (App (Var (Unqualified (Name f))) (Literal (Int 1))))) |}]
 
 let%expect_test "simple_apply" =
   let program = {| (f 1) |} in
@@ -676,6 +678,8 @@ let%expect_test "test_pattern_binding" =
           let Ast.Cons (Ast.Cons a) = _
 
           let { a : b; c : (d, e) } = _
+
+          let (1, 2) = (1, 2)
         |}
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
@@ -710,4 +714,7 @@ let%expect_test "test_pattern_binding" =
          (Record
           (Unqualified
            ((a (Name b)) (c (Tuple (Unqualified ((Name d) (Name e)))))))))
-        (expr ((node (Var (Unqualified (Name _)))))))))) |}]
+        (expr ((node (Var (Unqualified (Name _)))))))
+       (Let (binding (Tuple (Unqualified ((Literal (Int 1)) (Literal (Int 2))))))
+        (expr
+         ((node (Tuple (Unqualified ((Literal (Int 1)) (Literal (Int 2)))))))))))) |}]

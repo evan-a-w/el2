@@ -101,7 +101,7 @@ and t = { tag : Tag.t option; [@sexp.option] node : node } [@@deriving sexp]
 
 module Toplevel = struct
   type nonrec t =
-    | Type_def of { name : Lowercase.t; expr : Type_def_lit.t }
+    | Type_def of { name : Type_expr.t; expr : Type_def_lit.t }
     | Let of { binding : Binding.t; expr : t }
   [@@deriving sexp, equal, hash, compare]
 end

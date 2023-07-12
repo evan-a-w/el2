@@ -408,7 +408,27 @@ and parse_apply () : Ast.node parser =
   let%bind second = parse_pratt ~min_bp:r_bp () <|> parse_a_node () in
   return (Ast.App (Ast.App (operator, first), second))
 
-let parse_one = parse_b ()
+let parse_one : Ast.t parser = parse_b ()
+
+let record_type_def_lit_p =
+  let%map record = record_p type_expr_p in
+  Ast.Type_def_lit.Record record
+
+let enum_type_def_lit_p =
+  let%bind _ = optional (eat_token Token.Pipe) in
+  let each =
+    let%bind constructor = constructor_name_p in
+    let%bind value_type = optional type_expr_p in    
+  in
+  let%map record = record_p type_expr_p in
+  Ast.Type_def_lit.Record record
+
+let typedef_toplevel_p : Ast.Toplevel.t parser =
+  let%bind () = eat_token (Token.Keyword "type") in
+  let%bind name = type_expr_p () in
+  let%bind () = eat_token (Token.Symbol "=") in
+  let%bind expr = parse_b () in
+  return (Ast.Toplevel.TypeDef { name; expr })
 
 let parse_toplevel : Ast.Toplevel.t List.t parser =
   let parse_let =
