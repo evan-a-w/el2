@@ -46,26 +46,27 @@ let qualified_p p : 'a Ast.Qualified.t parser =
   in
   inner ()
 
+let tuple_p p : 'a Ast.Tuple.t parser =
+  let%bind () = eat_token Token.LParen in
+  let%bind res = many_sep2 (p ()) ~sep:(eat_token Token.Comma) in
+  let%map () = eat_token Token.RParen in
+  res
+
 let type_expr_p () : Ast.Type_expr.t parser =
   let rec single = qualified_p (identifier_p ()) >>| Ast.Type_expr.single
   and paren () =
     let%bind () = eat_token LParen in
-    let%bind res = b () in
+    let%bind res = whole () in
     let%bind () = eat_token RParen in
     return res
   and a () = single <|> paren ()
-  and list () =
-    let%bind () = eat_token Token.LParen in
-    let%bind res = many_sep1 (b ()) ~sep:(eat_token Token.Comma) in
-    let%bind () = eat_token Token.RParen in
-    return res
+  and tuple () = qualified_p (tuple_p whole) >>| Ast.Type_expr.tuple
   and multi () =
-    let single_f = single >>| fun x -> [ x ] in
-    let%bind first = single_f <|> list () in
-    let%bind next = b () in
+    let%bind first = a () <|> tuple () in
+    let%bind next = whole () in
     return (Ast.Type_expr.Multi (first, next))
-  and b () = multi () <|> a () in
-  b ()
+  and whole () = multi () <|> a () <|> tuple () in
+  whole ()
 
 let type_tag_p =
   let%bind () = eat_token Token.Colon in
@@ -149,7 +150,7 @@ let parse_maybe_tagged p =
   let snd = p >>| fun x -> (x, None) in
   fst <|> snd
 
-let binding_p : Ast.binding parser = parse_maybe_tagged (identifier_p ())
+let binding_p : Ast.Binding.t parser = parse_maybe_tagged (identifier_p ())
 
 let parse_in_paren p =
   let%bind () = eat_token LParen in
@@ -180,12 +181,15 @@ let binding_power ~lhs ~operator =
   | None -> error [%message "Expected infix operator" ~got:(operator : string)]
 
 let rec parse_a_node () : Ast.node parser =
-  first [ parse_atom; parse_a_in_paren () ]
+  first [ parse_atom; parse_a_in_paren (); parse_tuple () ]
   |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
 
 and parse_a () : Ast.t parser =
   let%bind node, tag = parse_maybe_tagged (parse_a_node ()) in
   return { Ast.node; tag }
+
+and parse_tuple () : Ast.node parser =
+  qualified_p (tuple_p parse_b_node) >>| fun x -> Ast.Tuple x
 
 and parse_b_node () : Ast.node parser =
   first
@@ -225,7 +229,7 @@ and parse_lambda () : Ast.node parser =
       in
       return lambda
 
-and parse_let () : (Ast.binding * Ast.t) parser =
+and parse_let () : (Ast.Binding.t * Ast.t) parser =
   let%bind () = eat_token (Token.Keyword "let") in
   let%bind binding = binding_p in
   let%bind () = eat_token (Token.Symbol "=") in
@@ -338,8 +342,12 @@ and parse_apply () : Ast.node parser =
 
 let parse_one = parse_b ()
 
-let parse =
-  let%bind program = many (parse_let ()) in
+let parse_toplevel : Ast.Toplevel.t List.t parser =
+  let parse_let =
+    parse_let () >>| fun (binding, expr) -> Ast.Toplevel.Let { binding; expr }
+  in
+  let inner = parse_let in
+  let%bind program = many inner in
   let%bind tokens = get in
   match Sequence.next tokens with
   | None -> return program

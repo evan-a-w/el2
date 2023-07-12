@@ -71,8 +71,15 @@ module Make (Token : S) = struct
     | [] -> error [%message "Expected at least one element"]
     | _ :: _ -> return ps
 
+  let many_sep_rev2 p ~sep =
+    let%bind ps = many_sep_rev p ~sep in
+    match ps with
+    | _ :: _ :: _ -> return ps
+    | _ -> error [%message "Expected at least two elements"]
+
   let many_rev1 p = many_sep_rev1 p ~sep:(return ())
   let many_sep1 p ~sep = many_sep_rev1 p ~sep >>| List.rev
+  let many_sep2 p ~sep = many_sep_rev2 p ~sep >>| List.rev
   let many p = many_sep p ~sep:(return ())
   let many1 p = many_sep1 p ~sep:(return ())
   let run p ~tokens = run p ~state:tokens

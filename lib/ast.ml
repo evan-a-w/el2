@@ -1,16 +1,52 @@
 open! Core
 
-type lowercase = string [@@deriving sexp, compare, equal, hash]
-type uppercase = string [@@deriving sexp, compare, equal, hash]
+module String_replacement () = struct
+  module T = struct
+    type t = string [@@deriving sexp, compare, equal, hash]
+  end
+
+  module Map = struct
+    include Map.Make (T)
+
+    let hash_fold_t (type a) hash_fold_a
+        (hash_state : Ppx_hash_lib.Std.Hash.state) t :
+        Ppx_hash_lib.Std.Hash.state =
+      Map.fold ~init:hash_state
+        ~f:(fun ~key ~data hash_state ->
+          [%hash_fold: string * a] hash_state (key, data))
+        t
+  end
+
+  include T
+  include Hashable.Make (T)
+end
+
+module Lowercase = String_replacement ()
+module Uppercase = String_replacement ()
 
 module Qualified = struct
-  type 'a t = Qualified of uppercase * 'a t | Unqualified of 'a
+  type 'a t = Qualified of Uppercase.t * 'a t | Unqualified of 'a
   [@@deriving sexp, compare, equal, hash]
 end
 
+module Tuple = struct
+  type 'a t = 'a list [@@deriving sexp, compare, equal, hash]
+end
+
 module Type_expr = struct
-  type t = Single of lowercase Qualified.t | Multi of t list * t
+  type t =
+    | Single of Lowercase.t Qualified.t
+    | Tuple of t Tuple.t Qualified.t
+    | Multi of t * t
   [@@deriving sexp, variants, compare, hash, equal]
+end
+
+module Type_def_lit = struct
+  type t =
+    | Record of Type_expr.t Lowercase.Map.t
+    | Enum of Type_expr.t Uppercase.Map.t
+    | Type_expr of Type_expr.t
+  [@@deriving sexp, variants, equal, hash, compare]
 end
 
 module Mode = struct
@@ -29,22 +65,34 @@ module Tag = struct
   let empty = { type_expr = None; mode = None; others = [] }
 end
 
+module Binding = struct
+  type t = (Lowercase.t * Tag.t option[@sexp.option])
+  [@@deriving sexp, equal, hash, compare]
+end
+
 type node =
-  | Lambda of binding * t
+  | Lambda of Binding.t * t
   | App of node * node
-  | Let of binding * t * t
+  | Let of Binding.t * t * t
   | If of t * t * t
-  | Var of binding Qualified.t
+  | Var of Binding.t Qualified.t
   | Unit
   | Int of int
   | Bool of bool
   | Float of float
   | String of string
+  | Tuple of node Tuple.t Qualified.t
   | Wrapped of t Qualified.t
-[@@deriving sexp]
+[@@deriving sexp, equal, hash, compare]
 
-and binding = (lowercase * Tag.t option[@sexp.option]) [@@deriving sexp]
 and t = { tag : Tag.t option; [@sexp.option] node : node } [@@deriving sexp]
+
+module Toplevel = struct
+  type nonrec t =
+    | Type_def of { name : Lowercase.t; expr : Type_def_lit.t }
+    | Let of { binding : Binding.t; expr : t }
+  [@@deriving sexp, equal, hash, compare]
+end
 
 let untagged node = { tag = None; node }
 
