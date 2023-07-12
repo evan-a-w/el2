@@ -281,7 +281,8 @@ let%expect_test "test_atom_tagged" =
     {|
       ((ast
         (Ok
-         ((tag ((type_expr (Single (Unqualified int))))) (node (Literal (Int 1))))))
+         ((tag ((type_expr (Single (Unqualified int))) (ast_tags ())))
+          (node (Literal (Int 1))))))
        (tokens ())) |}]
 
 let%expect_test "test_lots_type_tags" =
@@ -300,11 +301,15 @@ let%expect_test "test_lots_type_tags" =
     {|
     (ast
      (Ok
-      ((Let (binding (Typed (Name int) ((type_expr (Single (Unqualified int))))))
+      ((Let
+        (binding
+         (Typed (Name int)
+          ((type_expr (Single (Unqualified int))) (ast_tags ()))))
         (expr
          ((tag
            ((type_expr
-             (Multi (Single (Unqualified int)) (Single (Unqualified t))))))
+             (Multi (Single (Unqualified int)) (Single (Unqualified t))))
+            (ast_tags ())))
           (node (Literal (Int 1))))))
        (Let (binding (Name nested))
         (expr
@@ -315,7 +320,8 @@ let%expect_test "test_lots_type_tags" =
                (Unqualified
                 ((Single (Unqualified a)) (Single (Unqualified b))
                  (Single (Unqualified c)))))
-              (Multi (Single (Unqualified int)) (Single (Unqualified t)))))))
+              (Multi (Single (Unqualified int)) (Single (Unqualified t)))))
+            (ast_tags ())))
           (node
            (Wrapped
             (Unqualified
@@ -331,8 +337,10 @@ let%expect_test "test_lots_type_tags" =
        (Let (binding (Name function2))
         (expr
          ((node
-           (Lambda (Typed (Name x) ((type_expr (Single (Unqualified string)))))
-            ((tag ((type_expr (Single (Unqualified int)))))
+           (Lambda
+            (Typed (Name x)
+             ((type_expr (Single (Unqualified string))) (ast_tags ())))
+            ((tag ((type_expr (Single (Unqualified int))) (ast_tags ())))
              (node (Literal (Int 1)))))))))))) |}]
 
 let%expect_test "test_apply_tags" =
@@ -346,7 +354,7 @@ let%expect_test "test_apply_tags" =
          (App (Var (Unqualified (Name g)))
           (Wrapped
            (Unqualified
-            ((tag ((type_expr (Single (Unqualified int)))))
+            ((tag ((type_expr (Single (Unqualified int))) (ast_tags ())))
              (node (Literal (Int 1)))))))))))
      (tokens ())) |}]
 
@@ -361,7 +369,7 @@ let%expect_test "test_apply_b" =
          (App (Var (Unqualified (Name g)))
           (Wrapped
            (Unqualified
-            ((tag ((type_expr (Single (Unqualified int)))))
+            ((tag ((type_expr (Single (Unqualified int))) (ast_tags ())))
              (node
               (If ((node (Literal (Int 1)))) ((node (Literal (Int 1))))
                ((node (Literal (Int 1))))))))))))))
@@ -383,18 +391,19 @@ let%expect_test "test_nested_typed_application" =
                (App (Var (Unqualified (Name f)))
                 (Wrapped
                  (Unqualified
-                  ((tag ((type_expr (Single (Unqualified int)))))
+                  ((tag ((type_expr (Single (Unqualified int))) (ast_tags ())))
                    (node (Literal (Int 1)))))))
                (Wrapped
                 (Unqualified
-                 ((tag ((type_expr (Single (Unqualified int)))))
+                 ((tag ((type_expr (Single (Unqualified int))) (ast_tags ())))
                   (node
                    (App
                     (App (Var (Unqualified (Name a)))
                      (Var (Unqualified (Name b))))
                     (Wrapped
                      (Unqualified
-                      ((tag ((type_expr (Single (Unqualified int)))))
+                      ((tag
+                        ((type_expr (Single (Unqualified int))) (ast_tags ())))
                        (node
                         (App (Var (Unqualified (Name c)))
                          (Var (Unqualified (Name d)))))))))))))))))))))))
@@ -557,13 +566,13 @@ let%expect_test "test_tag_p" =
   let program = {| @[type : int, mode : local, deriving : string int] |} in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run tag_list_p ~tokens in
-  print_s [%message (ast : (Ast.Tag.t, Sexp.t) Result.t)];
+  print_s [%message (ast : (Ast.Value_tag.t, Sexp.t) Result.t)];
   [%expect
     {|
       (ast
        (Ok
         ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
-         (others ((deriving ((Symbol string) (Symbol int)))))))) |}]
+         (ast_tags ((deriving ((Symbol string) (Symbol int)))))))) |}]
 
 let%expect_test "test_tags" =
   let program = {| (f @[type : int, mode : local, name : "x"]) |} in
@@ -574,7 +583,7 @@ let%expect_test "test_tags" =
       (Ok
        ((tag
          ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
-          (others ((name ((String x)))))))
+          (ast_tags ((name ((String x)))))))
         (node (Var (Unqualified (Name f)))))))
      (tokens ())) |}]
 
@@ -587,7 +596,7 @@ let%expect_test "test_tags_both" =
       (Ok
        ((tag
          ((type_expr (Single (Unqualified string))) (mode (Allocation Local))
-          (others ((name ((String x)))))))
+          (ast_tags ((name ((String x)))))))
         (node (Var (Unqualified (Name f)))))))
      (tokens ())) |}]
 
@@ -607,7 +616,7 @@ let%expect_test "test_qualifed_expr" =
             (Unqualified
              (Typed (Name f)
               ((type_expr (Single (Unqualified string)))
-               (mode (Allocation Local)) (others ((name ((String x)))))))))))))))
+               (mode (Allocation Local)) (ast_tags ((name ((String x)))))))))))))))
      (tokens ())) |}]
 
 let%expect_test "test_tuple_simple" =
@@ -640,7 +649,8 @@ let%expect_test "test_tuples" =
           ((type_expr
             (Tuple
              (Unqualified
-              ((Single (Unqualified int)) (Single (Unqualified int)))))))))
+              ((Single (Unqualified int)) (Single (Unqualified int))))))
+           (ast_tags ()))))
         (expr
          ((node (Tuple (Unqualified ((Literal (Int 1)) (Literal (Int 2)))))))))
        (Let (binding (Name nested))
@@ -659,7 +669,7 @@ let%expect_test "test_tuples" =
               (Lambda (Name x) ((node (Literal (Int 2)))))
               (Wrapped
                (Unqualified
-                ((tag ((type_expr (Single (Unqualified int)))))
+                ((tag ((type_expr (Single (Unqualified int))) (ast_tags ())))
                  (node (Literal (Int 1)))))))))))))))) |}]
 
 let%expect_test "test_pattern_binding" =

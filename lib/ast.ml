@@ -23,6 +23,7 @@ end
 
 module Lowercase = String_replacement ()
 module Uppercase = String_replacement ()
+module Tag = String_replacement ()
 
 module Qualified = struct
   type 'a t = Qualified of Uppercase.t * 'a t | Unqualified of 'a
@@ -44,7 +45,7 @@ end
 module Type_def_lit = struct
   type t =
     | Record of Type_expr.t Lowercase.Map.t
-    | Enum of Type_expr.t Uppercase.Map.t
+    | Enum of Type_expr.t option Uppercase.Map.t
     | Type_expr of Type_expr.t
   [@@deriving sexp, variants, equal, hash, compare]
 end
@@ -54,15 +55,21 @@ module Mode = struct
   [@@deriving sexp, compare, equal, hash, variants]
 end
 
-module Tag = struct
+module Ast_tags = struct
+  type t = Token.t list Tag.Map.t [@@deriving sexp, compare, equal, hash]
+
+  let empty = Tag.Map.empty
+end
+
+module Value_tag = struct
   type t = {
     type_expr : Type_expr.t option; [@sexp.option]
     mode : Mode.t option; [@sexp.option]
-    others : (string * Token.t list) list; [@sexp.list]
+    ast_tags : Ast_tags.t;
   }
   [@@deriving sexp, compare, equal, hash, fields]
 
-  let empty = { type_expr = None; mode = None; others = [] }
+  let empty = { type_expr = None; mode = None; ast_tags = Ast_tags.empty }
 end
 
 module Literal = struct
@@ -82,7 +89,7 @@ module Binding = struct
     | Literal of Literal.t
     | Record of t Lowercase.Map.t Qualified.t
     | Tuple of t Tuple.t Qualified.t
-    | Typed of t * Tag.t
+    | Typed of t * Value_tag.t
   [@@deriving sexp, equal, hash, compare, variants]
 end
 
@@ -97,7 +104,8 @@ type node =
   | Wrapped of t Qualified.t
 [@@deriving sexp, equal, hash, compare]
 
-and t = { tag : Tag.t option; [@sexp.option] node : node } [@@deriving sexp]
+and t = { tag : Value_tag.t option; [@sexp.option] node : node }
+[@@deriving sexp]
 
 module Toplevel = struct
   type nonrec t =

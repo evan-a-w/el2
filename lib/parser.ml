@@ -93,12 +93,25 @@ let type_expr_p () : Ast.Type_expr.t parser =
   and whole () = multi () <|> a () <|> tuple () in
   whole ()
 
+let ast_tag_p : (Ast.Tag.t * Token.t list) parser =
+  let%bind tag = symbol_p in
+  let with_tag =
+    let%bind () = eat_token Token.Colon in
+    let accepted_token token =
+      not (List.exists ~f:(Token.equal token) [ Token.Comma; Token.RBrack ])
+    in
+    let%bind list = many1 (satisfies accepted_token) in
+    return (tag, list)
+  in
+  let without_tag = return (tag, []) in
+  with_tag <|> without_tag
+
 let type_tag_p =
   let%bind () = eat_token Token.Colon in
   let%bind type_expr_ = type_expr_p () in
-  return Ast.Tag.{ type_expr = Some type_expr_; mode = None; others = [] }
+  return { Ast.Value_tag.empty with type_expr = Some type_expr_ }
 
-let tag_list_p : Ast.Tag.t parser =
+let tag_list_p : Ast.Value_tag.t parser =
   let%bind () = eat_token Token.At in
   let inner_type_p =
     let%bind () = eat_token (Token.Symbol "type") in
@@ -119,17 +132,8 @@ let tag_list_p : Ast.Tag.t parser =
     return (`Mode res)
   in
   let other_p =
-    let%bind tag = symbol_p in
-    let with_tag =
-      let%bind () = eat_token Token.Colon in
-      let accepted_token token =
-        not (List.exists ~f:(Token.equal token) [ Token.Comma; Token.RBrack ])
-      in
-      let%bind list = many1 (satisfies accepted_token) in
-      return (`Other (tag, list))
-    in
-    let without_tag = return (`Other (tag, [])) in
-    with_tag <|> without_tag
+    let%bind res = ast_tag_p in
+    return (`Other res)
   in
   let%bind list =
     let%bind () = eat_token Token.LBrack in
@@ -142,20 +146,21 @@ let tag_list_p : Ast.Tag.t parser =
     res
   in
   let tag =
-    List.fold list ~init:Ast.Tag.empty ~f:(fun acc x ->
+    List.fold list ~init:Ast.Value_tag.empty ~f:(fun acc x ->
         match x with
         | `Type_expr type_expr -> { acc with type_expr = Some type_expr }
         | `Mode mode -> { acc with mode = Some mode }
-        | `Other x -> { acc with others = x :: acc.others })
+        | `Other (key, data) ->
+            { acc with ast_tags = Ast.Tag.Map.add_exn acc.ast_tags ~key ~data })
   in
-  return { tag with others = List.rev tag.others }
+  return tag
 
-let tag_p : Ast.Tag.t parser =
+let tag_p : Ast.Value_tag.t parser =
   let%bind type_tag = optional type_tag_p in
   let%bind tag_list = optional tag_list_p in
   match (type_tag, tag_list) with
   | Some type_tag, Some tag_list ->
-      return Ast.Tag.{ tag_list with type_expr = type_tag.type_expr }
+      return Ast.Value_tag.{ tag_list with type_expr = type_tag.type_expr }
   | Some type_tag, None -> return type_tag
   | None, Some tag_list -> return tag_list
   | None, None -> error [%message "Expected tag"]
@@ -417,18 +422,20 @@ let record_type_def_lit_p =
 let enum_type_def_lit_p =
   let%bind _ = optional (eat_token Token.Pipe) in
   let each =
-    let%bind constructor = constructor_name_p in
-    let%bind value_type = optional type_expr_p in    
+    let%bind constructor = uppercase_p in
+    let%bind value_type = optional (type_expr_p ()) in
+    return (constructor, value_type)
   in
-  let%map record = record_p type_expr_p in
-  Ast.Type_def_lit.Record record
+  let%bind list = many_sep each ~sep:(eat_token Token.Pipe) in
+  let map = Ast.Uppercase.Map.of_alist_exn list in
+  return (Ast.Type_def_lit.Enum map)
 
 let typedef_toplevel_p : Ast.Toplevel.t parser =
   let%bind () = eat_token (Token.Keyword "type") in
   let%bind name = type_expr_p () in
   let%bind () = eat_token (Token.Symbol "=") in
-  let%bind expr = parse_b () in
-  return (Ast.Toplevel.TypeDef { name; expr })
+  let%bind expr = record_type_def_lit_p <|> enum_type_def_lit_p in
+  return (Ast.Toplevel.Type_def { name; expr })
 
 let parse_toplevel : Ast.Toplevel.t List.t parser =
   let parse_let =
