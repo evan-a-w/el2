@@ -592,7 +592,7 @@ let%expect_test "test_tags_both" =
        (Symbol int) Comma (Symbol mode) Colon (Symbol local) Comma (Symbol name)
        Colon (String x) RBrack RParen))) |}]
 
-let%expect_test "test_qualifed_expr" =
+let%expect_test "test_qualified_expr" =
   let program =
     {| Ast.B.(f : string @[type : int, mode : local, name : "x"]) |}
   in
@@ -784,12 +784,23 @@ let%expect_test "test_match" =
      (tokens ())) |}]
 
 let%expect_test "test_constructor_with_infix" =
-  let program = {| Cons 1 + 2 |} in
+  let program =
+    {| Cons 1 + 2 + { x : 1; y: if p = 2 then 3 else 4 : int @[mode: local]} |}
+  in
   test_parse_one ~program;
   [%expect
     {|
-    ((ast (Error "Failed to parse (b expr)"))
-     (tokens ((Symbol Cons) (Int 1) (Symbol +) (Int 2)))) |}]
+    ((ast
+      (Ok
+       (App
+        (App (Node (Var (Unqualified (Name +))))
+         (App (Node (Constructor (Unqualified Cons))) (Node (Literal (Int 1)))))
+        (Node (Literal (Int 2))))))
+     (tokens
+      ((Symbol +) LBrace (Symbol x) Colon (Int 1) Semicolon (Symbol y) Colon
+       (Keyword if) (Symbol p) (Symbol =) (Int 2) (Keyword then) (Int 3)
+       (Keyword else) (Int 4) Colon (Symbol int) At LBrack (Symbol mode) Colon
+       (Symbol local) RBrack RBrace))) |}]
 
 let%expect_test "test_type_expr_no_paren" =
   let program = {| a b c : int |} in
@@ -805,3 +816,19 @@ let%expect_test "test_type_expr_no_paren" =
          (Node (Var (Unqualified (Name c)))))
         ((type_expr (Single (Unqualified int))) (ast_tags ())))))
      (tokens ())) |}]
+
+let%expect_test "test_infix_spaces" =
+  let program = {| a b c + Cons t |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+      ((ast
+        (Ok
+         (App (Node (Var (Unqualified (Name a))))
+          (App
+           (App (Node (Var (Unqualified (Name +))))
+            (App (Node (Var (Unqualified (Name b))))
+             (Node (Var (Unqualified (Name c))))))
+           (App (Node (Constructor (Unqualified Cons)))
+            (Node (Var (Unqualified (Name t)))))))))
+       (tokens ())) |}]

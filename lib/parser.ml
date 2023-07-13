@@ -283,11 +283,14 @@ let binding_power ~lhs ~operator : (Ast.t * Ast.t * int * int) parser =
   | None -> error [%message "Expected infix operator" ~got:(operator : string)]
 
 let rec parse_node () : Ast.node parser =
-  first [ parse_atom; parse_wrapped_node (); parse_tuple () ]
+  first [ parse_atom; parse_wrapped_node (); parse_tuple (); parse_record () ]
   |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
 
 and parse_tuple () : Ast.node parser =
   qualified_p (tuple_p parse_t) >>| fun x -> Ast.Tuple x
+
+and parse_record () : Ast.node parser =
+  qualified_p (record_p parse_t) >>| fun x -> Ast.Record x
 
 and parse_t_no_type () : Ast.t parser =
   first
@@ -370,63 +373,71 @@ and parse_atom : Ast.node parser =
     let%map literal = literal_p in
     Ast.Literal literal
   in
+  let constructor =
+    let%bind name = constructor_name_p in
+    match%bind get >>| Sequence.next with
+    | Some (Token.Dot, _) -> error [%message "Unexpected dot"]
+    | _ -> return (Ast.Constructor name)
+  in
   let binding = qualified_p name_binding_p >>| fun x -> Ast.Var x in
-  literal <|> binding
+  literal <|> binding <|> constructor
 
 and parse_op () : string parser =
   match%bind next with
   | Token.Symbol s when Lexer.is_operator s -> return s
   | got -> error [%message "Expected operator" (got : Token.t)]
 
-and parse_op_or_a () =
+and parse_op_or_node () =
   let op =
     let%map op = parse_op () in
     `Op op
   in
-  let a =
-    let%map a = parse_node () in
-    `A a
+  let t =
+    let%map node = parse_node () in
+    `Node (Ast.Node node)
   in
-  op <|> a
+  op <|> t
 
-and parse_a_with_prefix ?(min_bp = 0) () : Ast.t parser =
+and parse_t_with_prefix ?(min_bp = 0) () : Ast.t parser =
   let prefixed =
     let%bind operator = parse_op () in
     let var =
       Ast.Node (Ast.Var (Ast.Qualified.Unqualified (Ast.Binding.name operator)))
     in
-    let%bind min_bp =
+    let%bind _ =
       match Pratt.prefix_binding_power ~operator with
       | Some bp when bp >= min_bp -> return bp
       | Some _ -> error [%message "Expected higher binding power"]
       | None ->
           error [%message "Expected prefix operator" ~got:(operator : string)]
     in
-    let%bind rhs = parse_pratt ~min_bp () in
-    return (Ast.App (var, rhs))
+    let%bind rhs = parse_node () in
+    return (Ast.App (var, Ast.Node rhs))
   in
-  prefixed <|> (parse_node () >>| fun x -> Ast.Node x)
+  prefixed <|> parse_t_no_type ()
 
 and parse_pratt ?(min_bp = 0) ?lhs () : Ast.t parser =
   let%bind lhs =
     match lhs with
     | Some lhs -> return lhs
-    | None -> parse_a_with_prefix ~min_bp ()
+    | None -> parse_t_with_prefix ~min_bp ()
   in
   let rec inner (lhs : Ast.t) =
     let get_more =
       let%bind prev_state = get in
-      let%bind op_or_a = parse_op_or_a () in
+      let%bind op_or_node = parse_op_or_node () in
       let%bind op, lhs, l_bp, r_bp =
-        match op_or_a with
-        | `A a ->
+        match op_or_node with
+        | `Node node ->
             let bp = Pratt.infix_function_binding_power () in
-            return (lhs, Ast.Node a, bp, bp + 1)
+            return (lhs, node, bp, bp + 1)
         | `Op operator -> binding_power ~operator ~lhs
       in
       let curr = Ast.App (op, lhs) in
       let without_rhs =
-        match op_or_a with `A _ -> return curr | `Op _ -> error [%message ""]
+        match op_or_node with
+        | `Node _ -> return curr
+        | `Op _ -> error [%message ""]
       in
       if l_bp < min_bp then
         let%bind () = put prev_state in
