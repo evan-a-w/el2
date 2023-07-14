@@ -84,15 +84,20 @@ module Literal = struct
 end
 
 module Binding = struct
-  type t =
-    | Name of Lowercase.t
-    | Constructor of Uppercase.t Qualified.t * t option
-    | Literal of Literal.t
-    | Record of t Lowercase.Map.t Qualified.t
-    | Tuple of t Tuple.t Qualified.t
-    | Typed of t * Value_tag.t
-    | Renamed of t * Lowercase.t
-  [@@deriving sexp, equal, hash, compare, variants]
+  module T = struct
+    type t =
+      | Name of Lowercase.t
+      | Constructor of Uppercase.t Qualified.t * t option
+      | Literal of Literal.t
+      | Record of t Lowercase.Map.t Qualified.t
+      | Tuple of t Tuple.t Qualified.t
+      | Typed of t * Value_tag.t
+      | Renamed of t * Lowercase.t
+    [@@deriving sexp, equal, hash, compare, variants]
+  end
+
+  module Table = Map.Make (T)
+  include T
 end
 
 (* node has no spaces, t does *)
@@ -105,8 +110,13 @@ type node =
   | Wrapped of expr Qualified.t
 [@@deriving sexp, equal, hash, compare]
 
-and let_binding = { name : Type_expr.t; expr : Type_def_lit.t }
+and let_def = { binding : Binding.t; expr : expr }
 [@@deriving sexp, equal, hash, compare]
+
+and module_sig = Binding.t * Value_tag.t option
+[@@deriving sexp, equal, hash, compare]
+
+and module_def = toplevel list [@@deriving sexp, equal, hash, compare]
 
 and expr =
   | Node of node
@@ -118,9 +128,19 @@ and expr =
   | Let_in of Binding.t * expr * expr
   | Match of expr * (Binding.t * expr) list
   | Typed of expr * Value_tag.t
+  | Module of module_def
 [@@deriving sexp, equal, hash, compare]
 
-and t =
+and toplevel =
   | Type_def of { name : Type_expr.t; expr : Type_def_lit.t }
-  | Let of { binding : Binding.t; expr : expr }
+  | Let of let_def
+  (* TODO: | Module_type of Uppercase.t * module_sig *)
+  | Module_def of {
+      module_name : Uppercase.t;
+      functor_args : (Uppercase.t * module_sig) list;
+      module_sig : module_sig option;
+      module_def : module_def;
+    }
 [@@deriving sexp, equal, hash, compare]
+
+and t = toplevel list [@@deriving sexp, equal, hash, compare]

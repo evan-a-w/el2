@@ -17,6 +17,9 @@ let keywords =
     "match";
     "with";
     "as";
+    "struct";
+    "end";
+    "module";
   ]
 
 let is_digit = function '0' .. '9' -> true | _ -> false

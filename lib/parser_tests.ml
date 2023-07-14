@@ -198,47 +198,52 @@ let%expect_test "test_lots" =
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run parse_t ~tokens in
-  print_s [%message (ast : (Ast.t List.t, Sexp.t) Result.t)];
+  print_s [%message (ast : (Ast.t, Sexp.t) Result.t)];
   [%expect
     {|
     (ast
      (Ok
-      ((Let (binding (Name int)) (expr (Node (Literal (Int 1)))))
-       (Let (binding (Name float)) (expr (Node (Literal (Float 1)))))
-       (Let (binding (Name string)) (expr (Node (Literal (String hi)))))
-       (Let (binding (Name bool)) (expr (Node (Literal (Bool true)))))
-       (Let (binding (Name unit)) (expr (Node (Literal Unit))))
-       (Let (binding (Name nested))
-        (expr
-         (Let_in (Name x) (Node (Literal (Int 1)))
-          (Let_in (Name y) (Node (Literal (Int 2)))
-           (App (App (Node (Var (Unqualified +))) (Node (Var (Unqualified x))))
-            (Node (Var (Unqualified y))))))))
-       (Let (binding (Name function2))
-        (expr (Lambda (Name x) (Node (Literal (Int 1))))))
-       (Let (binding (Name function3))
-        (expr
-         (Lambda (Name x)
-          (Lambda (Name y)
+      ((Let ((binding (Name int)) (expr (Node (Literal (Int 1))))))
+       (Let ((binding (Name float)) (expr (Node (Literal (Float 1))))))
+       (Let ((binding (Name string)) (expr (Node (Literal (String hi))))))
+       (Let ((binding (Name bool)) (expr (Node (Literal (Bool true))))))
+       (Let ((binding (Name unit)) (expr (Node (Literal Unit)))))
+       (Let
+        ((binding (Name nested))
+         (expr
+          (Let_in (Name x) (Node (Literal (Int 1)))
+           (Let_in (Name y) (Node (Literal (Int 2)))
+            (App (App (Node (Var (Unqualified +))) (Node (Var (Unqualified x))))
+             (Node (Var (Unqualified y)))))))))
+       (Let
+        ((binding (Name function2))
+         (expr (Lambda (Name x) (Node (Literal (Int 1)))))))
+       (Let
+        ((binding (Name function3))
+         (expr
+          (Lambda (Name x)
+           (Lambda (Name y)
+            (App
+             (App (Node (Var (Unqualified +)))
+              (App (Node (Var (Unqualified f))) (Node (Var (Unqualified x)))))
+             (Node (Var (Unqualified y)))))))))
+       (Let
+        ((binding (Name if_))
+         (expr
+          (If (Node (Literal (Bool true))) (Node (Literal (Int 1)))
+           (Node (Literal (Int 2)))))))
+       (Let
+        ((binding (Name if_nested))
+         (expr
+          (If
            (App
-            (App (Node (Var (Unqualified +)))
-             (App (Node (Var (Unqualified f))) (Node (Var (Unqualified x)))))
-            (Node (Var (Unqualified y))))))))
-       (Let (binding (Name if_))
-        (expr
-         (If (Node (Literal (Bool true))) (Node (Literal (Int 1)))
-          (Node (Literal (Int 2))))))
-       (Let (binding (Name if_nested))
-        (expr
-         (If
-          (App
-           (App (Node (Var (Unqualified =)))
-            (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 1))))
-             (Node (Literal (Int 2)))))
-           (Node (Literal (Int 3))))
-          (If (Node (Literal (Bool false))) (Node (Literal (Int 1)))
-           (Node (Literal (Int 2))))
-          (Node (Literal (Int 3))))))))) |}]
+            (App (Node (Var (Unqualified =)))
+             (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 1))))
+              (Node (Literal (Int 2)))))
+            (Node (Literal (Int 3))))
+           (If (Node (Literal (Bool false))) (Node (Literal (Int 1)))
+            (Node (Literal (Int 2))))
+           (Node (Literal (Int 3)))))))))) |}]
 
 let%expect_test "test_atom_untagged" =
   let program = {| 1 |} in
@@ -271,71 +276,73 @@ let%expect_test "test_lots_type_tags" =
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run parse_t ~tokens in
-  print_s [%message (ast : (Ast.t List.t, Sexp.t) Result.t)];
+  print_s [%message (ast : (Ast.t, Sexp.t) Result.t)];
   [%expect
     {|
     (ast
      (Ok
       ((Let
-        (binding
-         (Typed (Name int)
-          ((type_expr (Single (Unqualified int))) (ast_tags ()))))
-        (expr
-         (Node
-          (Wrapped
-           (Unqualified
-            (Typed (Node (Literal (Int 1)))
-             ((type_expr
-               (Multi (Single (Unqualified int)) (Single (Unqualified t))))
-              (ast_tags ()))))))))
-       (Let (binding (Name nested))
-        (expr
-         (Node
-          (Wrapped
-           (Unqualified
-            (Typed
-             (Node
-              (Wrapped
-               (Unqualified
-                (Let_in (Name x) (Node (Literal (Int 1)))
-                 (Let_in (Name y) (Node (Literal (Int 2)))
-                  (App
-                   (App (Node (Var (Unqualified +)))
-                    (Node (Var (Unqualified x))))
-                   (Node (Var (Unqualified y)))))))))
-             ((type_expr
-               (Multi
-                (Tuple
-                 (Unqualified
-                  ((Single (Unqualified a)) (Single (Unqualified b))
-                   (Single (Unqualified c)))))
-                (Multi (Single (Unqualified int)) (Single (Unqualified t)))))
-              (ast_tags ()))))))))
-       (Let (binding (Name function2))
-        (expr
-         (Lambda
-          (Typed (Name x)
-           ((type_expr (Single (Unqualified string))) (ast_tags ())))
+        ((binding
+          (Typed (Name int)
+           ((type_expr (Single (Unqualified int))) (ast_tags ()))))
+         (expr
           (Node
            (Wrapped
             (Unqualified
              (Typed (Node (Literal (Int 1)))
-              ((type_expr (Single (Unqualified int))) (ast_tags ())))))))))
+              ((type_expr
+                (Multi (Single (Unqualified int)) (Single (Unqualified t))))
+               (ast_tags ())))))))))
        (Let
-        (binding
-         (Typed
-          (Tuple
-           (Unqualified
-            ((Name a)
-             (Typed (Name b)
-              ((type_expr (Single (Unqualified int))) (ast_tags ())))
-             (Literal (Int 1)))))
-          ((type_expr
-            (Tuple
+        ((binding (Name nested))
+         (expr
+          (Node
+           (Wrapped
+            (Unqualified
+             (Typed
+              (Node
+               (Wrapped
+                (Unqualified
+                 (Let_in (Name x) (Node (Literal (Int 1)))
+                  (Let_in (Name y) (Node (Literal (Int 2)))
+                   (App
+                    (App (Node (Var (Unqualified +)))
+                     (Node (Var (Unqualified x))))
+                    (Node (Var (Unqualified y)))))))))
+              ((type_expr
+                (Multi
+                 (Tuple
+                  (Unqualified
+                   ((Single (Unqualified a)) (Single (Unqualified b))
+                    (Single (Unqualified c)))))
+                 (Multi (Single (Unqualified int)) (Single (Unqualified t)))))
+               (ast_tags ())))))))))
+       (Let
+        ((binding (Name function2))
+         (expr
+          (Lambda
+           (Typed (Name x)
+            ((type_expr (Single (Unqualified string))) (ast_tags ())))
+           (Node
+            (Wrapped
              (Unqualified
-              ((Single (Unqualified int)) (Single (Unqualified int))))))
-           (ast_tags ()))))
-        (expr (Node (Literal (Int 1)))))))) |}]
+              (Typed (Node (Literal (Int 1)))
+               ((type_expr (Single (Unqualified int))) (ast_tags ()))))))))))
+       (Let
+        ((binding
+          (Typed
+           (Tuple
+            (Unqualified
+             ((Name a)
+              (Typed (Name b)
+               ((type_expr (Single (Unqualified int))) (ast_tags ())))
+              (Literal (Int 1)))))
+           ((type_expr
+             (Tuple
+              (Unqualified
+               ((Single (Unqualified int)) (Single (Unqualified int))))))
+            (ast_tags ()))))
+         (expr (Node (Literal (Int 1))))))))) |}]
 
 let%expect_test "test_apply_tags" =
   let program = {| g (1 : int) |} in
@@ -430,9 +437,9 @@ let%expect_test "test_operator_binding" =
     |} in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run parse_t ~tokens in
-  print_s [%message (ast : (Ast.t List.t, Sexp.t) Result.t)];
+  print_s [%message (ast : (Ast.t, Sexp.t) Result.t)];
   [%expect
-    {| (ast (Ok ((Let (binding (Name +)) (expr (Node (Literal (Int 1)))))))) |}]
+    {| (ast (Ok ((Let ((binding (Name +)) (expr (Node (Literal (Int 1))))))))) |}]
 
 let%expect_test "test_operator_binding_fail" =
   let program = {|
@@ -440,7 +447,7 @@ let%expect_test "test_operator_binding_fail" =
     |} in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run parse_t ~tokens in
-  print_s [%message (ast : (Ast.t List.t, Sexp.t) Result.t)];
+  print_s [%message (ast : (Ast.t, Sexp.t) Result.t)];
   [%expect {| (ast (Error ("Unexpected token" (got (Keyword let))))) |}]
 
 let print_binding ~program =
@@ -629,39 +636,40 @@ let%expect_test "test_tuples" =
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run parse_t ~tokens in
-  print_s [%message (ast : (Ast.t List.t, Sexp.t) Result.t)];
+  print_s [%message (ast : (Ast.t, Sexp.t) Result.t)];
   [%expect
     {|
     (ast
      (Ok
       ((Let
-        (binding
-         (Typed (Name int)
-          ((type_expr
-            (Tuple
-             (Unqualified
-              ((Single (Unqualified int)) (Single (Unqualified int))))))
-           (ast_tags ()))))
-        (expr
-         (Node
-          (Tuple
-           (Unqualified ((Node (Literal (Int 1))) (Node (Literal (Int 2)))))))))
-       (Let (binding (Name nested))
-        (expr
-         (Node
-          (Tuple
-           (Unqualified
-            ((Let_in (Name x) (Node (Literal (Int 1)))
-              (Let_in (Name y) (Node (Literal (Int 2)))
-               (App
-                (App (Node (Var (Unqualified +))) (Node (Var (Unqualified x))))
-                (Node (Var (Unqualified y))))))
-             (Lambda (Name x) (Node (Literal (Int 2))))
-             (Node
-              (Wrapped
-               (Unqualified
-                (Typed (Node (Literal (Int 1)))
-                 ((type_expr (Single (Unqualified int))) (ast_tags ()))))))))))))))) |}]
+        ((binding
+          (Typed (Name int)
+           ((type_expr
+             (Tuple
+              (Unqualified
+               ((Single (Unqualified int)) (Single (Unqualified int))))))
+            (ast_tags ()))))
+         (expr
+          (Node
+           (Tuple
+            (Unqualified ((Node (Literal (Int 1))) (Node (Literal (Int 2))))))))))
+       (Let
+        ((binding (Name nested))
+         (expr
+          (Node
+           (Tuple
+            (Unqualified
+             ((Let_in (Name x) (Node (Literal (Int 1)))
+               (Let_in (Name y) (Node (Literal (Int 2)))
+                (App
+                 (App (Node (Var (Unqualified +))) (Node (Var (Unqualified x))))
+                 (Node (Var (Unqualified y))))))
+              (Lambda (Name x) (Node (Literal (Int 2))))
+              (Node
+               (Wrapped
+                (Unqualified
+                 (Typed (Node (Literal (Int 1)))
+                  ((type_expr (Single (Unqualified int))) (ast_tags ())))))))))))))))) |}]
 
 let%expect_test "test_pattern_binding" =
   let program =
@@ -685,45 +693,50 @@ let%expect_test "test_pattern_binding" =
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run parse_t ~tokens in
-  print_s [%message (ast : (Ast.t List.t, Sexp.t) Result.t)];
+  print_s [%message (ast : (Ast.t, Sexp.t) Result.t)];
   [%expect
     {|
     (ast
      (Ok
-      ((Let (binding (Constructor (Unqualified Cons) ((Name a))))
-        (expr (Node (Var (Unqualified _)))))
-       (Let (binding (Constructor (Unqualified Cons) ()))
-        (expr (Node (Var (Unqualified _)))))
-       (Let (binding (Constructor (Qualified Ast (Unqualified Cons)) ((Name a))))
-        (expr (Node (Var (Unqualified _)))))
-       (Let (binding (Constructor (Qualified Ast (Unqualified Cons)) ((Name a))))
-        (expr (Node (Var (Unqualified _)))))
+      ((Let
+        ((binding (Constructor (Unqualified Cons) ((Name a))))
+         (expr (Node (Var (Unqualified _))))))
        (Let
-        (binding
-         (Constructor (Qualified Ast (Unqualified Cons))
-          ((Tuple
-            (Unqualified
-             ((Name a) (Renamed (Constructor (Unqualified Pee) ((Name e))) x)
-              (Name c)))))))
-        (expr (Node (Var (Unqualified _)))))
+        ((binding (Constructor (Unqualified Cons) ()))
+         (expr (Node (Var (Unqualified _))))))
        (Let
-        (binding
-         (Renamed
+        ((binding (Constructor (Qualified Ast (Unqualified Cons)) ((Name a))))
+         (expr (Node (Var (Unqualified _))))))
+       (Let
+        ((binding (Constructor (Qualified Ast (Unqualified Cons)) ((Name a))))
+         (expr (Node (Var (Unqualified _))))))
+       (Let
+        ((binding
           (Constructor (Qualified Ast (Unqualified Cons))
-           ((Constructor (Qualified Ast (Unqualified Cons)) ((Name a)))))
-          y))
-        (expr (Node (Var (Unqualified _)))))
+           ((Tuple
+             (Unqualified
+              ((Name a) (Renamed (Constructor (Unqualified Pee) ((Name e))) x)
+               (Name c)))))))
+         (expr (Node (Var (Unqualified _))))))
        (Let
-        (binding
-         (Record
-          (Unqualified
-           ((a (Name b)) (c (Tuple (Unqualified ((Name d) (Name e)))))))))
-        (expr (Node (Var (Unqualified _)))))
-       (Let (binding (Tuple (Unqualified ((Literal (Int 1)) (Literal (Int 2))))))
-        (expr
-         (Node
-          (Tuple
-           (Unqualified ((Node (Literal (Int 1))) (Node (Literal (Int 2)))))))))))) |}]
+        ((binding
+          (Renamed
+           (Constructor (Qualified Ast (Unqualified Cons))
+            ((Constructor (Qualified Ast (Unqualified Cons)) ((Name a)))))
+           y))
+         (expr (Node (Var (Unqualified _))))))
+       (Let
+        ((binding
+          (Record
+           (Unqualified
+            ((a (Name b)) (c (Tuple (Unqualified ((Name d) (Name e)))))))))
+         (expr (Node (Var (Unqualified _))))))
+       (Let
+        ((binding (Tuple (Unqualified ((Literal (Int 1)) (Literal (Int 2))))))
+         (expr
+          (Node
+           (Tuple
+            (Unqualified ((Node (Literal (Int 1))) (Node (Literal (Int 2))))))))))))) |}]
 
 let%expect_test "test_type_define" =
   let program =
@@ -738,8 +751,7 @@ let%expect_test "test_type_define" =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, tokens = run parse_t ~tokens in
   let tokens = Sequence.to_list tokens in
-  print_s
-    [%message (ast : (Ast.t List.t, Sexp.t) Result.t) (tokens : Token.t list)];
+  print_s [%message (ast : (Ast.t, Sexp.t) Result.t) (tokens : Token.t list)];
   [%expect
     {|
     ((ast

@@ -438,13 +438,22 @@ and parse_pratt ?(min_bp = 0) () : Ast.expr parser =
   in
   inner lhs
 
-let parse_one : Ast.expr parser = parse_expr ()
+and let_def_p () : Ast.let_def parser =
+  parse_let () >>| fun (binding, expr) -> Ast.{ binding; expr }
 
-let record_type_def_lit_p =
+and module_p () : Ast.module_def parser =
+  let%bind () = eat_token (Token.Keyword "struct") in
+  let%bind res = parse_t () in
+  let%map () = eat_token (Token.Keyword "end") in
+  res
+
+and module_sig_p () : Ast.module_sig parser = failwith "TODO"
+
+and record_type_def_lit_p () =
   let%map record = record_p type_expr_p in
   Ast.Type_def_lit.Record record
 
-let enum_type_def_lit_p =
+and enum_type_def_lit_p () =
   let%bind _ = optional (eat_token Token.Pipe) in
   let each =
     let%bind constructor = uppercase_p in
@@ -455,23 +464,26 @@ let enum_type_def_lit_p =
   let map = Ast.Uppercase.Map.of_alist_exn list in
   return (Ast.Type_def_lit.Enum map)
 
-let typedef_toplevel_p : Ast.t parser =
+and typedef_toplevel_p () : Ast.toplevel parser =
   let type_expr_lit_p = type_expr_p () >>| Ast.Type_def_lit.type_expr in
   let%bind () = eat_token (Token.Keyword "type") in
   let%bind name = type_expr_p () in
   let%bind () = eat_token (Token.Symbol "=") in
   let%bind expr =
-    record_type_def_lit_p <|> enum_type_def_lit_p <|> type_expr_lit_p
+    record_type_def_lit_p () <|> enum_type_def_lit_p () <|> type_expr_lit_p
   in
   return (Ast.Type_def { name; expr })
 
-let parse_t : Ast.t List.t parser =
-  let let_toplevel_p =
-    parse_let () >>| fun (binding, expr) -> Ast.Let { binding; expr }
-  in
-  let inner = let_toplevel_p <|> typedef_toplevel_p in
-  let%bind program = many inner in
-  let%bind tokens = get in
-  match Sequence.next tokens with
-  | None -> return program
+and toplevel_p () : Ast.toplevel parser =
+  let let_toplevel_p = let_def_p () >>| fun x -> Ast.Let x in
+  let_toplevel_p <|> typedef_toplevel_p ()
+
+and parse_t () : Ast.t parser = many (toplevel_p ())
+
+let parse_one = parse_expr ()
+
+let parse_t =
+  let%bind res = parse_t () in
+  match%bind get >>| Sequence.next with
+  | None -> return res
   | Some (got, _) -> error [%message "Unexpected token" (got : Token.t)]
