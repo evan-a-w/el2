@@ -305,8 +305,6 @@ and parse_expr_no_type () : Ast.expr parser =
       parse_if ();
       parse_match ();
       parse_pratt ();
-      (* parse_function_call (); *)
-      (* (parse_node () >>| fun x -> Ast.Node x); *)
     ]
   |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
 
@@ -441,13 +439,106 @@ and parse_pratt ?(min_bp = 0) () : Ast.expr parser =
 and let_def_p () : Ast.let_def parser =
   parse_let () >>| fun (binding, expr) -> Ast.{ binding; expr }
 
-and module_p () : Ast.module_def parser =
+and struct_p () : Ast.toplevel list parser =
   let%bind () = eat_token (Token.Keyword "struct") in
   let%bind res = parse_t () in
   let%map () = eat_token (Token.Keyword "end") in
   res
 
-and module_sig_p () : Ast.module_sig parser = failwith "TODO"
+and module_def_struct_p () : Ast.module_def parser =
+  let%map struct_ = struct_p () in
+  Ast.Struct struct_
+
+and module_def_named_p =
+  let%map name = uppercase_p in
+  Ast.Named name
+
+and module_def_typed_p () =
+  let%bind () = eat_token Token.LParen in
+  let%bind def = module_def_p () in
+  let%bind signature = module_sig_p () in
+  let%map () = eat_token Token.RParen in
+  Ast.Module_typed (def, signature)
+
+and module_def_in_paren_p () =
+  let%bind () = eat_token Token.LParen in
+  let%bind def = module_def_p () in
+  let%map () = eat_token Token.RParen in
+  def
+
+and module_def_functor_app_p () =
+  let%bind first = module_def_p () in
+  let%map args = many1 (module_def_typed_p () <|> module_def_in_paren_p ()) in
+  Ast.Functor_app (first, args)
+
+and module_def_p () =
+  module_def_named_p <|> module_def_struct_p ()
+  <|> module_def_functor_app_p ()
+  <|> module_def_typed_p () <|> module_def_in_paren_p ()
+
+and module_def_arg_p () : (Ast.Uppercase.t * Ast.module_sig) parser =
+  let%bind () = eat_token Token.LParen in
+  let%bind name = uppercase_p in
+  let%bind () = eat_token Token.Colon in
+  let%bind sig_ = module_sig_p () in
+  let%map () = eat_token Token.RParen in
+  (name, sig_)
+
+and module_description_p ?(optional_sig_fn = optional) () =
+  let%bind () = eat_token (Token.Keyword "module") in
+  let%bind name = uppercase_p in
+  let%bind args = many (module_def_arg_p ()) in
+  let with_sig =
+    let%bind () = eat_token Token.Colon in
+    module_sig_p ()
+  in
+  let%map maybe_sig = optional_sig_fn with_sig in
+  (name, args, maybe_sig)
+
+and module_sig_binding_p () =
+  let%bind () = eat_token (Token.Keyword "let") in
+  let%bind binding = binding_p () in
+  let with_tag =
+    let%bind () = eat_token Token.Colon in
+    let%bind tag = tag_p in
+    return (binding, Some tag)
+  in
+  let%map binding, tag = with_tag <|> return (binding, None) in
+  Ast.Sig_binding (binding, tag)
+
+and module_sig_type_def_p () =
+  let no_def =
+    let%bind () = eat_token (Token.Keyword "type") in
+    let%map name = type_expr_p () in
+    Ast.Sig_type_def { name; expr = None }
+  in
+  let with_def =
+    let%map name, expr = typedef_p () in
+    Ast.Sig_type_def { name; expr = Some expr }
+  in
+  no_def <|> with_def
+
+and module_sig_module_p () =
+  let%map module_name, functor_args, module_sig =
+    module_description_p
+      ~optional_sig_fn:(fun x ->
+        let%map res = x in
+        Some res)
+      ()
+  in
+  match module_sig with
+  | None -> assert false
+  | Some module_sig -> Ast.Sig_module { module_name; functor_args; module_sig }
+
+and module_sig_p () : Ast.module_sig parser =
+  let%bind () = eat_token (Token.Keyword "sig") in
+  let each =
+    module_sig_binding_p () <|> module_sig_type_def_p ()
+    <|> module_sig_module_p ()
+  in
+  let%bind res = many each in
+  let%map () = eat_token (Token.Keyword "end") in
+  res
 
 and record_type_def_lit_p () =
   let%map record = record_p type_expr_p in
@@ -464,19 +555,30 @@ and enum_type_def_lit_p () =
   let map = Ast.Uppercase.Map.of_alist_exn list in
   return (Ast.Type_def_lit.Enum map)
 
-and typedef_toplevel_p () : Ast.toplevel parser =
+and typedef_p () =
   let type_expr_lit_p = type_expr_p () >>| Ast.Type_def_lit.type_expr in
   let%bind () = eat_token (Token.Keyword "type") in
   let%bind name = type_expr_p () in
   let%bind () = eat_token (Token.Symbol "=") in
-  let%bind expr =
+  let%map expr =
     record_type_def_lit_p () <|> enum_type_def_lit_p () <|> type_expr_lit_p
   in
-  return (Ast.Type_def { name; expr })
+  (name, expr)
+
+and typedef_toplevel_p () : Ast.toplevel parser =
+  let%map name, expr = typedef_p () in
+  Ast.Type_def { name; expr }
+
+and module_def_toplevel_p () : Ast.toplevel parser =
+  let%bind module_name, functor_args, module_sig = module_description_p () in
+  let module_description = Ast.{ module_name; functor_args; module_sig } in
+  let%bind () = eat_token (Token.Symbol "=") in
+  let%bind module_def = module_def_p () in
+  return (Ast.Module_def { module_description; module_def })
 
 and toplevel_p () : Ast.toplevel parser =
   let let_toplevel_p = let_def_p () >>| fun x -> Ast.Let x in
-  let_toplevel_p <|> typedef_toplevel_p ()
+  let_toplevel_p <|> typedef_toplevel_p () <|> module_def_toplevel_p ()
 
 and parse_t () : Ast.t parser = many (toplevel_p ())
 

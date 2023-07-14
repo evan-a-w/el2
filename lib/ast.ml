@@ -113,10 +113,21 @@ type node =
 and let_def = { binding : Binding.t; expr : expr }
 [@@deriving sexp, equal, hash, compare]
 
-and module_sig = Binding.t * Value_tag.t option
+and module_sig = toplevel_type list [@@deriving sexp, equal, hash, compare]
+
+and 'module_sig module_description = {
+  module_name : Uppercase.t;
+  functor_args : (Uppercase.t * module_sig) list;
+  module_sig : 'module_sig;
+}
 [@@deriving sexp, equal, hash, compare]
 
-and module_def = toplevel list [@@deriving sexp, equal, hash, compare]
+and module_def =
+  | Struct of toplevel list
+  | Named of Uppercase.t
+  | Functor_app of module_def * module_def list
+  | Module_typed of module_def * module_sig
+[@@deriving sexp, equal, hash, compare]
 
 and expr =
   | Node of node
@@ -131,14 +142,18 @@ and expr =
   | Module of module_def
 [@@deriving sexp, equal, hash, compare]
 
+and toplevel_type =
+  | Sig_binding of Binding.t * Value_tag.t option
+  | Sig_module of module_sig module_description
+  | Sig_type_def of { name : Type_expr.t; expr : Type_def_lit.t option }
+[@@deriving sexp, equal, hash, compare]
+
 and toplevel =
   | Type_def of { name : Type_expr.t; expr : Type_def_lit.t }
   | Let of let_def
   (* TODO: | Module_type of Uppercase.t * module_sig *)
   | Module_def of {
-      module_name : Uppercase.t;
-      functor_args : (Uppercase.t * module_sig) list;
-      module_sig : module_sig option;
+      module_description : module_sig option module_description;
       module_def : module_def;
     }
 [@@deriving sexp, equal, hash, compare]

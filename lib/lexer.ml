@@ -20,6 +20,7 @@ let keywords =
     "struct";
     "end";
     "module";
+    "sig";
   ]
 
 let is_digit = function '0' .. '9' -> true | _ -> false
