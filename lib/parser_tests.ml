@@ -567,30 +567,42 @@ let%expect_test "test_tag_p" =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run tag_list_p ~tokens in
   print_s [%message (ast : (Ast.Value_tag.t, Sexp.t) Result.t)];
-  [%expect {|
-      (ast (Error ((expected RBrack) (got (Keyword type))))) |}]
+  [%expect
+    {|
+    (ast
+     (Ok
+      ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
+       (ast_tags ((deriving ((Symbol string) (Symbol int)))))))) |}]
 
 let%expect_test "test_tags" =
   let program = {| (f @[type : int, mode : local, name : "x"]) |} in
   test_parse_one ~program;
   [%expect
     {|
-    ((ast (Error "Failed to parse (b expr)"))
-     (tokens
-      (LParen (Symbol f) At LBrack (Keyword type) Colon (Symbol int) Comma
-       (Symbol mode) Colon (Symbol local) Comma (Symbol name) Colon (String x)
-       RBrack RParen))) |}]
+    ((ast
+      (Ok
+       (Node
+        (Wrapped
+         (Unqualified
+          (Typed (Node (Var (Unqualified (Name f))))
+           ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
+            (ast_tags ((name ((String x))))))))))))
+     (tokens ())) |}]
 
 let%expect_test "test_tags_both" =
   let program = {| (f : string @[type : int, mode : local, name : "x"]) |} in
   test_parse_one ~program;
   [%expect
     {|
-    ((ast (Error "Failed to parse (b expr)"))
-     (tokens
-      (LParen (Symbol f) Colon (Symbol string) At LBrack (Keyword type) Colon
-       (Symbol int) Comma (Symbol mode) Colon (Symbol local) Comma (Symbol name)
-       Colon (String x) RBrack RParen))) |}]
+    ((ast
+      (Ok
+       (Node
+        (Wrapped
+         (Unqualified
+          (Typed (Node (Var (Unqualified (Name f))))
+           ((type_expr (Single (Unqualified string))) (mode (Allocation Local))
+            (ast_tags ((name ((String x))))))))))))
+     (tokens ())) |}]
 
 let%expect_test "test_qualified_expr" =
   let program =
@@ -599,11 +611,17 @@ let%expect_test "test_qualified_expr" =
   test_parse_one ~program;
   [%expect
     {|
-    ((ast (Error "Failed to parse (b expr)"))
-     (tokens
-      ((Symbol Ast) Dot (Symbol B) Dot LParen (Symbol f) Colon (Symbol string) At
-       LBrack (Keyword type) Colon (Symbol int) Comma (Symbol mode) Colon
-       (Symbol local) Comma (Symbol name) Colon (String x) RBrack RParen))) |}]
+    ((ast
+      (Ok
+       (Node
+        (Wrapped
+         (Qualified Ast
+          (Qualified B
+           (Unqualified
+            (Typed (Node (Var (Unqualified (Name f))))
+             ((type_expr (Single (Unqualified string))) (mode (Allocation Local))
+              (ast_tags ((name ((String x))))))))))))))
+     (tokens ())) |}]
 
 let%expect_test "test_tuple_simple" =
   let program = {| (1, 2) |} in
@@ -783,25 +801,6 @@ let%expect_test "test_match" =
          ((Constructor (Unqualified Nil) ()) (Node (Literal (Int 1))))))))
      (tokens ())) |}]
 
-let%expect_test "test_constructor_with_infix" =
-  let program =
-    {| Cons 1 + 2 + { x : 1; y: if p = 2 then 3 else 4 : int @[mode: local]} |}
-  in
-  test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (App
-        (App (Node (Var (Unqualified (Name +))))
-         (App (Node (Constructor (Unqualified Cons))) (Node (Literal (Int 1)))))
-        (Node (Literal (Int 2))))))
-     (tokens
-      ((Symbol +) LBrace (Symbol x) Colon (Int 1) Semicolon (Symbol y) Colon
-       (Keyword if) (Symbol p) (Symbol =) (Int 2) (Keyword then) (Int 3)
-       (Keyword else) (Int 4) Colon (Symbol int) At LBrack (Symbol mode) Colon
-       (Symbol local) RBrack RBrace))) |}]
-
 let%expect_test "test_type_expr_no_paren" =
   let program = {| a b c : int |} in
   test_parse_one ~program;
@@ -824,11 +823,124 @@ let%expect_test "test_infix_spaces" =
     {|
       ((ast
         (Ok
-         (App (Node (Var (Unqualified (Name a))))
-          (App
-           (App (Node (Var (Unqualified (Name +))))
-            (App (Node (Var (Unqualified (Name b))))
-             (Node (Var (Unqualified (Name c))))))
-           (App (Node (Constructor (Unqualified Cons)))
-            (Node (Var (Unqualified (Name t)))))))))
+         (App
+          (App (Node (Var (Unqualified (Name +))))
+           (App
+            (App (Node (Var (Unqualified (Name a))))
+             (Node (Var (Unqualified (Name b)))))
+            (Node (Var (Unqualified (Name c))))))
+          (App (Node (Constructor (Unqualified Cons)))
+           (Node (Var (Unqualified (Name t))))))))
        (tokens ())) |}]
+
+let%expect_test "test_double_tag" =
+  let program = {| 4 : int @[mode: local] |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       (Typed (Node (Literal (Int 4)))
+        ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
+         (ast_tags ())))))
+     (tokens ())) |}]
+
+let%expect_test "test_tuple" =
+  let program = {| (1, if p = 2 then 3 else 4 : int @[mode: local]) |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       (Node
+        (Tuple
+         (Unqualified
+          ((Node (Literal (Int 1)))
+           (If
+            (App
+             (App (Node (Var (Unqualified (Name =))))
+              (Node (Var (Unqualified (Name p)))))
+             (Node (Literal (Int 2))))
+            (Node (Literal (Int 3)))
+            (Typed (Node (Literal (Int 4)))
+             ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
+              (ast_tags ()))))))))))
+     (tokens ())) |}]
+
+let%expect_test "test_record" =
+  let program =
+    {| { x : 1; y: if p = 2 then 3 else 4 : int @[mode: local]} |}
+  in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       (Node
+        (Record
+         (Unqualified
+          ((x (Node (Literal (Int 1))))
+           (y
+            (If
+             (App
+              (App (Node (Var (Unqualified (Name =))))
+               (Node (Var (Unqualified (Name p)))))
+              (Node (Literal (Int 2))))
+             (Node (Literal (Int 3)))
+             (Typed (Node (Literal (Int 4)))
+              ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
+               (ast_tags ())))))))))))
+     (tokens ())) |}]
+
+let%expect_test "test_constructor_with_infix" =
+  let program =
+    {| Cons 1 + 2 + { x : 1; y: if p = 2 then 3 else 4 : int @[mode: local]} |}
+  in
+  test_parse_one ~program;
+  [%expect
+    {|
+  ((ast
+    (Ok
+     (App
+      (App (Node (Var (Unqualified (Name +))))
+       (App
+        (App (Node (Var (Unqualified (Name +))))
+         (App (Node (Constructor (Unqualified Cons))) (Node (Literal (Int 1)))))
+        (Node (Literal (Int 2)))))
+      (Node
+       (Record
+        (Unqualified
+         ((x (Node (Literal (Int 1))))
+          (y
+           (If
+            (App
+             (App (Node (Var (Unqualified (Name =))))
+              (Node (Var (Unqualified (Name p)))))
+             (Node (Literal (Int 2))))
+            (Node (Literal (Int 3)))
+            (Typed (Node (Literal (Int 4)))
+             ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
+              (ast_tags ()))))))))))))
+   (tokens ())) |}]
+
+let%expect_test "test_exp_binding" =
+  let program = {| 1 + 2 * 3**2 * (4 + 5) |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+  ((ast
+    (Ok
+     (App (App (Node (Var (Unqualified (Name +)))) (Node (Literal (Int 1))))
+      (App
+       (App (Node (Var (Unqualified (Name *))))
+        (App (App (Node (Var (Unqualified (Name *)))) (Node (Literal (Int 2))))
+         (App
+          (App (Node (Var (Unqualified (Name **)))) (Node (Literal (Int 3))))
+          (Node (Literal (Int 2))))))
+       (Node
+        (Wrapped
+         (Unqualified
+          (App
+           (App (Node (Var (Unqualified (Name +)))) (Node (Literal (Int 4))))
+           (Node (Literal (Int 5)))))))))))
+   (tokens ())) |}]

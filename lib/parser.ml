@@ -120,7 +120,7 @@ let type_tag_p =
 let tag_list_p : Ast.Value_tag.t parser =
   let%bind () = eat_token Token.At in
   let inner_type_p =
-    let%bind () = eat_token (Token.Symbol "type") in
+    let%bind () = eat_token (Token.Keyword "type") in
     let%bind () = eat_token Token.Colon in
     let%bind res = type_expr_p () in
     return (`Type_expr res)
@@ -132,7 +132,7 @@ let tag_list_p : Ast.Value_tag.t parser =
     >>| Ast.Mode.allocation
   in
   let mode_p =
-    let%bind () = eat_token (Token.Symbol "mode") in
+    let%bind () = eat_token (Token.Keyword "mode") in
     let%bind () = eat_token Token.Colon in
     let%bind res = allocation_p in
     return (`Mode res)
@@ -237,7 +237,7 @@ and renamed_binding_p () =
 and typed_binding_p () =
   let%bind () = eat_token Token.LParen in
   let%bind first = binding_p () in
-  let%bind second = type_tag_p in
+  let%bind second = tag_p in
   let res = Ast.Binding.Typed (first, second) in
   let%map () = eat_token Token.RParen in
   res
@@ -277,9 +277,9 @@ let[@inline] parse_in_paren_maybe_typed p =
 let single_name_t name =
   Ast.Node (Ast.Var (Ast.Qualified.Unqualified (Ast.Binding.name name)))
 
-let binding_power ~lhs ~operator : (Ast.t * Ast.t * int * int) parser =
+let binding_power ~operator =
   match Pratt.infix_binding_power ~operator with
-  | Some (l_bp, r_bp) -> return (single_name_t operator, lhs, l_bp, r_bp)
+  | Some (l_bp, r_bp) -> return (l_bp, r_bp)
   | None -> error [%message "Expected infix operator" ~got:(operator : string)]
 
 let rec parse_node () : Ast.node parser =
@@ -299,15 +299,15 @@ and parse_t_no_type () : Ast.t parser =
       parse_let_in ();
       parse_if ();
       parse_match ();
-      parse_apply ();
       parse_pratt ();
-      (parse_node () >>| fun x -> Ast.Node x);
+      (* parse_function_call (); *)
+      (* (parse_node () >>| fun x -> Ast.Node x); *)
     ]
   |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
 
 and parse_t () : Ast.t parser =
   let%bind t = parse_t_no_type () in
-  let%map tag = optional type_tag_p in
+  let%map tag = optional tag_p in
   match tag with None -> t | Some tag -> Ast.Typed (t, tag)
 
 and parse_wrapped_node () : Ast.node parser =
@@ -387,23 +387,21 @@ and parse_op () : string parser =
   | Token.Symbol s when Lexer.is_operator s -> return s
   | got -> error [%message "Expected operator" (got : Token.t)]
 
-and parse_op_or_node () =
-  let op =
-    let%map op = parse_op () in
-    `Op op
-  in
-  let t =
-    let%map node = parse_node () in
-    `Node (Ast.Node node)
-  in
-  op <|> t
+(* and parse_op_or_node () = *)
+(*   let op = *)
+(*     let%map op = parse_op () in *)
+(*     `Op op *)
+(*   in *)
+(*   let t = *)
+(*     let%map node = parse_node () in *)
+(*     `Node (Ast.Node node) *)
+(*   in *)
+(*   op <|> t *)
 
-and parse_t_with_prefix ?(min_bp = 0) () : Ast.t parser =
+and parse_node_with_prefix ?(min_bp = 0) () : Ast.t parser =
   let prefixed =
     let%bind operator = parse_op () in
-    let var =
-      Ast.Node (Ast.Var (Ast.Qualified.Unqualified (Ast.Binding.name operator)))
-    in
+    let var = single_name_t operator in
     let%bind _ =
       match Pratt.prefix_binding_power ~operator with
       | Some bp when bp >= min_bp -> return bp
@@ -414,53 +412,74 @@ and parse_t_with_prefix ?(min_bp = 0) () : Ast.t parser =
     let%bind rhs = parse_node () in
     return (Ast.App (var, Ast.Node rhs))
   in
-  prefixed <|> parse_t_no_type ()
+  prefixed <|> (parse_node () >>| fun x -> Ast.Node x)
 
-and parse_pratt ?(min_bp = 0) ?lhs () : Ast.t parser =
-  let%bind lhs =
-    match lhs with
-    | Some lhs -> return lhs
-    | None -> parse_t_with_prefix ~min_bp ()
-  in
+(* and parse_pratt ?(min_bp = 0) ?lhs () : Ast.t parser = *)
+(*   let%bind lhs = *)
+(*     match lhs with *)
+(*     | Some lhs -> return lhs *)
+(*     | None -> parse_node_with_prefix ~min_bp () *)
+(*   in *)
+(*   let rec inner (lhs : Ast.t) = *)
+(*     let get_more = *)
+(*       let%bind prev_state = get in *)
+(*       let%bind op_or_node = parse_op_or_node () in *)
+(*       let%bind op, lhs, l_bp, r_bp = *)
+(*         match op_or_node with *)
+(*         | `Node node -> *)
+(*             let bp = Pratt.infix_function_binding_power () in *)
+(*             return (lhs, node, bp, bp + 1) *)
+(*         | `Op operator -> binding_power ~operator ~lhs *)
+(*       in *)
+(*       let curr = Ast.App (op, lhs) in *)
+(*       let without_rhs = *)
+(*         match op_or_node with *)
+(*         | `Node _ -> return curr *)
+(*         | `Op _ -> error [%message ""] *)
+(*       in *)
+(*       if l_bp < min_bp then *)
+(*         let%bind () = put prev_state in *)
+(*         return lhs *)
+(*       else *)
+(*         let with_rhs = *)
+(*           let%bind rhs = parse_pratt ~min_bp:r_bp () in *)
+(*           inner (Ast.App (curr, rhs)) *)
+(*         in *)
+(*         with_rhs <|> without_rhs *)
+(*     in *)
+(*     get_more <|> return lhs *)
+(*   in *)
+(*   inner lhs *)
+
+and parse_function_call () : Ast.t parser =
+  match%map
+    many1
+      (parse_node_with_prefix
+         ~min_bp:(Pratt.infix_function_binding_power ())
+         ())
+  with
+  | [] -> assert false
+  | init :: rest -> List.fold_left rest ~init ~f:(fun acc x -> Ast.App (acc, x))
+
+and parse_function_call_or_unary_prefix () =
+  parse_function_call () <|> parse_node_with_prefix ()
+
+and parse_pratt ?(min_bp = 0) () : Ast.t parser =
+  let%bind lhs = parse_function_call_or_unary_prefix () in
   let rec inner (lhs : Ast.t) =
-    let get_more =
-      let%bind prev_state = get in
-      let%bind op_or_node = parse_op_or_node () in
-      let%bind op, lhs, l_bp, r_bp =
-        match op_or_node with
-        | `Node node ->
-            let bp = Pratt.infix_function_binding_power () in
-            return (lhs, node, bp, bp + 1)
-        | `Op operator -> binding_power ~operator ~lhs
-      in
-      let curr = Ast.App (op, lhs) in
-      let without_rhs =
-        match op_or_node with
-        | `Node _ -> return curr
-        | `Op _ -> error [%message ""]
-      in
-      if l_bp < min_bp then
-        let%bind () = put prev_state in
-        return lhs
-      else
-        let with_rhs =
+    let%bind prev_state = get in
+    match%bind optional (parse_op ()) with
+    | None -> return lhs
+    | Some operator ->
+        let%bind l_bp, r_bp = binding_power ~operator in
+        if l_bp < min_bp then
+          let%bind () = put prev_state in
+          return lhs
+        else
           let%bind rhs = parse_pratt ~min_bp:r_bp () in
-          inner (Ast.App (curr, rhs))
-        in
-        with_rhs <|> without_rhs
-    in
-    get_more <|> return lhs
+          inner (Ast.App (Ast.App (single_name_t operator, lhs), rhs))
   in
   inner lhs
-
-and parse_apply () : Ast.t parser =
-  let%bind first = parse_pratt () in
-  let%bind operator = parse_op () in
-  let%bind operator, _, _, r_bp = binding_power ~operator ~lhs:first in
-  let%bind second =
-    parse_pratt ~min_bp:r_bp () <|> (parse_node () >>| fun x -> Ast.Node x)
-  in
-  return (Ast.App (Ast.App (operator, first), second))
 
 let parse_one : Ast.t parser = parse_t ()
 

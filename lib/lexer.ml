@@ -13,6 +13,7 @@ let keywords =
     "if";
     "fun";
     "type";
+    "mode";
     "match";
     "with";
     "as";

@@ -82,12 +82,14 @@ module Trie = struct
           | Some _ as res -> res
           | None -> Match_table.find node.matches (operator_type, Prefix))
       | Cons (c, chars) -> (
-          match Match_table.find node.matches (operator_type, Prefix) with
+          let next =
+            match Char.Table.find node.children c with
+            | None -> None
+            | Some child -> search_node child ~chars
+          in
+          match next with
           | Some _ as res -> res
-          | None -> (
-              match Char.Table.find node.children c with
-              | None -> None
-              | Some child -> search_node child ~chars))
+          | None -> Match_table.find node.matches (operator_type, Prefix))
     in
     let chars = Stdlib.String.to_seq operator in
     match chars () with
