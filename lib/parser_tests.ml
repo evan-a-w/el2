@@ -37,7 +37,8 @@ let test_parse_one ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, tokens = run parse_one ~tokens in
   let tokens = Sequence.to_list tokens in
-  print_s [%message (ast : (Ast.t, Sexp.t) Result.t) (tokens : Token.t List.t)]
+  print_s
+    [%message (ast : (Ast.expr, Sexp.t) Result.t) (tokens : Token.t List.t)]
 
 let%expect_test "test_function_one_arg" =
   let program = {|
@@ -48,8 +49,8 @@ let%expect_test "test_function_one_arg" =
     {|
     ((ast
       (Ok
-       (Let (Name function) (Lambda (Name x) (Node (Literal (Int 1))))
-        (Node (Var (Unqualified (Name function)))))))
+       (Let_in (Name function) (Lambda (Name x) (Node (Literal (Int 1))))
+        (Node (Var (Unqualified function))))))
      (tokens ())) |}]
 
 let%expect_test "test_function_two_args_nested" =
@@ -63,10 +64,10 @@ let%expect_test "test_function_two_args_nested" =
     {|
       ((ast
         (Ok
-         (Let (Name function)
-          (Let (Name y) (Node (Literal (Int 1)))
+         (Let_in (Name function)
+          (Let_in (Name y) (Node (Literal (Int 1)))
            (Lambda (Name x) (Lambda (Name y) (Node (Literal (Int 1))))))
-          (Node (Var (Unqualified (Name function)))))))
+          (Node (Var (Unqualified function))))))
        (tokens ())) |}]
 
 let%expect_test "test_if_simple" =
@@ -97,8 +98,8 @@ let%expect_test "test_app" =
     ((ast
       (Ok
        (App
-        (App (Node (Var (Unqualified (Name =))))
-         (App (App (Node (Var (Unqualified (Name +)))) (Node (Literal (Int 1))))
+        (App (Node (Var (Unqualified =)))
+         (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 1))))
           (Node (Literal (Int 2)))))
         (Node (Literal (Int 3))))))
      (tokens ())) |}]
@@ -116,8 +117,8 @@ let%expect_test "test_if_nested_application" =
       (Ok
        (If
         (App
-         (App (Node (Var (Unqualified (Name =))))
-          (App (App (Node (Var (Unqualified (Name +)))) (Node (Literal (Int 1))))
+         (App (Node (Var (Unqualified =)))
+          (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 1))))
            (Node (Literal (Int 2)))))
          (Node (Literal (Int 3))))
         (If (Node (Literal (Bool false))) (Node (Literal (Int 1)))
@@ -136,14 +137,12 @@ let%expect_test "test_let_nested" =
     {|
     ((ast
       (Ok
-       (Let (Name nested)
-        (Let (Name x) (Node (Literal (Int 1)))
-         (Let (Name y) (Node (Literal (Int 2)))
-          (App
-           (App (Node (Var (Unqualified (Name +))))
-            (Node (Var (Unqualified (Name x)))))
-           (Node (Var (Unqualified (Name y)))))))
-        (Node (Var (Unqualified (Name nested)))))))
+       (Let_in (Name nested)
+        (Let_in (Name x) (Node (Literal (Int 1)))
+         (Let_in (Name y) (Node (Literal (Int 2)))
+          (App (App (Node (Var (Unqualified +))) (Node (Var (Unqualified x))))
+           (Node (Var (Unqualified y))))))
+        (Node (Var (Unqualified nested))))))
      (tokens ())) |}]
 
 let%expect_test "test_let_nested2" =
@@ -155,12 +154,10 @@ let%expect_test "test_let_nested2" =
     {|
     ((ast
       (Ok
-       (Let (Name x) (Node (Literal (Int 1)))
-        (Let (Name y) (Node (Literal (Int 2)))
-         (App
-          (App (Node (Var (Unqualified (Name +))))
-           (Node (Var (Unqualified (Name x)))))
-          (Node (Var (Unqualified (Name y)))))))))
+       (Let_in (Name x) (Node (Literal (Int 1)))
+        (Let_in (Name y) (Node (Literal (Int 2)))
+         (App (App (Node (Var (Unqualified +))) (Node (Var (Unqualified x))))
+          (Node (Var (Unqualified y))))))))
      (tokens ())) |}]
 
 let%expect_test "test_unit_value" =
@@ -172,8 +169,7 @@ let%expect_test "test_unit_value" =
     {|
     ((ast
       (Ok
-       (Let (Name unit) (Node (Literal Unit))
-        (Node (Var (Unqualified (Name unit)))))))
+       (Let_in (Name unit) (Node (Literal Unit)) (Node (Var (Unqualified unit))))))
      (tokens ())) |}]
 
 let%expect_test "test_lots" =
@@ -201,8 +197,8 @@ let%expect_test "test_lots" =
         |}
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
-  let ast, _ = run parse_toplevel ~tokens in
-  print_s [%message (ast : (Ast.Toplevel.t List.t, Sexp.t) Result.t)];
+  let ast, _ = run parse_t ~tokens in
+  print_s [%message (ast : (Ast.t List.t, Sexp.t) Result.t)];
   [%expect
     {|
     (ast
@@ -214,12 +210,10 @@ let%expect_test "test_lots" =
        (Let (binding (Name unit)) (expr (Node (Literal Unit))))
        (Let (binding (Name nested))
         (expr
-         (Let (Name x) (Node (Literal (Int 1)))
-          (Let (Name y) (Node (Literal (Int 2)))
-           (App
-            (App (Node (Var (Unqualified (Name +))))
-             (Node (Var (Unqualified (Name x)))))
-            (Node (Var (Unqualified (Name y)))))))))
+         (Let_in (Name x) (Node (Literal (Int 1)))
+          (Let_in (Name y) (Node (Literal (Int 2)))
+           (App (App (Node (Var (Unqualified +))) (Node (Var (Unqualified x))))
+            (Node (Var (Unqualified y))))))))
        (Let (binding (Name function2))
         (expr (Lambda (Name x) (Node (Literal (Int 1))))))
        (Let (binding (Name function3))
@@ -227,10 +221,9 @@ let%expect_test "test_lots" =
          (Lambda (Name x)
           (Lambda (Name y)
            (App
-            (App (Node (Var (Unqualified (Name +))))
-             (App (Node (Var (Unqualified (Name f))))
-              (Node (Var (Unqualified (Name x))))))
-            (Node (Var (Unqualified (Name y)))))))))
+            (App (Node (Var (Unqualified +)))
+             (App (Node (Var (Unqualified f))) (Node (Var (Unqualified x)))))
+            (Node (Var (Unqualified y))))))))
        (Let (binding (Name if_))
         (expr
          (If (Node (Literal (Bool true))) (Node (Literal (Int 1)))
@@ -239,9 +232,8 @@ let%expect_test "test_lots" =
         (expr
          (If
           (App
-           (App (Node (Var (Unqualified (Name =))))
-            (App
-             (App (Node (Var (Unqualified (Name +)))) (Node (Literal (Int 1))))
+           (App (Node (Var (Unqualified =)))
+            (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 1))))
              (Node (Literal (Int 2)))))
            (Node (Literal (Int 3))))
           (If (Node (Literal (Bool false))) (Node (Literal (Int 1)))
@@ -278,8 +270,8 @@ let%expect_test "test_lots_type_tags" =
     let ((a, (b : int), 1) : (int, int)) = 1 |}
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
-  let ast, _ = run parse_toplevel ~tokens in
-  print_s [%message (ast : (Ast.Toplevel.t List.t, Sexp.t) Result.t)];
+  let ast, _ = run parse_t ~tokens in
+  print_s [%message (ast : (Ast.t List.t, Sexp.t) Result.t)];
   [%expect
     {|
     (ast
@@ -305,12 +297,12 @@ let%expect_test "test_lots_type_tags" =
              (Node
               (Wrapped
                (Unqualified
-                (Let (Name x) (Node (Literal (Int 1)))
-                 (Let (Name y) (Node (Literal (Int 2)))
+                (Let_in (Name x) (Node (Literal (Int 1)))
+                 (Let_in (Name y) (Node (Literal (Int 2)))
                   (App
-                   (App (Node (Var (Unqualified (Name +))))
-                    (Node (Var (Unqualified (Name x)))))
-                   (Node (Var (Unqualified (Name y))))))))))
+                   (App (Node (Var (Unqualified +)))
+                    (Node (Var (Unqualified x))))
+                   (Node (Var (Unqualified y)))))))))
              ((type_expr
                (Multi
                 (Tuple
@@ -352,7 +344,7 @@ let%expect_test "test_apply_tags" =
     {|
     ((ast
       (Ok
-       (App (Node (Var (Unqualified (Name g))))
+       (App (Node (Var (Unqualified g)))
         (Node
          (Wrapped
           (Unqualified
@@ -367,7 +359,7 @@ let%expect_test "test_apply_b" =
     {|
     ((ast
       (Ok
-       (App (Node (Var (Unqualified (Name g))))
+       (App (Node (Var (Unqualified g)))
         (Node
          (Wrapped
           (Unqualified
@@ -383,12 +375,12 @@ let%expect_test "test_nested_typed_application" =
     {|
     ((ast
       (Ok
-       (App (Node (Var (Unqualified (Name g))))
+       (App (Node (Var (Unqualified g)))
         (Node
          (Wrapped
           (Unqualified
            (App
-            (App (Node (Var (Unqualified (Name f))))
+            (App (Node (Var (Unqualified f)))
              (Node
               (Wrapped
                (Unqualified
@@ -399,14 +391,13 @@ let%expect_test "test_nested_typed_application" =
               (Unqualified
                (Typed
                 (App
-                 (App (Node (Var (Unqualified (Name a))))
-                  (Node (Var (Unqualified (Name b)))))
+                 (App (Node (Var (Unqualified a))) (Node (Var (Unqualified b))))
                  (Node
                   (Wrapped
                    (Unqualified
                     (Typed
-                     (App (Node (Var (Unqualified (Name c))))
-                      (Node (Var (Unqualified (Name d)))))
+                     (App (Node (Var (Unqualified c)))
+                      (Node (Var (Unqualified d))))
                      ((type_expr (Single (Unqualified int))) (ast_tags ())))))))
                 ((type_expr (Single (Unqualified int))) (ast_tags ())))))))))))))
      (tokens ())) |}]
@@ -418,8 +409,8 @@ let%expect_test "test_unary_bang" =
     {|
     ((ast
       (Ok
-       (App (App (Node (Var (Unqualified (Name +)))) (Node (Literal (Int 1))))
-        (App (Node (Var (Unqualified (Name !)))) (Node (Literal (Int 2)))))))
+       (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 1))))
+        (App (Node (Var (Unqualified !))) (Node (Literal (Int 2)))))))
      (tokens ())) |}]
 
 let%expect_test "test_apply_left_assoc" =
@@ -429,10 +420,8 @@ let%expect_test "test_apply_left_assoc" =
     {|
     ((ast
       (Ok
-       (App
-        (App (Node (Var (Unqualified (Name f))))
-         (Node (Var (Unqualified (Name x)))))
-        (Node (Var (Unqualified (Name y)))))))
+       (App (App (Node (Var (Unqualified f))) (Node (Var (Unqualified x))))
+        (Node (Var (Unqualified y))))))
      (tokens ())) |}]
 
 let%expect_test "test_operator_binding" =
@@ -440,8 +429,8 @@ let%expect_test "test_operator_binding" =
     let (+) = 1
     |} in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
-  let ast, _ = run parse_toplevel ~tokens in
-  print_s [%message (ast : (Ast.Toplevel.t List.t, Sexp.t) Result.t)];
+  let ast, _ = run parse_t ~tokens in
+  print_s [%message (ast : (Ast.t List.t, Sexp.t) Result.t)];
   [%expect
     {| (ast (Ok ((Let (binding (Name +)) (expr (Node (Literal (Int 1)))))))) |}]
 
@@ -450,8 +439,8 @@ let%expect_test "test_operator_binding_fail" =
     let + = 1
     |} in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
-  let ast, _ = run parse_toplevel ~tokens in
-  print_s [%message (ast : (Ast.Toplevel.t List.t, Sexp.t) Result.t)];
+  let ast, _ = run parse_t ~tokens in
+  print_s [%message (ast : (Ast.t List.t, Sexp.t) Result.t)];
   [%expect {| (ast (Error ("Unexpected token" (got (Keyword let))))) |}]
 
 let print_binding ~program =
@@ -477,7 +466,7 @@ let%expect_test "test_wrapped_addition" =
        (Node
         (Wrapped
          (Unqualified
-          (App (App (Node (Var (Unqualified (Name +)))) (Node (Literal (Int 4))))
+          (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 4))))
            (Node (Literal (Int 5)))))))))
      (tokens ())) |}]
 
@@ -489,28 +478,27 @@ let%expect_test "test_addition_and_times_binding" =
     ((ast
       (Ok
        (App
-        (App (Node (Var (Unqualified (Name +))))
-         (App (App (Node (Var (Unqualified (Name *)))) (Node (Literal (Int 1))))
+        (App (Node (Var (Unqualified +)))
+         (App (App (Node (Var (Unqualified *))) (Node (Literal (Int 1))))
           (Node (Literal (Int 2)))))
-        (App (App (Node (Var (Unqualified (Name *)))) (Node (Literal (Int 3))))
+        (App (App (Node (Var (Unqualified *))) (Node (Literal (Int 3))))
          (Node
           (Wrapped
            (Unqualified
-            (App
-             (App (Node (Var (Unqualified (Name +)))) (Node (Literal (Int 4))))
+            (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 4))))
              (Node (Literal (Int 5)))))))))))
      (tokens ())) |}]
 
 let print ~parser ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run parser ~tokens in
-  print_s [%message (ast : (Ast.t, Sexp.t) Result.t)]
+  print_s [%message (ast : (Ast.expr, Sexp.t) Result.t)]
 
 let%expect_test "super_simple_apply" =
   let program = {| f 1 |} in
   print ~parser:(parse_pratt ()) ~program;
   [%expect
-    {| (ast (Ok (App (Node (Var (Unqualified (Name f)))) (Node (Literal (Int 1)))))) |}]
+    {| (ast (Ok (App (Node (Var (Unqualified f))) (Node (Literal (Int 1)))))) |}]
 
 let%expect_test "simple_apply" =
   let program = {| (f 1) |} in
@@ -522,7 +510,7 @@ let%expect_test "simple_apply" =
        (Node
         (Wrapped
          (Unqualified
-          (App (Node (Var (Unqualified (Name f)))) (Node (Literal (Int 1)))))))))
+          (App (Node (Var (Unqualified f))) (Node (Literal (Int 1)))))))))
      (tokens ())) |}]
 
 let%expect_test "simple_prefix_apply" =
@@ -530,10 +518,7 @@ let%expect_test "simple_prefix_apply" =
   test_parse_one ~program;
   [%expect
     {|
-      ((ast
-        (Ok
-         (App (Node (Var (Unqualified (Name -))))
-          (Node (Var (Unqualified (Name f)))))))
+      ((ast (Ok (App (Node (Var (Unqualified -))) (Node (Var (Unqualified f))))))
        (tokens ())) |}]
 
 let%expect_test "simple_apply2" =
@@ -544,8 +529,8 @@ let%expect_test "simple_apply2" =
     ((ast
       (Ok
        (App
-        (App (Node (Var (Unqualified (Name +))))
-         (App (Node (Var (Unqualified (Name f)))) (Node (Literal (Int 1)))))
+        (App (Node (Var (Unqualified +)))
+         (App (Node (Var (Unqualified f))) (Node (Literal (Int 1)))))
         (Node (Literal (Int 2))))))
      (tokens ())) |}]
 
@@ -557,8 +542,8 @@ let%expect_test "simple_apply3" =
     ((ast
       (Ok
        (App
-        (App (Node (Var (Unqualified (Name -))))
-         (App (Node (Var (Unqualified (Name f)))) (Node (Literal (Int 1)))))
+        (App (Node (Var (Unqualified -)))
+         (App (Node (Var (Unqualified f))) (Node (Literal (Int 1)))))
         (Node (Literal (Int 2))))))
      (tokens ())) |}]
 
@@ -584,7 +569,7 @@ let%expect_test "test_tags" =
        (Node
         (Wrapped
          (Unqualified
-          (Typed (Node (Var (Unqualified (Name f))))
+          (Typed (Node (Var (Unqualified f)))
            ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
             (ast_tags ((name ((String x))))))))))))
      (tokens ())) |}]
@@ -599,7 +584,7 @@ let%expect_test "test_tags_both" =
        (Node
         (Wrapped
          (Unqualified
-          (Typed (Node (Var (Unqualified (Name f))))
+          (Typed (Node (Var (Unqualified f)))
            ((type_expr (Single (Unqualified string))) (mode (Allocation Local))
             (ast_tags ((name ((String x))))))))))))
      (tokens ())) |}]
@@ -618,7 +603,7 @@ let%expect_test "test_qualified_expr" =
          (Qualified Ast
           (Qualified B
            (Unqualified
-            (Typed (Node (Var (Unqualified (Name f))))
+            (Typed (Node (Var (Unqualified f)))
              ((type_expr (Single (Unqualified string))) (mode (Allocation Local))
               (ast_tags ((name ((String x))))))))))))))
      (tokens ())) |}]
@@ -643,8 +628,8 @@ let%expect_test "test_tuples" =
         |}
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
-  let ast, _ = run parse_toplevel ~tokens in
-  print_s [%message (ast : (Ast.Toplevel.t List.t, Sexp.t) Result.t)];
+  let ast, _ = run parse_t ~tokens in
+  print_s [%message (ast : (Ast.t List.t, Sexp.t) Result.t)];
   [%expect
     {|
     (ast
@@ -666,12 +651,11 @@ let%expect_test "test_tuples" =
          (Node
           (Tuple
            (Unqualified
-            ((Let (Name x) (Node (Literal (Int 1)))
-              (Let (Name y) (Node (Literal (Int 2)))
+            ((Let_in (Name x) (Node (Literal (Int 1)))
+              (Let_in (Name y) (Node (Literal (Int 2)))
                (App
-                (App (Node (Var (Unqualified (Name +))))
-                 (Node (Var (Unqualified (Name x)))))
-                (Node (Var (Unqualified (Name y)))))))
+                (App (Node (Var (Unqualified +))) (Node (Var (Unqualified x))))
+                (Node (Var (Unqualified y))))))
              (Lambda (Name x) (Node (Literal (Int 2))))
              (Node
               (Wrapped
@@ -700,20 +684,20 @@ let%expect_test "test_pattern_binding" =
         |}
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
-  let ast, _ = run parse_toplevel ~tokens in
-  print_s [%message (ast : (Ast.Toplevel.t List.t, Sexp.t) Result.t)];
+  let ast, _ = run parse_t ~tokens in
+  print_s [%message (ast : (Ast.t List.t, Sexp.t) Result.t)];
   [%expect
     {|
     (ast
      (Ok
       ((Let (binding (Constructor (Unqualified Cons) ((Name a))))
-        (expr (Node (Var (Unqualified (Name _))))))
+        (expr (Node (Var (Unqualified _)))))
        (Let (binding (Constructor (Unqualified Cons) ()))
-        (expr (Node (Var (Unqualified (Name _))))))
+        (expr (Node (Var (Unqualified _)))))
        (Let (binding (Constructor (Qualified Ast (Unqualified Cons)) ((Name a))))
-        (expr (Node (Var (Unqualified (Name _))))))
+        (expr (Node (Var (Unqualified _)))))
        (Let (binding (Constructor (Qualified Ast (Unqualified Cons)) ((Name a))))
-        (expr (Node (Var (Unqualified (Name _))))))
+        (expr (Node (Var (Unqualified _)))))
        (Let
         (binding
          (Constructor (Qualified Ast (Unqualified Cons))
@@ -721,20 +705,20 @@ let%expect_test "test_pattern_binding" =
             (Unqualified
              ((Name a) (Renamed (Constructor (Unqualified Pee) ((Name e))) x)
               (Name c)))))))
-        (expr (Node (Var (Unqualified (Name _))))))
+        (expr (Node (Var (Unqualified _)))))
        (Let
         (binding
          (Renamed
           (Constructor (Qualified Ast (Unqualified Cons))
            ((Constructor (Qualified Ast (Unqualified Cons)) ((Name a)))))
           y))
-        (expr (Node (Var (Unqualified (Name _))))))
+        (expr (Node (Var (Unqualified _)))))
        (Let
         (binding
          (Record
           (Unqualified
            ((a (Name b)) (c (Tuple (Unqualified ((Name d) (Name e)))))))))
-        (expr (Node (Var (Unqualified (Name _))))))
+        (expr (Node (Var (Unqualified _)))))
        (Let (binding (Tuple (Unqualified ((Literal (Int 1)) (Literal (Int 2))))))
         (expr
          (Node
@@ -752,11 +736,10 @@ let%expect_test "test_type_define" =
        |}
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
-  let ast, tokens = run parse_toplevel ~tokens in
+  let ast, tokens = run parse_t ~tokens in
   let tokens = Sequence.to_list tokens in
   print_s
-    [%message
-      (ast : (Ast.Toplevel.t List.t, Sexp.t) Result.t) (tokens : Token.t list)];
+    [%message (ast : (Ast.t List.t, Sexp.t) Result.t) (tokens : Token.t list)];
   [%expect
     {|
     ((ast
@@ -797,7 +780,7 @@ let%expect_test "test_match" =
       (Ok
        (Match (Node (Literal (Int 1)))
         (((Constructor (Unqualified Cons) ((Name a)))
-          (Node (Var (Unqualified (Name a)))))
+          (Node (Var (Unqualified a))))
          ((Constructor (Unqualified Nil) ()) (Node (Literal (Int 1))))))))
      (tokens ())) |}]
 
@@ -809,12 +792,33 @@ let%expect_test "test_type_expr_no_paren" =
     ((ast
       (Ok
        (Typed
-        (App
-         (App (Node (Var (Unqualified (Name a))))
-          (Node (Var (Unqualified (Name b)))))
-         (Node (Var (Unqualified (Name c)))))
+        (App (App (Node (Var (Unqualified a))) (Node (Var (Unqualified b))))
+         (Node (Var (Unqualified c))))
         ((type_expr (Single (Unqualified int))) (ast_tags ())))))
      (tokens ())) |}]
+
+let%expect_test "type_expr_pointer" =
+  print_type_expr ~program:"&int";
+  [%expect {| (ast (Ok (Pointer (Single (Unqualified int))))) |}]
+
+let%expect_test "type_expr_pointer_multi" =
+  print_type_expr ~program:"&int a";
+  [%expect
+    {|
+    (ast
+     (Ok (Multi (Pointer (Single (Unqualified int))) (Single (Unqualified a))))) |}]
+
+let%expect_test "type_expr_pointer_paren" =
+  print_type_expr ~program:"&(int a)";
+  [%expect
+    {|
+    (ast
+     (Ok (Pointer (Multi (Single (Unqualified int)) (Single (Unqualified a)))))) |}]
+
+let%expect_test "type_expr_multi_pointer" =
+  print_type_expr ~program:"& & &int";
+  [%expect
+    {| (ast (Ok (Pointer (Pointer (Pointer (Single (Unqualified int))))))) |}]
 
 let%expect_test "test_infix_spaces" =
   let program = {| a b c + Cons t |} in
@@ -824,13 +828,11 @@ let%expect_test "test_infix_spaces" =
       ((ast
         (Ok
          (App
-          (App (Node (Var (Unqualified (Name +))))
-           (App
-            (App (Node (Var (Unqualified (Name a))))
-             (Node (Var (Unqualified (Name b)))))
-            (Node (Var (Unqualified (Name c))))))
+          (App (Node (Var (Unqualified +)))
+           (App (App (Node (Var (Unqualified a))) (Node (Var (Unqualified b))))
+            (Node (Var (Unqualified c)))))
           (App (Node (Constructor (Unqualified Cons)))
-           (Node (Var (Unqualified (Name t))))))))
+           (Node (Var (Unqualified t)))))))
        (tokens ())) |}]
 
 let%expect_test "test_double_tag" =
@@ -857,9 +859,7 @@ let%expect_test "test_tuple" =
          (Unqualified
           ((Node (Literal (Int 1)))
            (If
-            (App
-             (App (Node (Var (Unqualified (Name =))))
-              (Node (Var (Unqualified (Name p)))))
+            (App (App (Node (Var (Unqualified =))) (Node (Var (Unqualified p))))
              (Node (Literal (Int 2))))
             (Node (Literal (Int 3)))
             (Typed (Node (Literal (Int 4)))
@@ -882,9 +882,7 @@ let%expect_test "test_record" =
           ((x (Node (Literal (Int 1))))
            (y
             (If
-             (App
-              (App (Node (Var (Unqualified (Name =))))
-               (Node (Var (Unqualified (Name p)))))
+             (App (App (Node (Var (Unqualified =))) (Node (Var (Unqualified p))))
               (Node (Literal (Int 2))))
              (Node (Literal (Int 3)))
              (Typed (Node (Literal (Int 4)))
@@ -902,9 +900,9 @@ let%expect_test "test_constructor_with_infix" =
   ((ast
     (Ok
      (App
-      (App (Node (Var (Unqualified (Name +))))
+      (App (Node (Var (Unqualified +)))
        (App
-        (App (Node (Var (Unqualified (Name +))))
+        (App (Node (Var (Unqualified +)))
          (App (Node (Constructor (Unqualified Cons))) (Node (Literal (Int 1)))))
         (Node (Literal (Int 2)))))
       (Node
@@ -914,8 +912,7 @@ let%expect_test "test_constructor_with_infix" =
           (y
            (If
             (App
-             (App (Node (Var (Unqualified (Name =))))
-              (Node (Var (Unqualified (Name p)))))
+             (App (Node (Var (Unqualified =))) (Node (Var (Unqualified p))))
              (Node (Literal (Int 2))))
             (Node (Literal (Int 3)))
             (Typed (Node (Literal (Int 4)))
@@ -924,23 +921,23 @@ let%expect_test "test_constructor_with_infix" =
    (tokens ())) |}]
 
 let%expect_test "test_exp_binding" =
-  let program = {| 1 + 2 * 3**2 * (4 + 5) |} in
+  let program = {| 1 + &2 * 3**2 * (4 + 5) |} in
   test_parse_one ~program;
   [%expect
     {|
   ((ast
     (Ok
-     (App (App (Node (Var (Unqualified (Name +)))) (Node (Literal (Int 1))))
+     (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 1))))
       (App
-       (App (Node (Var (Unqualified (Name *))))
-        (App (App (Node (Var (Unqualified (Name *)))) (Node (Literal (Int 2))))
-         (App
-          (App (Node (Var (Unqualified (Name **)))) (Node (Literal (Int 3))))
+       (App (Node (Var (Unqualified *)))
+        (App
+         (App (Node (Var (Unqualified *)))
+          (App (Node (Var (Unqualified &))) (Node (Literal (Int 2)))))
+         (App (App (Node (Var (Unqualified **))) (Node (Literal (Int 3))))
           (Node (Literal (Int 2))))))
        (Node
         (Wrapped
          (Unqualified
-          (App
-           (App (Node (Var (Unqualified (Name +)))) (Node (Literal (Int 4))))
+          (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 4))))
            (Node (Literal (Int 5)))))))))))
    (tokens ())) |}]

@@ -106,9 +106,9 @@ let bp_map =
   let trie = Trie.empty () in
   let data =
     [|
-      (`Unary, Match_type.Prefix, [| "!"; "~" |]);
+      (`Unary, Match_type.Full, [| "!"; "~"; "&" |]);
       (`Left, Prefix, [| "#" |]);
-      (`Unary, Match_type.Full, [| "-"; "-." |]);
+      (`Unary, Full, [| "-"; "-." |]);
       (`Right, Prefix, [| "**" |]);
       (`Left, Prefix, [| "*"; "/"; "%" |]);
       (`Left, Prefix, [| "+"; "-" |]);

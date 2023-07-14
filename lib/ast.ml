@@ -36,6 +36,7 @@ end
 
 module Type_expr = struct
   type t =
+    | Pointer of t
     | Single of Lowercase.t Qualified.t
     | Tuple of t Tuple.t Qualified.t
     | Multi of t * t
@@ -96,28 +97,30 @@ end
 
 (* node has no spaces, t does *)
 type node =
-  | Var of Binding.t Qualified.t (* TODO: change to Lowercase.t Qualified.t *)
+  | Var of Lowercase.t Qualified.t
   | Literal of Literal.t
-  | Tuple of t Tuple.t Qualified.t
+  | Tuple of expr Tuple.t Qualified.t
   | Constructor of Uppercase.t Qualified.t
-  | Record of t Lowercase.Map.t Qualified.t
-  | Wrapped of t Qualified.t
+  | Record of expr Lowercase.Map.t Qualified.t
+  | Wrapped of expr Qualified.t
+[@@deriving sexp, equal, hash, compare]
+
+and let_binding = { name : Type_expr.t; expr : Type_def_lit.t }
+[@@deriving sexp, equal, hash, compare]
+
+and expr =
+  | Node of node
+  | If of expr * expr * expr
+  | Lambda of Binding.t * expr
+  | App of
+      expr
+      * expr (* these should just be node | App but that makes it more clunky *)
+  | Let_in of Binding.t * expr * expr
+  | Match of expr * (Binding.t * expr) list
+  | Typed of expr * Value_tag.t
 [@@deriving sexp, equal, hash, compare]
 
 and t =
-  | Node of node
-  | If of t * t * t
-  | Lambda of Binding.t * t
-  | App of
-      t * t (* these should just be node | App but that makes it more clunky *)
-  | Let of Binding.t * t * t
-  | Match of t * (Binding.t * t) list
-  | Typed of t * Value_tag.t
+  | Type_def of { name : Type_expr.t; expr : Type_def_lit.t }
+  | Let of { binding : Binding.t; expr : expr }
 [@@deriving sexp, equal, hash, compare]
-
-module Toplevel = struct
-  type nonrec t =
-    | Type_def of { name : Type_expr.t; expr : Type_def_lit.t }
-    | Let of { binding : Binding.t; expr : t }
-  [@@deriving sexp, equal, hash, compare]
-end

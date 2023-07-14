@@ -85,13 +85,17 @@ let type_expr_p () : Ast.Type_expr.t parser =
     let%bind res = whole () in
     let%bind () = eat_token RParen in
     return res
-  and a () = single_type_expr_p <|> paren ()
+  and a () = single_type_expr_p <|> paren () <|> pointer ()
+  and pointer () =
+    let%bind () = eat_token (Token.Symbol "&") in
+    let%bind inner = a () in
+    return (Ast.Type_expr.Pointer inner)
   and tuple () = qualified_p (tuple_p whole) >>| Ast.Type_expr.tuple
   and multi () =
     let%bind first = a () <|> tuple () in
     let%bind next = whole () in
     return (Ast.Type_expr.Multi (first, next))
-  and whole () = multi () <|> a () <|> tuple () in
+  and whole () = multi () <|> a () <|> tuple () <|> pointer () in
   whole ()
 
 let type_expr_no_spaces_p =
@@ -274,8 +278,8 @@ let[@inline] parse_in_paren_maybe_typed p =
   let%bind tag = with_type_tag <|> without_type_tag in
   return (inner, tag)
 
-let single_name_t name =
-  Ast.Node (Ast.Var (Ast.Qualified.Unqualified (Ast.Binding.name name)))
+let single_name_t (name : Ast.Lowercase.t) : Ast.expr =
+  Ast.Node (Ast.Var (Ast.Qualified.Unqualified name))
 
 let binding_power ~operator =
   match Pratt.infix_binding_power ~operator with
@@ -283,16 +287,17 @@ let binding_power ~operator =
   | None -> error [%message "Expected infix operator" ~got:(operator : string)]
 
 let rec parse_node () : Ast.node parser =
-  first [ parse_atom; parse_wrapped_node (); parse_tuple (); parse_record () ]
+  first
+    [ parse_atom; parse_wrapped_node (); parse_expruple (); parse_record () ]
   |> map_error ~f:(fun _ -> [%message "Failed to parse (a expr)"])
 
-and parse_tuple () : Ast.node parser =
-  qualified_p (tuple_p parse_t) >>| fun x -> Ast.Tuple x
+and parse_expruple () : Ast.node parser =
+  qualified_p (tuple_p parse_expr) >>| fun x -> Ast.Tuple x
 
 and parse_record () : Ast.node parser =
-  qualified_p (record_p parse_t) >>| fun x -> Ast.Record x
+  qualified_p (record_p parse_expr) >>| fun x -> Ast.Record x
 
-and parse_t_no_type () : Ast.t parser =
+and parse_expr_no_type () : Ast.expr parser =
   first
     [
       parse_lambda ();
@@ -305,26 +310,26 @@ and parse_t_no_type () : Ast.t parser =
     ]
   |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
 
-and parse_t () : Ast.t parser =
-  let%bind t = parse_t_no_type () in
+and parse_expr () : Ast.expr parser =
+  let%bind t = parse_expr_no_type () in
   let%map tag = optional tag_p in
   match tag with None -> t | Some tag -> Ast.Typed (t, tag)
 
 and parse_wrapped_node () : Ast.node parser =
   let in_paren =
     let%bind () = eat_token LParen in
-    let%bind inner = parse_t () in
+    let%bind inner = parse_expr () in
     let%map () = eat_token RParen in
     inner
   in
   let%map qualified = qualified_p in_paren in
   Ast.Wrapped qualified
 
-and parse_lambda () : Ast.t parser =
+and parse_lambda () : Ast.expr parser =
   let%bind () = eat_token (Token.Keyword "fun") <|> eat_token Token.Backslash in
   let%bind bindings = many_rev1 (binding_p ()) in
   let%bind () = eat_token Arrow in
-  let%bind expr = parse_t () in
+  let%bind expr = parse_expr () in
   match bindings with
   | [] -> assert false
   | x :: xs ->
@@ -332,36 +337,36 @@ and parse_lambda () : Ast.t parser =
       let lambda = List.fold xs ~init ~f:(fun acc x -> Ast.Lambda (x, acc)) in
       return lambda
 
-and parse_let () : (Ast.Binding.t * Ast.t) parser =
+and parse_let () : (Ast.Binding.t * Ast.expr) parser =
   let%bind () = eat_token (Token.Keyword "let") in
   let%bind binding = binding_p () in
   let%bind () = eat_token (Token.Symbol "=") in
-  let%bind expr = parse_t () in
+  let%bind expr = parse_expr () in
   return (binding, expr)
 
-and parse_let_in () : Ast.t parser =
+and parse_let_in () : Ast.expr parser =
   let%bind var, expr = parse_let () in
   let%bind () = eat_token (Token.Keyword "in") in
-  let%bind body = parse_t () in
-  return (Ast.Let (var, expr, body))
+  let%bind body = parse_expr () in
+  return (Ast.Let_in (var, expr, body))
 
-and parse_if () : Ast.t parser =
+and parse_if () : Ast.expr parser =
   let%bind () = eat_token (Token.Keyword "if") in
-  let%bind cond = parse_t () in
+  let%bind cond = parse_expr () in
   let%bind () = eat_token (Token.Keyword "then") in
-  let%bind then_ = parse_t () in
+  let%bind then_ = parse_expr () in
   let%bind () = eat_token (Token.Keyword "else") in
-  let%bind else_ = parse_t () in
+  let%bind else_ = parse_expr () in
   return (Ast.If (cond, then_, else_))
 
-and parse_match () : Ast.t parser =
+and parse_match () : Ast.expr parser =
   let%bind () = eat_token (Token.Keyword "match") in
-  let%bind first = parse_t () in
+  let%bind first = parse_expr () in
   let%bind () = eat_token (Token.Keyword "with") in
   let one =
     let%bind binding = binding_p () in
     let%bind () = eat_token Token.Arrow in
-    let%bind expr = parse_t () in
+    let%bind expr = parse_expr () in
     return (binding, expr)
   in
   let%bind _ = optional (eat_token Token.Pipe) in
@@ -379,26 +384,15 @@ and parse_atom : Ast.node parser =
     | Some (Token.Dot, _) -> error [%message "Unexpected dot"]
     | _ -> return (Ast.Constructor name)
   in
-  let binding = qualified_p name_binding_p >>| fun x -> Ast.Var x in
-  literal <|> binding <|> constructor
+  let var = qualified_p (identifier_p ()) >>| fun x -> Ast.Var x in
+  literal <|> var <|> constructor
 
 and parse_op () : string parser =
   match%bind next with
   | Token.Symbol s when Lexer.is_operator s -> return s
   | got -> error [%message "Expected operator" (got : Token.t)]
 
-(* and parse_op_or_node () = *)
-(*   let op = *)
-(*     let%map op = parse_op () in *)
-(*     `Op op *)
-(*   in *)
-(*   let t = *)
-(*     let%map node = parse_node () in *)
-(*     `Node (Ast.Node node) *)
-(*   in *)
-(*   op <|> t *)
-
-and parse_node_with_prefix ?(min_bp = 0) () : Ast.t parser =
+and parse_node_with_prefix ?(min_bp = 0) () : Ast.expr parser =
   let prefixed =
     let%bind operator = parse_op () in
     let var = single_name_t operator in
@@ -414,44 +408,7 @@ and parse_node_with_prefix ?(min_bp = 0) () : Ast.t parser =
   in
   prefixed <|> (parse_node () >>| fun x -> Ast.Node x)
 
-(* and parse_pratt ?(min_bp = 0) ?lhs () : Ast.t parser = *)
-(*   let%bind lhs = *)
-(*     match lhs with *)
-(*     | Some lhs -> return lhs *)
-(*     | None -> parse_node_with_prefix ~min_bp () *)
-(*   in *)
-(*   let rec inner (lhs : Ast.t) = *)
-(*     let get_more = *)
-(*       let%bind prev_state = get in *)
-(*       let%bind op_or_node = parse_op_or_node () in *)
-(*       let%bind op, lhs, l_bp, r_bp = *)
-(*         match op_or_node with *)
-(*         | `Node node -> *)
-(*             let bp = Pratt.infix_function_binding_power () in *)
-(*             return (lhs, node, bp, bp + 1) *)
-(*         | `Op operator -> binding_power ~operator ~lhs *)
-(*       in *)
-(*       let curr = Ast.App (op, lhs) in *)
-(*       let without_rhs = *)
-(*         match op_or_node with *)
-(*         | `Node _ -> return curr *)
-(*         | `Op _ -> error [%message ""] *)
-(*       in *)
-(*       if l_bp < min_bp then *)
-(*         let%bind () = put prev_state in *)
-(*         return lhs *)
-(*       else *)
-(*         let with_rhs = *)
-(*           let%bind rhs = parse_pratt ~min_bp:r_bp () in *)
-(*           inner (Ast.App (curr, rhs)) *)
-(*         in *)
-(*         with_rhs <|> without_rhs *)
-(*     in *)
-(*     get_more <|> return lhs *)
-(*   in *)
-(*   inner lhs *)
-
-and parse_function_call () : Ast.t parser =
+and parse_function_call () : Ast.expr parser =
   match%map
     many1
       (parse_node_with_prefix
@@ -464,9 +421,9 @@ and parse_function_call () : Ast.t parser =
 and parse_function_call_or_unary_prefix () =
   parse_function_call () <|> parse_node_with_prefix ()
 
-and parse_pratt ?(min_bp = 0) () : Ast.t parser =
+and parse_pratt ?(min_bp = 0) () : Ast.expr parser =
   let%bind lhs = parse_function_call_or_unary_prefix () in
-  let rec inner (lhs : Ast.t) =
+  let rec inner lhs =
     let%bind prev_state = get in
     match%bind optional (parse_op ()) with
     | None -> return lhs
@@ -481,7 +438,7 @@ and parse_pratt ?(min_bp = 0) () : Ast.t parser =
   in
   inner lhs
 
-let parse_one : Ast.t parser = parse_t ()
+let parse_one : Ast.expr parser = parse_expr ()
 
 let record_type_def_lit_p =
   let%map record = record_p type_expr_p in
@@ -498,7 +455,7 @@ let enum_type_def_lit_p =
   let map = Ast.Uppercase.Map.of_alist_exn list in
   return (Ast.Type_def_lit.Enum map)
 
-let typedef_toplevel_p : Ast.Toplevel.t parser =
+let typedef_toplevel_p : Ast.t parser =
   let type_expr_lit_p = type_expr_p () >>| Ast.Type_def_lit.type_expr in
   let%bind () = eat_token (Token.Keyword "type") in
   let%bind name = type_expr_p () in
@@ -506,11 +463,11 @@ let typedef_toplevel_p : Ast.Toplevel.t parser =
   let%bind expr =
     record_type_def_lit_p <|> enum_type_def_lit_p <|> type_expr_lit_p
   in
-  return (Ast.Toplevel.Type_def { name; expr })
+  return (Ast.Type_def { name; expr })
 
-let parse_toplevel : Ast.Toplevel.t List.t parser =
+let parse_t : Ast.t List.t parser =
   let let_toplevel_p =
-    parse_let () >>| fun (binding, expr) -> Ast.Toplevel.Let { binding; expr }
+    parse_let () >>| fun (binding, expr) -> Ast.Let { binding; expr }
   in
   let inner = let_toplevel_p <|> typedef_toplevel_p in
   let%bind program = many inner in
