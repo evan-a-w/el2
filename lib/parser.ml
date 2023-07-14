@@ -450,7 +450,7 @@ and module_def_struct_p () : Ast.module_def parser =
   Ast.Struct struct_
 
 and module_def_named_p =
-  let%map name = uppercase_p in
+  let%map name = qualified_p uppercase_p in
   Ast.Named name
 
 and module_def_typed_p () =

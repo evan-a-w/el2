@@ -124,7 +124,7 @@ and 'module_sig module_description = {
 
 and module_def =
   | Struct of toplevel list
-  | Named of Uppercase.t
+  | Named of Uppercase.t Qualified.t
   | Functor_app of module_def * module_def list
   | Module_typed of module_def * module_sig
 [@@deriving sexp, equal, hash, compare]

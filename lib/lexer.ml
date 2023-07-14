@@ -116,7 +116,7 @@ let parser =
   return token
 
 let lex ~program =
-  Angstrom.parse_string ~consume:All (many1 parser) program
+  Angstrom.parse_string ~consume:All (many parser) program
   |> Result.map ~f:Sequence.of_list
 
 let%expect_test "lex" =
