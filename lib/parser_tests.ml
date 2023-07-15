@@ -741,11 +741,11 @@ let%expect_test "test_pattern_binding" =
 let%expect_test "test_type_define" =
   let program =
     {|
-         type a b c = A a | B (b, c)
+         type a b c = A a | B (b, c) @[cool]
 
          type t = a list
 
-         type rec = { a : int; b : (string, int) }
+         type rec = { a : int; b : (string, int) } @[cringe: false]
        |}
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
@@ -757,27 +757,32 @@ let%expect_test "test_type_define" =
     ((ast
       (Ok
        ((Type_def
-         (name
-          (Multi (Single (Unqualified a))
-           (Multi (Single (Unqualified b)) (Single (Unqualified c)))))
-         (expr
-          (Enum
-           ((A ((Single (Unqualified a))))
-            (B
-             ((Tuple
-               (Unqualified ((Single (Unqualified b)) (Single (Unqualified c)))))))))))
-        (Type_def (name (Single (Unqualified t)))
-         (expr
-          (Type_expr
-           (Multi (Single (Unqualified a)) (Single (Unqualified list))))))
-        (Type_def (name (Single (Unqualified rec)))
-         (expr
-          (Record
-           ((a (Single (Unqualified int)))
-            (b
-             (Tuple
-              (Unqualified
-               ((Single (Unqualified string)) (Single (Unqualified int)))))))))))))
+         ((type_name
+           (Multi (Single (Unqualified a))
+            (Multi (Single (Unqualified b)) (Single (Unqualified c)))))
+          (type_def
+           (Enum
+            ((A ((Single (Unqualified a))))
+             (B
+              ((Tuple
+                (Unqualified ((Single (Unqualified b)) (Single (Unqualified c))))))))))
+          (ast_tags ((cool ())))))
+        (Type_def
+         ((type_name (Single (Unqualified t)))
+          (type_def
+           (Type_expr
+            (Multi (Single (Unqualified a)) (Single (Unqualified list)))))
+          (ast_tags ())))
+        (Type_def
+         ((type_name (Single (Unqualified rec)))
+          (type_def
+           (Record
+            ((a (Single (Unqualified int)))
+             (b
+              (Tuple
+               (Unqualified
+                ((Single (Unqualified string)) (Single (Unqualified int)))))))))
+          (ast_tags ((cringe ((Bool false))))))))))
      (tokens ())) |}]
 
 let%expect_test "test_match" =

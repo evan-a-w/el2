@@ -100,6 +100,28 @@ module Binding = struct
   include T
 end
 
+type 'type_def type_description = {
+  type_name : Type_expr.t;
+  type_def : 'type_def;
+  ast_tags : Ast_tags.t;
+}
+[@@deriving sexp, equal, hash, compare]
+
+type toplevel_type =
+  | Sig_binding of Binding.t * Value_tag.t
+  | Sig_module of module_sig module_description
+  | Sig_type_def of Type_def_lit.t option type_description
+[@@deriving sexp, equal, hash, compare]
+
+and module_sig = toplevel_type list [@@deriving sexp, equal, hash, compare]
+
+and 'module_sig module_description = {
+  module_name : Uppercase.t;
+  functor_args : (Uppercase.t * module_sig) list;
+  module_sig : 'module_sig;
+}
+[@@deriving sexp, equal, hash, compare]
+
 (* node has no spaces, t does *)
 type node =
   | Var of Lowercase.t Qualified.t
@@ -111,15 +133,6 @@ type node =
 [@@deriving sexp, equal, hash, compare]
 
 and let_def = { binding : Binding.t; expr : expr }
-[@@deriving sexp, equal, hash, compare]
-
-and module_sig = toplevel_type list [@@deriving sexp, equal, hash, compare]
-
-and 'module_sig module_description = {
-  module_name : Uppercase.t;
-  functor_args : (Uppercase.t * module_sig) list;
-  module_sig : 'module_sig;
-}
 [@@deriving sexp, equal, hash, compare]
 
 and module_def =
@@ -142,14 +155,8 @@ and expr =
   | Module of module_def
 [@@deriving sexp, equal, hash, compare]
 
-and toplevel_type =
-  | Sig_binding of Binding.t * Value_tag.t option
-  | Sig_module of module_sig module_description
-  | Sig_type_def of { name : Type_expr.t; expr : Type_def_lit.t option }
-[@@deriving sexp, equal, hash, compare]
-
 and toplevel =
-  | Type_def of { name : Type_expr.t; expr : Type_def_lit.t }
+  | Type_def of Type_def_lit.t type_description
   | Let of let_def
   (* TODO: | Module_type of Uppercase.t * module_sig *)
   | Module_def of {

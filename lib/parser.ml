@@ -121,6 +121,20 @@ let type_tag_p =
   let%bind type_expr_ = type_expr_p () in
   return { Ast.Value_tag.empty with type_expr = Some type_expr_ }
 
+let ast_tags_p : Ast.Ast_tags.t parser =
+  let%bind () = eat_token Token.At in
+  let%bind list =
+    let%bind () = eat_token Token.LBrack in
+    let%bind res = many_sep ast_tag_p ~sep:(eat_token Token.Comma) in
+    let%map () = eat_token Token.RBrack in
+    res
+  in
+  let tag =
+    List.fold list ~init:Ast.Ast_tags.empty ~f:(fun acc (key, data) ->
+        Ast.Tag.Map.change acc key ~f:(fun _ -> Some data))
+  in
+  return tag
+
 let tag_list_p : Ast.Value_tag.t parser =
   let%bind () = eat_token Token.At in
   let inner_type_p =
@@ -456,6 +470,7 @@ and module_def_named_p =
 and module_def_typed_p () =
   let%bind () = eat_token Token.LParen in
   let%bind def = module_def_p () in
+  let%bind () = eat_token Token.Colon in
   let%bind signature = module_sig_p () in
   let%map () = eat_token Token.RParen in
   Ast.Module_typed (def, signature)
@@ -466,15 +481,16 @@ and module_def_in_paren_p () =
   let%map () = eat_token Token.RParen in
   def
 
+and module_def_no_functor_p () =
+  module_def_named_p <|> module_def_struct_p () <|> module_def_in_paren_p ()
+  <|> module_def_typed_p ()
+
 and module_def_functor_app_p () =
-  let%bind first = module_def_p () in
+  let%bind first = module_def_no_functor_p () in
   let%map args = many1 (module_def_typed_p () <|> module_def_in_paren_p ()) in
   Ast.Functor_app (first, args)
 
-and module_def_p () =
-  module_def_named_p <|> module_def_struct_p ()
-  <|> module_def_functor_app_p ()
-  <|> module_def_typed_p () <|> module_def_in_paren_p ()
+and module_def_p () = module_def_functor_app_p () <|> module_def_no_functor_p ()
 
 and module_def_arg_p () : (Ast.Uppercase.t * Ast.module_sig) parser =
   let%bind () = eat_token Token.LParen in
@@ -498,23 +514,21 @@ and module_description_p ?(optional_sig_fn = optional) () =
 and module_sig_binding_p () =
   let%bind () = eat_token (Token.Keyword "let") in
   let%bind binding = binding_p () in
-  let with_tag =
-    let%bind () = eat_token Token.Colon in
-    let%bind tag = tag_p in
-    return (binding, Some tag)
-  in
-  let%map binding, tag = with_tag <|> return (binding, None) in
+  let%map tag = tag_p in
   Ast.Sig_binding (binding, tag)
 
 and module_sig_type_def_p () =
   let no_def =
     let%bind () = eat_token (Token.Keyword "type") in
-    let%map name = type_expr_p () in
-    Ast.Sig_type_def { name; expr = None }
+    let%bind type_name = type_expr_p () in
+    let%map ast_tags =
+      optional ast_tags_p >>| Option.value ~default:Ast.Ast_tags.empty
+    in
+    Ast.Sig_type_def { type_name; type_def = None; ast_tags }
   in
   let with_def =
-    let%map name, expr = typedef_p () in
-    Ast.Sig_type_def { name; expr = Some expr }
+    let%map type_name, type_def, ast_tags = typedef_p () in
+    Ast.Sig_type_def { type_name; type_def = Some type_def; ast_tags }
   in
   no_def <|> with_def
 
@@ -560,14 +574,17 @@ and typedef_p () =
   let%bind () = eat_token (Token.Keyword "type") in
   let%bind name = type_expr_p () in
   let%bind () = eat_token (Token.Symbol "=") in
-  let%map expr =
+  let%bind expr =
     record_type_def_lit_p () <|> enum_type_def_lit_p () <|> type_expr_lit_p
   in
-  (name, expr)
+  let%map ast_tags =
+    optional ast_tags_p >>| Option.value ~default:Ast.Ast_tags.empty
+  in
+  (name, expr, ast_tags)
 
 and typedef_toplevel_p () : Ast.toplevel parser =
-  let%map name, expr = typedef_p () in
-  Ast.Type_def { name; expr }
+  let%map type_name, type_def, ast_tags = typedef_p () in
+  Ast.Type_def { type_name; type_def; ast_tags }
 
 and module_def_toplevel_p () : Ast.toplevel parser =
   let%bind module_name, functor_args, module_sig = module_description_p () in
