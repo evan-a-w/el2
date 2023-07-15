@@ -1,0 +1,5 @@
+(library
+ (name type_system)
+ (libraries core frontend)
+ (preprocess (pps ppx_jane))
+ (inline_tests))

@@ -1,5 +1,5 @@
 (library
- (name evanlang2)
+ (name frontend)
  (libraries core angstrom)
  (preprocess (pps ppx_jane))
  (inline_tests))

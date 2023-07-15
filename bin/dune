@@ -1,4 +1,4 @@
 (executable
  (public_name evanlang2)
  (name main)
- (libraries evanlang2))
+ (libraries frontend))
