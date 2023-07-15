@@ -17,6 +17,16 @@ module String_replacement () = struct
         t
   end
 
+  module Set = struct
+    include Set.Make (T)
+
+    let hash_fold_t (hash_state : Ppx_hash_lib.Std.Hash.state) t :
+        Ppx_hash_lib.Std.Hash.state =
+      Set.fold ~init:hash_state
+        ~f:(fun hash_state key -> [%hash_fold: string] hash_state key)
+        t
+  end
+
   include T
   include Hashable.Make (T)
 end
