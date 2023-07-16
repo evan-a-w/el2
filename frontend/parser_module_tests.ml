@@ -31,7 +31,7 @@ let%expect_test "test_simple_module" =
           ((Let ((binding (Name x)) (expr (Node (Literal (Int 1))))))
            (Let ((binding (Name y)) (expr (Node (Literal (Int 2))))))
            (Type_def
-            ((type_name (Single (Unqualified t)))
+            ((type_name (Mono t))
              (type_def
               (Type_expr
                (Multi (Single (Unqualified int)) (Single (Unqualified string)))))
@@ -82,8 +82,7 @@ let%expect_test "test_simple_module_with_sig" =
               ((type_expr (Single (Unqualified int))) (ast_tags ())))
              (Sig_binding (Name y)
               ((type_expr (Single (Unqualified int))) (ast_tags ())))
-             (Sig_type_def
-              ((type_name (Single (Unqualified t))) (type_def ()) (ast_tags ())))
+             (Sig_type_def ((type_name (Mono t)) (type_def ()) (ast_tags ())))
              (Sig_module
               ((module_name Y) (functor_args ())
                (module_sig
@@ -94,7 +93,7 @@ let%expect_test "test_simple_module_with_sig" =
           ((Let ((binding (Name x)) (expr (Node (Literal (Int 1))))))
            (Let ((binding (Name y)) (expr (Node (Literal (Int 2))))))
            (Type_def
-            ((type_name (Single (Unqualified t)))
+            ((type_name (Mono t))
              (type_def
               (Type_expr
                (Multi (Single (Unqualified int)) (Single (Unqualified string)))))
@@ -142,8 +141,7 @@ let%expect_test "test_functor" =
          ((module_name X)
           (functor_args
            ((Arg
-             ((Sig_type_def
-               ((type_name (Single (Unqualified t))) (type_def ()) (ast_tags ())))
+             ((Sig_type_def ((type_name (Mono t)) (type_def ()) (ast_tags ())))
               (Sig_binding (Name x)
                ((type_expr (Single (Unqualified t))) (ast_tags ())))))))
           (module_sig
@@ -152,8 +150,7 @@ let%expect_test "test_functor" =
                (ast_tags ())))
              (Sig_binding (Name y)
               ((type_expr (Single (Unqualified int))) (ast_tags ())))
-             (Sig_type_def
-              ((type_name (Single (Unqualified t))) (type_def ()) (ast_tags ())))
+             (Sig_type_def ((type_name (Mono t)) (type_def ()) (ast_tags ())))
              (Sig_module
               ((module_name Y) (functor_args ())
                (module_sig
@@ -166,7 +163,7 @@ let%expect_test "test_functor" =
              (expr (Node (Var (Qualified Arg (Unqualified x)))))))
            (Let ((binding (Name y)) (expr (Node (Literal (Int 2))))))
            (Type_def
-            ((type_name (Single (Unqualified t)))
+            ((type_name (Mono t))
              (type_def
               (Type_expr
                (Multi (Single (Unqualified int)) (Single (Unqualified string)))))
@@ -198,7 +195,7 @@ let%expect_test "test_named_module_functor_app" =
           ((Named (Unqualified Arg1))
            (Module_typed (Named (Unqualified Arg2))
             ((Sig_type_def
-              ((type_name (Single (Unqualified t))) (type_def ())
+              ((type_name (Mono t)) (type_def ())
                (ast_tags ((deriving ((Symbol sexp)))))))
              (Sig_binding (Name x)
               ((type_expr (Single (Unqualified int))) (ast_tags ())))))))))))) |}]

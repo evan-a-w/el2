@@ -7,13 +7,11 @@ module Symbol_generator = struct
   let create () = { n = 0; printed = 0 }
 
   let gensym t =
-    let n = ref 0 in
-    fun () ->
-      let s = !n in
-      let letter = Char.of_int_exn (Char.to_int 'a' + (s mod 26)) in
-      let s = String.make 1 letter ^ Int.to_string (s / 26) in
-      incr n;
-      s
+    let s = t.n in
+    t.n <- s + 1;
+    let letter = Char.of_int_exn (Char.to_int 'a' + (s mod 26)) in
+    let s = String.make 1 letter ^ Int.to_string (s / 26) in
+    s
 end
 
 (* TODO: once mutability is added, make mutable type stuff that aren't generalized in let expressions

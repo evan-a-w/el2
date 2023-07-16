@@ -79,6 +79,30 @@ let tuple_p p : 'a Ast.Tuple.t parser =
 
 let single_type_expr_p = qualified_p (identifier_p ()) >>| Ast.Type_expr.single
 
+let variance_p : Ast.Variance.t parser =
+  eat_token (Token.Symbol "+")
+  >>| (fun () -> Ast.Variance.Covariant)
+  <|> (eat_token (Token.Symbol "-") >>| fun () -> Ast.Variance.Contravariant)
+  <|> return Ast.Variance.Invariant
+
+let rec type_binding_arg_p () : Ast.Type_binding.arg parser =
+  let single =
+    let%bind variance = variance_p in
+    let%map name = lowercase_p in
+    Ast.Type_binding.single (variance, name)
+  in
+  let tuple () = tuple_p type_binding_arg_p >>| Ast.Type_binding.tuple in
+  tuple () <|> single
+
+let type_binding_p () : Ast.Type_binding.t parser =
+  let mono = lowercase_p >>| Ast.Type_binding.mono in
+  let poly =
+    let%bind arg = type_binding_arg_p () in
+    let%map name = lowercase_p in
+    Ast.Type_binding.poly (arg, name)
+  in
+  poly <|> mono
+
 let type_expr_p () : Ast.Type_expr.t parser =
   let rec paren () =
     let%bind () = eat_token LParen in
@@ -520,7 +544,7 @@ and module_sig_binding_p () =
 and module_sig_type_def_p () =
   let no_def =
     let%bind () = eat_token (Token.Keyword "type") in
-    let%bind type_name = type_expr_p () in
+    let%bind type_name = type_binding_p () in
     let%map ast_tags =
       optional ast_tags_p >>| Option.value ~default:Ast.Ast_tags.empty
     in
@@ -562,10 +586,8 @@ and record_type_def_lit_p () =
     in
     let%bind name = lowercase_p in
     let%bind () = eat_token Token.Colon in
-    let%bind type_expr = type_expr_p in
-    match value with
-    | None, _ -> error [%message "Expected value"]
-    | Some value, mut -> return (name, (value, mut))
+    let%bind type_expr = type_expr_p () in
+    return (name, (type_expr, mut))
   in
   let%bind list = many_sep each ~sep:(eat_token Token.Semicolon) in
   let%bind _ = optional (eat_token Token.Semicolon) in
@@ -587,7 +609,7 @@ and enum_type_def_lit_p () =
 and typedef_p () =
   let type_expr_lit_p = type_expr_p () >>| Ast.Type_def_lit.type_expr in
   let%bind () = eat_token (Token.Keyword "type") in
-  let%bind name = type_expr_p () in
+  let%bind name = type_binding_p () in
   let%bind () = eat_token (Token.Symbol "=") in
   let%bind expr =
     record_type_def_lit_p () <|> enum_type_def_lit_p () <|> type_expr_lit_p

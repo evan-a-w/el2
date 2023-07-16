@@ -741,11 +741,11 @@ let%expect_test "test_pattern_binding" =
 let%expect_test "test_type_define" =
   let program =
     {|
-         type a b c = A a | B (b, c) @[cool]
+         type (+a, -b) c = A a | B (b, c) @[cool]
 
          type t = a list
 
-         type rec = { a : int; b : (string, int) } @[cringe: false]
+         type rec = { a : int; mutable b : (string, int) } @[cringe: false]
        |}
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
@@ -758,8 +758,7 @@ let%expect_test "test_type_define" =
       (Ok
        ((Type_def
          ((type_name
-           (Multi (Single (Unqualified a))
-            (Multi (Single (Unqualified b)) (Single (Unqualified c)))))
+           (Poly ((Tuple ((Single (Covariant a)) (Single (Contravariant b)))) c)))
           (type_def
            (Enum
             ((A ((Single (Unqualified a))))
@@ -768,20 +767,21 @@ let%expect_test "test_type_define" =
                 (Unqualified ((Single (Unqualified b)) (Single (Unqualified c))))))))))
           (ast_tags ((cool ())))))
         (Type_def
-         ((type_name (Single (Unqualified t)))
+         ((type_name (Mono t))
           (type_def
            (Type_expr
             (Multi (Single (Unqualified a)) (Single (Unqualified list)))))
           (ast_tags ())))
         (Type_def
-         ((type_name (Single (Unqualified rec)))
+         ((type_name (Mono rec))
           (type_def
            (Record
-            ((a (Single (Unqualified int)))
+            ((a ((Single (Unqualified int)) false))
              (b
-              (Tuple
-               (Unqualified
-                ((Single (Unqualified string)) (Single (Unqualified int)))))))))
+              ((Tuple
+                (Unqualified
+                 ((Single (Unqualified string)) (Single (Unqualified int)))))
+               true)))))
           (ast_tags ((cringe ((Bool false))))))))))
      (tokens ())) |}]
 

@@ -77,6 +77,20 @@ module Type_expr = struct
   [@@deriving sexp, variants, compare, hash, equal]
 end
 
+module Variance = struct
+  type t = Contravariant | Covariant | Invariant
+  [@@deriving sexp, variants, compare, hash, equal]
+end
+
+module Type_binding = struct
+  type arg = Single of (Variance.t * Lowercase.t) | Tuple of arg Tuple.t
+  [@@deriving sexp, variants, equal, hash, compare]
+
+  (* need to enforce that every arg appears in the definition *)
+  type t = Mono of Lowercase.t | Poly of (arg * Lowercase.t)
+  [@@deriving sexp, variants, equal, hash, compare]
+end
+
 module Type_def_lit = struct
   type t =
     | Record of (Type_expr.t * bool) Lowercase.Map.t
@@ -135,7 +149,7 @@ module Binding = struct
 end
 
 type 'type_def type_description = {
-  type_name : Type_expr.t;
+  type_name : Type_binding.t;
   type_def : 'type_def;
   ast_tags : Ast_tags.t;
 }
