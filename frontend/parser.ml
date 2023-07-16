@@ -555,7 +555,22 @@ and module_sig_p () : Ast.module_sig parser =
   res
 
 and record_type_def_lit_p () =
-  let%map record = record_p type_expr_p in
+  let%bind () = eat_token Token.LBrace in
+  let each =
+    let%bind mut =
+      optional (eat_token (Token.Keyword "mutable")) >>| Option.is_some
+    in
+    let%bind name = lowercase_p in
+    let%bind () = eat_token Token.Colon in
+    let%bind type_expr = type_expr_p in
+    match value with
+    | None, _ -> error [%message "Expected value"]
+    | Some value, mut -> return (name, (value, mut))
+  in
+  let%bind list = many_sep each ~sep:(eat_token Token.Semicolon) in
+  let%bind _ = optional (eat_token Token.Semicolon) in
+  let%map () = eat_token Token.RBrace in
+  let record = Ast.Lowercase.Map.of_alist_exn list in
   Ast.Type_def_lit.Record record
 
 and enum_type_def_lit_p () =

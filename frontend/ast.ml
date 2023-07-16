@@ -38,6 +38,30 @@ module Tag = String_replacement ()
 module Qualified = struct
   type 'a t = Qualified of Uppercase.t * 'a t | Unqualified of 'a
   [@@deriving sexp, compare, equal, hash]
+
+  module Make (Arg : sig
+    type arg [@@deriving sexp, compare, equal, hash]
+  end) =
+  struct
+    module T = struct
+      type t = Qualified of Uppercase.t * t | Unqualified of Arg.arg
+      [@@deriving sexp, compare, equal, hash]
+    end
+
+    module Map = struct
+      include Map.Make (T)
+
+      let hash_fold_t (type a) hash_fold_a
+          (hash_state : Ppx_hash_lib.Std.Hash.state) t :
+          Ppx_hash_lib.Std.Hash.state =
+        Map.fold ~init:hash_state
+          ~f:(fun ~key ~data hash_state ->
+            [%hash_fold: T.t * a] hash_state (key, data))
+          t
+    end
+
+    include T
+  end
 end
 
 module Tuple = struct
@@ -55,7 +79,7 @@ end
 
 module Type_def_lit = struct
   type t =
-    | Record of Type_expr.t Lowercase.Map.t
+    | Record of (Type_expr.t * bool) Lowercase.Map.t
     | Enum of Type_expr.t option Uppercase.Map.t
     | Type_expr of Type_expr.t
   [@@deriving sexp, variants, equal, hash, compare]
