@@ -1,4 +1,5 @@
 open! Core
+open! Shared
 module Parser_comb = Comb.Make (Token)
 open Parser_comb
 open Parser_comb.Let_syntax
@@ -42,17 +43,17 @@ let rec identifier_p () : String.t parser =
 
 let module_name_p = uppercase_p
 
-let qualified_p p : 'a Ast.Qualified.t parser =
+let qualified_p p : 'a Qualified.t parser =
   let rec inner () =
     let indexed =
       let%bind name = module_name_p in
       let%bind () = eat_token Token.Dot in
       let%bind rest = inner () in
-      return Ast.Qualified.(Qualified (name, rest))
+      return Qualified.(Qualified (name, rest))
     in
     let base =
       let%map res = p in
-      Ast.Qualified.Unqualified res
+      Qualified.Unqualified res
     in
     indexed <|> base
   in
@@ -228,7 +229,7 @@ let parse_maybe_tagged p =
   let snd = p >>| fun x -> (x, None) in
   fst <|> snd
 
-let record_p ?(from_name = Fn.const None) p : 'a Ast.Lowercase.Map.t parser =
+let record_p ?(from_name = Fn.const None) p : 'a Lowercase.Map.t parser =
   let%bind () = eat_token Token.LBrace in
   let each =
     let%bind name = lowercase_p in
@@ -244,7 +245,7 @@ let record_p ?(from_name = Fn.const None) p : 'a Ast.Lowercase.Map.t parser =
   let%bind list = many_sep each ~sep:(eat_token Token.Semicolon) in
   let%bind _ = optional (eat_token Token.Semicolon) in
   let%map () = eat_token Token.RBrace in
-  Ast.Lowercase.Map.of_alist_exn list
+  Lowercase.Map.of_alist_exn list
 
 let name_binding_p : Ast.Binding.t parser =
   let%map name = identifier_p () in
@@ -316,8 +317,8 @@ let[@inline] parse_in_paren_maybe_typed p =
   let%bind tag = with_type_tag <|> without_type_tag in
   return (inner, tag)
 
-let single_name_t (name : Ast.Lowercase.t) : Ast.expr =
-  Ast.Node (Ast.Var (Ast.Qualified.Unqualified name))
+let single_name_t (name : Lowercase.t) : Ast.expr =
+  Ast.Node (Ast.Var (Qualified.Unqualified name))
 
 let binding_power ~operator =
   match Pratt.infix_binding_power ~operator with
@@ -516,7 +517,7 @@ and module_def_functor_app_p () =
 
 and module_def_p () = module_def_functor_app_p () <|> module_def_no_functor_p ()
 
-and module_def_arg_p () : (Ast.Uppercase.t * Ast.module_sig) parser =
+and module_def_arg_p () : (Uppercase.t * Ast.module_sig) parser =
   let%bind () = eat_token Token.LParen in
   let%bind name = uppercase_p in
   let%bind () = eat_token Token.Colon in
@@ -592,7 +593,7 @@ and record_type_def_lit_p () =
   let%bind list = many_sep each ~sep:(eat_token Token.Semicolon) in
   let%bind _ = optional (eat_token Token.Semicolon) in
   let%map () = eat_token Token.RBrace in
-  let record = Ast.Lowercase.Map.of_alist_exn list in
+  let record = Lowercase.Map.of_alist_exn list in
   Ast.Type_def_lit.Record record
 
 and enum_type_def_lit_p () =
@@ -603,7 +604,7 @@ and enum_type_def_lit_p () =
     return (constructor, value_type)
   in
   let%bind list = many_sep1 each ~sep:(eat_token Token.Pipe) in
-  let map = Ast.Uppercase.Map.of_alist_exn list in
+  let map = Uppercase.Map.of_alist_exn list in
   return (Ast.Type_def_lit.Enum map)
 
 and typedef_p () =

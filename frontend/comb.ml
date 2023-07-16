@@ -1,4 +1,5 @@
 open! Core
+open! Shared
 
 module type S = sig
   type t [@@deriving compare, sexp]
