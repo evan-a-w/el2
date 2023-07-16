@@ -80,11 +80,11 @@ let tuple_p p : 'a Ast.Tuple.t parser =
 
 let single_type_expr_p = qualified_p (identifier_p ()) >>| Ast.Type_expr.single
 
-let variance_p : Ast.Variance.t parser =
+let variance_p : Variance.t parser =
   eat_token (Token.Symbol "+")
-  >>| (fun () -> Ast.Variance.Covariant)
-  <|> (eat_token (Token.Symbol "-") >>| fun () -> Ast.Variance.Contravariant)
-  <|> return Ast.Variance.Invariant
+  >>| (fun () -> Variance.Covariant)
+  <|> (eat_token (Token.Symbol "-") >>| fun () -> Variance.Contravariant)
+  <|> return Variance.Invariant
 
 let rec type_binding_arg_p () : Ast.Type_binding.arg parser =
   let single =
@@ -115,7 +115,7 @@ let type_expr_p () : Ast.Type_expr.t parser =
     let%bind () = eat_token (Token.Symbol "&") in
     let%bind inner = a () in
     return (Ast.Type_expr.Pointer inner)
-  and tuple () = qualified_p (tuple_p whole) >>| Ast.Type_expr.tuple
+  and tuple () = tuple_p whole >>| Ast.Type_expr.tuple
   and multi () =
     let%bind first = a () <|> tuple () in
     let%bind next = whole () in
@@ -126,7 +126,7 @@ let type_expr_p () : Ast.Type_expr.t parser =
 let type_expr_no_spaces_p =
   parse_in_paren (type_expr_p ())
   <|> single_type_expr_p
-  <|> (qualified_p (tuple_p type_expr_p) >>| Ast.Type_expr.tuple)
+  <|> (tuple_p type_expr_p >>| Ast.Type_expr.tuple)
 
 let ast_tag_p : (Ast.Tag.t * Token.t list) parser =
   let%bind tag = symbol_p in

@@ -28,9 +28,8 @@ let%expect_test "type_expr_multi2" =
      (Ok
       (Multi
        (Tuple
-        (Unqualified
-         ((Single (Unqualified a))
-          (Multi (Single (Unqualified b)) (Single (Unqualified int))))))
+        ((Single (Unqualified a))
+         (Multi (Single (Unqualified b)) (Single (Unqualified int)))))
        (Multi (Single (Unqualified int)) (Single (Unqualified d)))))) |}]
 
 let test_parse_one ~program =
@@ -312,9 +311,8 @@ let%expect_test "test_lots_type_tags" =
               ((type_expr
                 (Multi
                  (Tuple
-                  (Unqualified
-                   ((Single (Unqualified a)) (Single (Unqualified b))
-                    (Single (Unqualified c)))))
+                  ((Single (Unqualified a)) (Single (Unqualified b))
+                   (Single (Unqualified c))))
                  (Multi (Single (Unqualified int)) (Single (Unqualified t)))))
                (ast_tags ())))))))))
        (Let
@@ -338,9 +336,7 @@ let%expect_test "test_lots_type_tags" =
                ((type_expr (Single (Unqualified int))) (ast_tags ())))
               (Literal (Int 1)))))
            ((type_expr
-             (Tuple
-              (Unqualified
-               ((Single (Unqualified int)) (Single (Unqualified int))))))
+             (Tuple ((Single (Unqualified int)) (Single (Unqualified int)))))
             (ast_tags ()))))
          (expr (Node (Literal (Int 1))))))))) |}]
 
@@ -645,9 +641,7 @@ let%expect_test "test_tuples" =
         ((binding
           (Typed (Name int)
            ((type_expr
-             (Tuple
-              (Unqualified
-               ((Single (Unqualified int)) (Single (Unqualified int))))))
+             (Tuple ((Single (Unqualified int)) (Single (Unqualified int)))))
             (ast_tags ()))))
          (expr
           (Node
@@ -762,9 +756,7 @@ let%expect_test "test_type_define" =
           (type_def
            (Enum
             ((A ((Single (Unqualified a))))
-             (B
-              ((Tuple
-                (Unqualified ((Single (Unqualified b)) (Single (Unqualified c))))))))))
+             (B ((Tuple ((Single (Unqualified b)) (Single (Unqualified c)))))))))
           (ast_tags ((cool ())))))
         (Type_def
          ((type_name (Mono t))
@@ -778,9 +770,7 @@ let%expect_test "test_type_define" =
            (Record
             ((a ((Single (Unqualified int)) false))
              (b
-              ((Tuple
-                (Unqualified
-                 ((Single (Unqualified string)) (Single (Unqualified int)))))
+              ((Tuple ((Single (Unqualified string)) (Single (Unqualified int))))
                true)))))
           (ast_tags ((cringe ((Bool false))))))))))
      (tokens ())) |}]

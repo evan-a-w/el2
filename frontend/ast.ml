@@ -10,13 +10,8 @@ module Type_expr = struct
   type t =
     | Pointer of t
     | Single of Lowercase.t Qualified.t
-    | Tuple of t Tuple.t Qualified.t
+    | Tuple of t Tuple.t
     | Multi of t * t
-  [@@deriving sexp, variants, compare, hash, equal]
-end
-
-module Variance = struct
-  type t = Contravariant | Covariant | Invariant
   [@@deriving sexp, variants, compare, hash, equal]
 end
 
