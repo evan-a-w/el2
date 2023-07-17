@@ -29,9 +29,11 @@ type type_constructor =
 [@@deriving sexp, equal, hash, compare]
 
 (* always safe to generalize variables that are only used covariantly *)
-(* a use of a variable is defining a variable of a type parameterised by that variable
-   (let, match, etc.)
-   OR applying to a function taking that variable or a type parameterised by that variable *)
+(* a use of a type variable is instantiating a value of type equal to the variable or a
+   type parameterised by that variable.
+   Can check if type is parameterised by the variable simply by mapping over the type
+   and finding tyvars.
+   This should probably be cached. *)
 (* Variances of record fields is covariant if not mutable, invariant if mutable *)
 (* Variances of Enum is the combination of all underlying types *)
 and mono =
