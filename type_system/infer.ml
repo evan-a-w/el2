@@ -25,7 +25,7 @@ type type_function_arg =
 
 (* always safe to generalize variables that are only covariant *)
 (* implicit variance for all but Type_function, Type_application and Record *)
-type mono =
+type mono_inner =
   | Abstract
   | TyVar of Lowercase.t
   | Lambda of mono * mono
@@ -34,6 +34,9 @@ type mono =
   | Type_application of mono * mono * variance_map
   | Record of mono * variance_map
   | Pointer of mono
+[@@deriving sexp, equal, hash, compare]
+
+and mono = mono_inner * Variance.t Lowercase.Map.t
 [@@deriving sexp, equal, hash, compare]
 
 and poly = Mono of mono | Forall of Lowercase.t * poly
@@ -121,9 +124,6 @@ let add_type name mono =
   in
   State.put { state with current_module_binding }
 
-let add_type_no_variance name mono_inner =
-  add_type name (mono_inner, Lowercase.Map.empty)
-
 type 'a state_m = ('a, state) State.t [@@deriving sexp]
 type 'a state_result_m = ('a, Sexp.t, state) State.Result.t [@@deriving sexp]
 
@@ -207,15 +207,12 @@ and process_type_def_lit_type_expr type_expr : mono state_result_m =
   let open State.Result.Let_syntax in
   match type_expr with
   | Ast.Type_expr.Pointer type_expr ->
-      let%map ((_, variance_map) as mono) =
-        process_type_def_lit_type_expr type_expr
-      in
-      (Pointer mono, variance_map)
+      let%map mono = process_type_def_lit_type_expr type_expr in
+      Pointer mono
   | Ast.Type_expr.Tuple l ->
       let%map monos =
         State.Result.all (List.map l ~f:process_type_def_lit_type_expr)
       in
-      let _, variances = List.unzip monos in
       let variance_map =
         List.fold ~init:Lowercase.Map.empty ~f:merge_variance_maps variances
       in
