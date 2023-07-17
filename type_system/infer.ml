@@ -18,28 +18,34 @@ end
 type variance_map = Variance.t Lowercase.Map.t
 [@@deriving sexp, equal, hash, compare]
 
-type type_function_arg =
-  | Tuple_arg of type_function_arg list
+type type_constructor_arg =
+  | Tuple_arg of type_constructor_arg list
   | Single_arg of Variance.t * Lowercase.t
 [@@deriving sexp, equal, hash, compare]
 
-(* always safe to generalize variables that are only covariant *)
-(* implicit variance for all but Type_function, Type_application and Record *)
-type mono_inner =
-  | Abstract
+type type_constructor =
+  type_constructor_arg * Lowercase.t Qualified.t * mono
+  (* replace bound variables in type_constructor_arg with new TyVars when using this mono *)
+[@@deriving sexp, equal, hash, compare]
+
+(* always safe to generalize variables that are only used covariantly *)
+(* a use of a variable is defining a variable of a type parameterised by that variable
+   (let, match, etc.)
+   OR applying to a function taking that variable or a type parameterised by that variable *)
+(* Variances of record fields is covariant if not mutable, invariant if mutable *)
+(* Variances of Enum is the combination of all underlying types *)
+and mono =
+  | Abstract of Lowercase.t Qualified.t * type_constructor_arg option
+  (* keep track of the path for equality and type params for variance *)
   | TyVar of Lowercase.t
   | Lambda of mono * mono
   | Tuple of mono list
-  | Type_function of type_function_arg * mono
-  | Type_application of mono * mono * variance_map
-  | Record of mono * variance_map
+  | Record of (mono * bool) Lowercase.Map.t
+  | Enum of mono Uppercase.Map.t
   | Pointer of mono
 [@@deriving sexp, equal, hash, compare]
 
-and mono = mono_inner * Variance.t Lowercase.Map.t
-[@@deriving sexp, equal, hash, compare]
-
-and poly = Mono of mono | Forall of Lowercase.t * poly
+type poly = Mono of mono | Forall of Lowercase.t * poly
 [@@deriving sexp, equal, hash, compare]
 
 module Mono_ufds = Ufds.Make (struct
@@ -124,6 +130,48 @@ let add_type name mono =
   in
   State.put { state with current_module_binding }
 
+let merge_variance_one variances ~name ~variance =
+  Lowercase.Map.change variances name ~f:(function
+    | None -> Some variance
+    | Some x -> Some (Variance.merge x variance))
+
+let merge_variance_maps (variances1 : Variance.t Lowercase.Map.t) variances2 =
+  Lowercase.Map.merge variances1 variances2 ~f:(fun ~key:_ -> function
+    | `Left x | `Right x -> Some x | `Both (x, y) -> Some (Variance.merge x y))
+
+let merge_variance_map_list =
+  List.fold ~init:Lowercase.Map.empty ~f:merge_variance_maps
+
+let add_type_calculate_variance name (mono_inner : mono_inner) =
+  let variance_map =
+    match mono_inner with
+    | Abstract | TyVar _ -> Lowercase.Map.empty
+    | Tuple l -> merge_variance_map_list (List.map l ~f:snd)
+    | Pointer (_, variance_map) -> variance_map
+    | Lambda ((inner_l, left), (inner_r, right)) ->
+        (* how does recursion work for this??? *)
+        let curr = merge_variance_maps left right in
+        let curr =
+          match inner_l with
+          | TyVar name -> merge_variance_one curr ~name ~variance:Contravariant
+          | _ -> curr
+        in
+        let curr =
+          match inner_r with
+          | TyVar name -> merge_variance_one curr ~name ~variance:Covariant
+          | _ -> curr
+        in
+        curr
+    | Type_function (_, _) | Type_application (_, _) | Record _ ->
+        failwith
+          ([%message "cannot calculate variance for" (mono_inner : mono_inner)]
+          |> Sexp.to_string_hum)
+  in
+  add_type name (mono_inner, variance_map)
+
+let add_type_no_variance name mono_inner =
+  add_type name (mono_inner, Lowercase.Map.empty)
+
 type 'a state_m = ('a, state) State.t [@@deriving sexp]
 type 'a state_result_m = ('a, Sexp.t, state) State.Result.t [@@deriving sexp]
 
@@ -179,7 +227,7 @@ let lookup_type qualified_name =
     match qualifications with
     | [] ->
         Option.bind (Lowercase.Map.find state.type_var_map type_name) ~f:List.hd
-        |> Option.map ~f:(fun x -> TyVar x)
+        |> Option.map ~f:(fun x -> (TyVar x, Lowercase.Map.empty))
     | _ -> None
   in
   let res =
@@ -193,10 +241,6 @@ let lookup_type qualified_name =
       State.Result.error
         [%message "type not found" (qualified_name : Lowercase.t Qualified.t)]
 
-let merge_variance_maps (variances1 : Variance.t Lowercase.Map.t) variances2 =
-  Lowercase.Map.merge variances1 variances2 ~f:(fun ~key:_ -> function
-    | `Left x | `Right x -> Some x | `Both (x, y) -> Some (Variance.merge x y))
-
 let rec process_type_def_lit (type_def_lit : Ast.Type_def_lit.t) =
   match type_def_lit with
   | Ast.Type_def_lit.Record _ | Ast.Type_def_lit.Enum _
@@ -207,15 +251,16 @@ and process_type_def_lit_type_expr type_expr : mono state_result_m =
   let open State.Result.Let_syntax in
   match type_expr with
   | Ast.Type_expr.Pointer type_expr ->
-      let%map mono = process_type_def_lit_type_expr type_expr in
-      Pointer mono
+      let%map ((_, variance_map) as mono) =
+        process_type_def_lit_type_expr type_expr
+      in
+      (Pointer mono, variance_map)
   | Ast.Type_expr.Tuple l ->
       let%map monos =
         State.Result.all (List.map l ~f:process_type_def_lit_type_expr)
       in
-      let variance_map =
-        List.fold ~init:Lowercase.Map.empty ~f:merge_variance_maps variances
-      in
+      let _, variances = List.unzip monos in
+      let variance_map = merge_variance_map_list variances in
       (Tuple monos, variance_map)
   | Ast.Type_expr.Single name -> lookup_type name
   | Ast.Type_expr.Multi (_, _) -> failwith "TODO"
