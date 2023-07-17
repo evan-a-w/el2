@@ -78,6 +78,12 @@ let tuple_p p : 'a Ast.Tuple.t parser =
   let%map () = eat_token Token.RParen in
   res
 
+let single_or_tuple_p p =
+  let single = p () >>| Ast.Single_or_tuple.single in
+  let rec tuple () = tuple_p whole >>| Ast.Single_or_tuple.tuple
+  and whole () = single <|> tuple () in
+  whole ()
+
 let single_type_expr_p = qualified_p (identifier_p ()) >>| Ast.Type_expr.single
 
 let variance_p : Variance.t parser =
@@ -117,7 +123,7 @@ let type_expr_p () : Ast.Type_expr.t parser =
     return (Ast.Type_expr.Pointer inner)
   and tuple () = tuple_p whole >>| Ast.Type_expr.tuple
   and multi () =
-    let%bind first = a () <|> tuple () in
+    let%bind first = single_or_tuple_p (fun () -> lowercase_p) in
     let%bind next = whole () in
     return (Ast.Type_expr.Multi (first, next))
   and whole () = multi () <|> a () <|> tuple () <|> pointer () in

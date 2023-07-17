@@ -33,8 +33,7 @@ let%expect_test "test_simple_module" =
            (Type_def
             ((type_name (Mono t))
              (type_def
-              (Type_expr
-               (Multi (Single (Unqualified int)) (Single (Unqualified string)))))
+              (Type_expr (Multi (Single int) (Single (Unqualified string)))))
              (ast_tags ())))
            (Module_def
             (module_description
@@ -95,8 +94,7 @@ let%expect_test "test_simple_module_with_sig" =
            (Type_def
             ((type_name (Mono t))
              (type_def
-              (Type_expr
-               (Multi (Single (Unqualified int)) (Single (Unqualified string)))))
+              (Type_expr (Multi (Single int) (Single (Unqualified string)))))
              (ast_tags ())))
            (Module_def
             (module_description
@@ -165,8 +163,7 @@ let%expect_test "test_functor" =
            (Type_def
             ((type_name (Mono t))
              (type_def
-              (Type_expr
-               (Multi (Single (Unqualified int)) (Single (Unqualified string)))))
+              (Type_expr (Multi (Single int) (Single (Unqualified string)))))
              (ast_tags ())))
            (Module_def
             (module_description

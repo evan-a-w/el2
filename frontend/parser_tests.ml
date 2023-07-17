@@ -18,7 +18,7 @@ let%expect_test "type_expr_single_extra_paren" =
 let%expect_test "type_expr_multi1" =
   print_type_expr ~program:"a int";
   [%expect
-    {| (ast (Ok (Multi (Single (Unqualified a)) (Single (Unqualified int))))) |}]
+    {| (ast (Ok (Multi (Single a) (Single (Unqualified int))))) |}]
 
 let%expect_test "type_expr_multi2" =
   print_type_expr ~program:"(a, (b int)) int d";
@@ -26,11 +26,8 @@ let%expect_test "type_expr_multi2" =
     {|
     (ast
      (Ok
-      (Multi
-       (Tuple
-        ((Single (Unqualified a))
-         (Multi (Single (Unqualified b)) (Single (Unqualified int)))))
-       (Multi (Single (Unqualified int)) (Single (Unqualified d)))))) |}]
+      (Tuple
+       ((Single (Unqualified a)) (Multi (Single b) (Single (Unqualified int))))))) |}]
 
 let test_parse_one ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
@@ -289,8 +286,7 @@ let%expect_test "test_lots_type_tags" =
            (Wrapped
             (Unqualified
              (Typed (Node (Literal (Int 1)))
-              ((type_expr
-                (Multi (Single (Unqualified int)) (Single (Unqualified t))))
+              ((type_expr (Multi (Single int) (Single (Unqualified t))))
                (ast_tags ())))))))))
        (Let
         ((binding (Name nested))
@@ -309,11 +305,8 @@ let%expect_test "test_lots_type_tags" =
                      (Node (Var (Unqualified x))))
                     (Node (Var (Unqualified y)))))))))
               ((type_expr
-                (Multi
-                 (Tuple
-                  ((Single (Unqualified a)) (Single (Unqualified b))
-                   (Single (Unqualified c))))
-                 (Multi (Single (Unqualified int)) (Single (Unqualified t)))))
+                (Multi (Tuple ((Single a) (Single b) (Single c)))
+                 (Multi (Single int) (Single (Unqualified t)))))
                (ast_tags ())))))))))
        (Let
         ((binding (Name function2))
@@ -760,9 +753,7 @@ let%expect_test "test_type_define" =
           (ast_tags ((cool ())))))
         (Type_def
          ((type_name (Mono t))
-          (type_def
-           (Type_expr
-            (Multi (Single (Unqualified a)) (Single (Unqualified list)))))
+          (type_def (Type_expr (Multi (Single a) (Single (Unqualified list)))))
           (ast_tags ())))
         (Type_def
          ((type_name (Mono rec))
@@ -812,15 +803,13 @@ let%expect_test "type_expr_pointer_multi" =
   print_type_expr ~program:"&int a";
   [%expect
     {|
-    (ast
-     (Ok (Multi (Pointer (Single (Unqualified int))) (Single (Unqualified a))))) |}]
+    (ast (Ok (Pointer (Single (Unqualified int))))) |}]
 
 let%expect_test "type_expr_pointer_paren" =
   print_type_expr ~program:"&(int a)";
   [%expect
     {|
-    (ast
-     (Ok (Pointer (Multi (Single (Unqualified int)) (Single (Unqualified a)))))) |}]
+    (ast (Ok (Pointer (Multi (Single int) (Single (Unqualified a)))))) |}]
 
 let%expect_test "type_expr_multi_pointer" =
   print_type_expr ~program:"& & &int";
