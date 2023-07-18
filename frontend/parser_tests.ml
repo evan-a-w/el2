@@ -754,8 +754,7 @@ let%expect_test "test_type_define" =
     ((ast
       (Ok
        ((Type_def
-         ((type_name
-           (Poly ((Tuple ((Single (Covariant a)) (Single (Contravariant b)))) c)))
+         ((type_name (Poly ((Tuple ((Covariant a) (Contravariant b))) c)))
           (type_def
            (Enum
             ((A ((Single (Unqualified a))))
@@ -770,10 +769,10 @@ let%expect_test "test_type_define" =
          ((type_name (Mono rec))
           (type_def
            (Record
-            ((a ((Single (Unqualified int)) false))
+            ((a ((Single (Unqualified int)) Immutable))
              (b
               ((Tuple ((Single (Unqualified string)) (Single (Unqualified int))))
-               true)))))
+               Mutable)))))
           (ast_tags ((cringe ((Bool false))))))))))
      (tokens ())) |}]
 

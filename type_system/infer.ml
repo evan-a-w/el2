@@ -15,7 +15,9 @@ type type_constructor =
   (* replace bound variables in type_constructor_arg with new TyVars when using this mono *)
 [@@deriving sexp, equal, hash, compare]
 
-(* always safe to generalize variables that are only used covariantly *)
+(* can't generalize the type of values (ie. things that arent just straight up a function,
+   incl. lambdas)*)
+(* BUT always safe to generalize variables that are only used covariantly *)
 (* a use of a type variable is instantiating a value of type equal to the variable or a
    type parameterised by that variable.
    Can check if type is parameterised by the variable simply by mapping over the type
@@ -24,13 +26,13 @@ type type_constructor =
 (* Variances of record fields is covariant if not mutable, invariant if mutable *)
 (* Variances of Enum is the combination of all underlying types *)
 and mono =
-  | Abstract of Lowercase.t Qualified.t * type_constructor_arg option
-  (* keep track of the path for equality and type params for variance *)
+  | Abstract of Lowercase.t Qualified.t * mono option
+  (* keep track of the path and arg for equality *)
   | TyVar of Lowercase.t
   | Lambda of mono * mono
   | Tuple of mono list
-  | Record of (mono * bool) Lowercase.Map.t
-  | Enum of (Uppercase.t * mono) List.t
+  | Record of (Lowercase.t * (mono * [ `Mutable | `Immutable ])) List.t
+  | Enum of (Uppercase.t * mono option) List.t
   | Pointer of mono
 [@@deriving sexp, equal, hash, compare]
 
@@ -259,26 +261,30 @@ let lookup_type qualified_name =
       State.Result.error
         [%message "type not found" (qualified_name : Lowercase.t Qualified.t)]
 
-let rec process_type_def_lit (type_def_lit : Ast.Type_def_lit.t) =
-  match type_def_lit with
-  | Ast.Type_def_lit.Record _ | Ast.Type_def_lit.Enum _
-  | Ast.Type_def_lit.Type_expr _ ->
-      failwith "TODO"
-
-let rec map_ty_vars ~replacement_map (mono : mono) =
+let rec map_ty_vars ~f (mono : mono) =
   match mono with
-  | TyVar m ->
-      Lowercase.Map.find replacement_map m |> Option.value ~default:mono
-  | Lambda (a, b) ->
-      Lambda (map_ty_vars ~replacement_map a, map_ty_vars ~replacement_map b)
-  | Tuple l -> Tuple (List.map l ~f:(map_ty_vars ~replacement_map))
-  | Record r ->
-      Record
-        (Lowercase.Map.map r
-           ~f:(Tuple2.map_fst ~f:(map_ty_vars ~replacement_map)))
-  | Enum l -> Enum (List.Assoc.map l ~f:(map_ty_vars ~replacement_map))
-  | Pointer x -> Pointer (map_ty_vars ~replacement_map x)
+  | TyVar m -> Option.value (f m) ~default:mono
+  | Lambda (a, b) -> Lambda (map_ty_vars ~f a, map_ty_vars ~f b)
+  | Tuple l -> Tuple (List.map l ~f:(map_ty_vars ~f))
+  | Record l ->
+      Record (List.Assoc.map l ~f:(Tuple2.map_fst ~f:(map_ty_vars ~f)))
+  | Enum l -> Enum (List.Assoc.map l ~f:(Option.map ~f:(map_ty_vars ~f)))
+  | Pointer x -> Pointer (map_ty_vars ~f x)
   | Abstract _ -> mono
+
+let iter_ty_vars ~f mono =
+  ignore
+    (map_ty_vars mono ~f:(fun x ->
+         f x;
+         None))
+
+let free_ty_vars mono =
+  let set = ref Lowercase.Set.empty in
+  iter_ty_vars mono ~f:(fun x -> set := Lowercase.Set.add !set x);
+  !set
+
+let replace_ty_vars ~replacement_map =
+  map_ty_vars ~f:(Lowercase.Map.find replacement_map)
 
 let gen_replacement_map vars =
   let open State.Result.Let_syntax in
@@ -306,6 +312,11 @@ let rec type_of_type_expr type_expr : mono state_result_m =
   | Ast.Type_expr.Multi (first, second) ->
       let%bind constructor_arg, _, mono = lookup_type_constructor second in
       let%bind arg = type_of_type_expr first in
+      let mono =
+        match mono with
+        | Abstract (name, _) -> Abstract (name, Some arg)
+        | _ -> mono
+      in
       let vars =
         match constructor_arg with
         | Single_arg (_, x) -> [ x ]
@@ -333,7 +344,32 @@ let rec type_of_type_expr type_expr : mono state_result_m =
                   ~constructor:(second : string Qualified.t)
                   (x : Lowercase.t)]
       in
-      map_ty_vars ~replacement_map mono
+      replace_ty_vars ~replacement_map mono
+
+let type_of_type_def_lit (type_def_lit : Ast.Type_def_lit.t) =
+  let open State.Result.Let_syntax in
+  match type_def_lit with
+  | Ast.Type_def_lit.Type_expr type_expr -> type_of_type_expr type_expr
+  | Ast.Type_def_lit.Record l ->
+      let%map monos =
+        List.map l ~f:(fun (name, (type_expr, mutability)) ->
+            let%map mono = type_of_type_expr type_expr in
+            (name, (mono, mutability)))
+        |> State.Result.all
+      in
+      Record monos
+  | Ast.Type_def_lit.Enum l ->
+      let%map monos =
+        List.map l ~f:(fun (name, type_expr) ->
+            let%map mono =
+              match type_expr with
+              | Some type_expr -> type_of_type_expr type_expr >>| Option.some
+              | None -> return None
+            in
+            (name, mono))
+        |> State.Result.all
+      in
+      Enum monos
 
 let process_type_def (_type_binding : Ast.Type_def_lit.t Ast.type_description) =
   failwith "TODO"

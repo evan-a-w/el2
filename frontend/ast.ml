@@ -16,7 +16,9 @@ module Type_expr = struct
 end
 
 module Type_binding = struct
-  type arg = Single of (Variance.t * Lowercase.t) | Tuple of arg Tuple.t
+  type arg =
+    | Single of (Variance.t * Lowercase.t)
+    | Tuple of (Variance.t * Lowercase.t) list
   [@@deriving sexp, variants, equal, hash, compare]
 
   (* need to enforce that every arg appears in the definition *)
@@ -26,8 +28,8 @@ end
 
 module Type_def_lit = struct
   type t =
-    | Record of (Type_expr.t * bool) Lowercase.Map.t
-    | Enum of Type_expr.t option Uppercase.Map.t
+    | Record of (Lowercase.t * (Type_expr.t * [ `Mutable | `Immutable ])) List.t
+    | Enum of (Uppercase.t * Type_expr.t option) List.t
     | Type_expr of Type_expr.t
   [@@deriving sexp, variants, equal, hash, compare]
 end

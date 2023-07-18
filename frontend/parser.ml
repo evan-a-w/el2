@@ -84,13 +84,14 @@ let variance_p : Variance.t parser =
   <|> (eat_token (Token.Symbol "-") >>| fun () -> Variance.Contravariant)
   <|> return Variance.Invariant
 
-let rec type_binding_arg_p () : Ast.Type_binding.arg parser =
-  let single =
+let type_binding_arg_p () : Ast.Type_binding.arg parser =
+  let inner () =
     let%bind variance = variance_p in
     let%map name = lowercase_p in
-    Ast.Type_binding.single (variance, name)
+    (variance, name)
   in
-  let tuple () = tuple_p type_binding_arg_p >>| Ast.Type_binding.tuple in
+  let single = inner () >>| Ast.Type_binding.single in
+  let tuple () = tuple_p inner >>| Ast.Type_binding.tuple in
   tuple () <|> single
 
 let type_binding_p () : Ast.Type_binding.t parser =
@@ -588,17 +589,17 @@ and record_type_def_lit_p () =
   let%bind () = eat_token Token.LBrace in
   let each =
     let%bind mut =
-      optional (eat_token (Token.Keyword "mutable")) >>| Option.is_some
+      eat_token (Token.Keyword "mutable")
+      >>| Fn.const `Mutable <|> return `Immutable
     in
     let%bind name = lowercase_p in
     let%bind () = eat_token Token.Colon in
     let%bind type_expr = type_expr_p () in
     return (name, (type_expr, mut))
   in
-  let%bind list = many_sep each ~sep:(eat_token Token.Semicolon) in
+  let%bind record = many_sep each ~sep:(eat_token Token.Semicolon) in
   let%bind _ = optional (eat_token Token.Semicolon) in
   let%map () = eat_token Token.RBrace in
-  let record = Lowercase.Map.of_alist_exn list in
   Ast.Type_def_lit.Record record
 
 and enum_type_def_lit_p () =
@@ -608,8 +609,7 @@ and enum_type_def_lit_p () =
     let%bind value_type = optional (type_expr_no_spaces_p ()) in
     return (constructor, value_type)
   in
-  let%bind list = many_sep1 each ~sep:(eat_token Token.Pipe) in
-  let map = Uppercase.Map.of_alist_exn list in
+  let%bind map = many_sep1 each ~sep:(eat_token Token.Pipe) in
   return (Ast.Type_def_lit.Enum map)
 
 and typedef_p () =
