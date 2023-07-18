@@ -6,17 +6,12 @@ module Tuple = struct
   type 'a t = 'a list [@@deriving sexp, compare, equal, hash]
 end
 
-module Single_or_tuple = struct
-  type 'a t = Single of 'a | Tuple of 'a t Tuple.t
-  [@@deriving sexp, compare, equal, hash, variants]
-end
-
 module Type_expr = struct
   type t =
     | Pointer of t
     | Single of Lowercase.t Qualified.t
     | Tuple of t Tuple.t
-    | Multi of Lowercase.t Single_or_tuple.t * t
+    | Multi of t * Lowercase.t Qualified.t
   [@@deriving sexp, variants, compare, hash, equal]
 end
 

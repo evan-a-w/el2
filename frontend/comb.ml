@@ -79,6 +79,7 @@ module Make (Token : S) = struct
     | _ -> error [%message "Expected at least two elements"]
 
   let many_rev1 p = many_sep_rev1 p ~sep:(return ())
+  let many_rev2 p = many_sep_rev2 p ~sep:(return ())
   let many_sep1 p ~sep = many_sep_rev1 p ~sep >>| List.rev
   let many_sep2 p ~sep = many_sep_rev2 p ~sep >>| List.rev
   let many p = many_sep p ~sep:(return ())

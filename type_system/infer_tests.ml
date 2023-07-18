@@ -7,10 +7,10 @@ open! State.Result.Let_syntax
 let state_with_some_stuff =
   let m =
     let%bind.State () = State.put empty_state in
-    let%bind.State () = add_type_no_variance "int" Abstract in
-    let%bind.State ty_var = push_type_var "a" in
-    let variance_map = Lowercase.Map.singleton ty_var Variance.Covariant in
-    add_type "list" (Type_function (ty_var, Abstract), variance_map)
+    let%bind.State () = add_type "int" (Abstract (Unqualified "int", None)) in
+    let arg = Single_arg (Variance.Covariant, "a") in
+    let mono = Abstract (Unqualified "list", Some arg) in
+    add_type_constructor arg "list" mono
   in
   State.run m ~state:empty_state |> snd
 
@@ -39,7 +39,8 @@ let%expect_test "type_expr multi lit" =
   let lit =
     Ast.(
       Type_expr.Multi
-        ( Ast.Single_or_tuple.Single "int",
+        ( Ast.Single_or_tuple.Single
+            (Ast.Type_expr.Single (Qualified.Unqualified "int")),
           Ast.Type_expr.Single (Qualified.Unqualified "list") ))
   in
   let res, state =

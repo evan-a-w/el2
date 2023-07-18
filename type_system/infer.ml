@@ -2,29 +2,16 @@ open! Core
 open! Shared
 open! Frontend
 
-module Symbol_generator = struct
-  type t = { mutable n : int; mutable printed : int } [@@deriving sexp]
-
-  let create () = { n = 0; printed = 0 }
-
-  let gensym t =
-    let s = t.n in
-    t.n <- s + 1;
-    let letter = Char.of_int_exn (Char.to_int 'a' + (s mod 26)) in
-    let s = String.make 1 letter ^ Int.to_string (s / 26) in
-    s
-end
-
 type variance_map = Variance.t Lowercase.Map.t
 [@@deriving sexp, equal, hash, compare]
 
 type type_constructor_arg =
-  | Tuple_arg of type_constructor_arg list
+  | Tuple_arg of (Variance.t * Lowercase.t) list
   | Single_arg of Variance.t * Lowercase.t
 [@@deriving sexp, equal, hash, compare]
 
 type type_constructor =
-  type_constructor_arg * Lowercase.t Qualified.t * mono
+  type_constructor_arg * Lowercase.t * mono
   (* replace bound variables in type_constructor_arg with new TyVars when using this mono *)
 [@@deriving sexp, equal, hash, compare]
 
@@ -43,7 +30,7 @@ and mono =
   | Lambda of mono * mono
   | Tuple of mono list
   | Record of (mono * bool) Lowercase.Map.t
-  | Enum of mono Uppercase.Map.t
+  | Enum of (Uppercase.t * mono) List.t
   | Pointer of mono
 [@@deriving sexp, equal, hash, compare]
 
@@ -61,6 +48,7 @@ end)
 type module_bindings = {
   toplevel_vars : mono Lowercase.Map.t;
   toplevel_records : (Lowercase.Set.t * mono) list;
+  toplevel_type_constructors : type_constructor Lowercase.Map.t;
   toplevel_types : mono Lowercase.Map.t;
   toplevel_modules : module_bindings Uppercase.Map.t;
   opened_modules : module_bindings List.t;
@@ -71,6 +59,7 @@ let empty_module_bindngs =
   {
     toplevel_vars = Lowercase.Map.empty;
     toplevel_records = [];
+    toplevel_type_constructors = Lowercase.Map.empty;
     toplevel_types = Lowercase.Map.empty;
     toplevel_modules = Uppercase.Map.empty;
     opened_modules = [];
@@ -86,6 +75,22 @@ type state = {
 }
 [@@deriving sexp, equal, compare, fields]
 
+type 'a state_m = ('a, state) State.t [@@deriving sexp]
+type 'a state_result_m = ('a, Sexp.t, state) State.Result.t [@@deriving sexp]
+
+let add_type_constructor arg name mono =
+  let open State.Let_syntax in
+  let%bind state = State.get in
+  let data = (arg, name, mono) in
+  let toplevel_type_constructors =
+    Lowercase.Map.set state.current_module_binding.toplevel_type_constructors
+      ~key:name ~data
+  in
+  let current_module_binding =
+    { state.current_module_binding with toplevel_type_constructors }
+  in
+  State.put { state with current_module_binding }
+
 let empty_state =
   {
     mono_ufds = Mono_ufds.empty;
@@ -95,7 +100,7 @@ let empty_state =
     symbol_n = 0;
   }
 
-let gensym =
+let gensym : string state_m =
   let open State.Let_syntax in
   let%bind state = State.get in
   let s = state.symbol_n in
@@ -141,41 +146,37 @@ let merge_variance_maps (variances1 : Variance.t Lowercase.Map.t) variances2 =
   Lowercase.Map.merge variances1 variances2 ~f:(fun ~key:_ -> function
     | `Left x | `Right x -> Some x | `Both (x, y) -> Some (Variance.merge x y))
 
+(* let rec type_constructor_variance_map = function *)
+(*   | Single_arg (variance, name) -> Lowercase.Map.singleton name variance *)
+(*   | Tuple_arg args -> *)
+(*       List.fold args ~init:Lowercase.Map.empty ~f:(fun acc (variance, _) -> *)
+(*           merge_variance_one acc variance) *)
+
 let merge_variance_map_list =
   List.fold ~init:Lowercase.Map.empty ~f:merge_variance_maps
 
-let add_type_calculate_variance name (mono_inner : mono_inner) =
-  let variance_map =
-    match mono_inner with
-    | Abstract | TyVar _ -> Lowercase.Map.empty
-    | Tuple l -> merge_variance_map_list (List.map l ~f:snd)
-    | Pointer (_, variance_map) -> variance_map
-    | Lambda ((inner_l, left), (inner_r, right)) ->
-        (* how does recursion work for this??? *)
-        let curr = merge_variance_maps left right in
-        let curr =
-          match inner_l with
-          | TyVar name -> merge_variance_one curr ~name ~variance:Contravariant
-          | _ -> curr
-        in
-        let curr =
-          match inner_r with
-          | TyVar name -> merge_variance_one curr ~name ~variance:Covariant
-          | _ -> curr
-        in
-        curr
-    | Type_function (_, _) | Type_application (_, _) | Record _ ->
-        failwith
-          ([%message "cannot calculate variance for" (mono_inner : mono_inner)]
-          |> Sexp.to_string_hum)
-  in
-  add_type name (mono_inner, variance_map)
-
-let add_type_no_variance name mono_inner =
-  add_type name (mono_inner, Lowercase.Map.empty)
-
-type 'a state_m = ('a, state) State.t [@@deriving sexp]
-type 'a state_result_m = ('a, Sexp.t, state) State.Result.t [@@deriving sexp]
+(* let rec calculate_variance mono = *)
+(*   match mono with *)
+(*   | Abstract (_, Some arg) -> type_constructor_variance_map arg *)
+(*   | Abstract _ | TyVar _ -> Lowercase.Map.empty *)
+(*   | Tuple l -> *)
+(*       List.fold l ~init:Lowercase.Map.empty ~f:(fun acc mono -> *)
+(*           merge_variance_maps acc (calculate_variance mono)) *)
+(*   | Pointer mono -> calculate_variance mono *)
+(*   | Lambda (l, r) -> *)
+(*       let left = *)
+(*         match l with *)
+(*         | TyVar x -> Lowercase.Map.singleton x Variance.Contravariant *)
+(*         | _ -> Lowercase.Map.empty *)
+(*       in *)
+(*       let right = *)
+(*         match r with *)
+(*         | TyVar x -> Lowercase.Map.singleton x Variance.Covariant *)
+(*         | _ -> Lowercase.Map.empty *)
+(*       in *)
+(*       merge_variance_maps left right *)
+(*   | Record _ -> failwith "TODO" *)
+(*   | Enum _ -> failwith "TODO" *)
 
 let find mono =
   let%bind.State state = State.get in
@@ -221,6 +222,21 @@ let find_module_binding qualifications =
         [%message
           "module not found" (qualifications : Qualified.qualifications)]
 
+let lookup_type_constructor qualified_name =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  let qualifications, type_name = Qualified.split qualified_name in
+  let res =
+    search_modules state.current_module_binding ~qualifications
+      ~search_for:(fun module_bindings ->
+        Lowercase.Map.find module_bindings.toplevel_type_constructors type_name)
+  in
+  match res with
+  | Some x -> State.Result.return x
+  | None ->
+      State.Result.error
+        [%message "type not found" (qualified_name : Lowercase.t Qualified.t)]
+
 let lookup_type qualified_name =
   let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
@@ -229,7 +245,7 @@ let lookup_type qualified_name =
     match qualifications with
     | [] ->
         Option.bind (Lowercase.Map.find state.type_var_map type_name) ~f:List.hd
-        |> Option.map ~f:(fun x -> (TyVar x, Lowercase.Map.empty))
+        |> Option.map ~f:(fun x -> TyVar x)
     | _ -> None
   in
   let res =
@@ -249,23 +265,75 @@ let rec process_type_def_lit (type_def_lit : Ast.Type_def_lit.t) =
   | Ast.Type_def_lit.Type_expr _ ->
       failwith "TODO"
 
-and process_type_def_lit_type_expr type_expr : mono state_result_m =
+let rec map_ty_vars ~replacement_map (mono : mono) =
+  match mono with
+  | TyVar m ->
+      Lowercase.Map.find replacement_map m |> Option.value ~default:mono
+  | Lambda (a, b) ->
+      Lambda (map_ty_vars ~replacement_map a, map_ty_vars ~replacement_map b)
+  | Tuple l -> Tuple (List.map l ~f:(map_ty_vars ~replacement_map))
+  | Record r ->
+      Record
+        (Lowercase.Map.map r
+           ~f:(Tuple2.map_fst ~f:(map_ty_vars ~replacement_map)))
+  | Enum l -> Enum (List.Assoc.map l ~f:(map_ty_vars ~replacement_map))
+  | Pointer x -> Pointer (map_ty_vars ~replacement_map x)
+  | Abstract _ -> mono
+
+let gen_replacement_map vars =
+  let open State.Result.Let_syntax in
+  let%bind replacements =
+    State.Result.all
+      (List.map vars ~f:(fun x ->
+           let%bind.State sym = gensym in
+           return (x, sym)))
+  in
+  match Lowercase.Map.of_alist replacements with
+  | `Ok x -> return x
+  | `Duplicate_key x ->
+      State.Result.error [%message "duplicate key" (x : Lowercase.t)]
+
+let rec type_of_type_expr type_expr : mono state_result_m =
   let open State.Result.Let_syntax in
   match type_expr with
   | Ast.Type_expr.Pointer type_expr ->
-      let%map ((_, variance_map) as mono) =
-        process_type_def_lit_type_expr type_expr
-      in
-      (Pointer mono, variance_map)
+      let%map mono = type_of_type_expr type_expr in
+      Pointer mono
   | Ast.Type_expr.Tuple l ->
-      let%map monos =
-        State.Result.all (List.map l ~f:process_type_def_lit_type_expr)
-      in
-      let _, variances = List.unzip monos in
-      let variance_map = merge_variance_map_list variances in
-      (Tuple monos, variance_map)
+      let%map monos = State.Result.all (List.map l ~f:type_of_type_expr) in
+      Tuple monos
   | Ast.Type_expr.Single name -> lookup_type name
-  | Ast.Type_expr.Multi (_, _) -> failwith "TODO"
+  | Ast.Type_expr.Multi (first, second) ->
+      let%bind constructor_arg, _, mono = lookup_type_constructor second in
+      let%bind arg = type_of_type_expr first in
+      let vars =
+        match constructor_arg with
+        | Single_arg (_, x) -> [ x ]
+        | Tuple_arg l -> List.unzip l |> snd
+      in
+      let arg_list = match arg with Tuple l -> l | _ -> [ arg ] in
+      let%bind zipped =
+        match List.zip vars arg_list with
+        | Ok x -> return x
+        | Unequal_lengths ->
+            State.Result.error
+              [%message
+                "type constructor expected more args"
+                  ~constructor:(second : string Qualified.t)
+                  ~got:(List.length arg_list : int)
+                  ~expected:(List.length vars : int)]
+      in
+      let%map replacement_map =
+        match Lowercase.Map.of_alist zipped with
+        | `Ok x -> return x
+        | `Duplicate_key x ->
+            State.Result.error
+              [%message
+                "duplicate arg in type constructor"
+                  ~constructor:(second : string Qualified.t)
+                  (x : Lowercase.t)]
+      in
+      map_ty_vars ~replacement_map mono
 
 let process_type_def (_type_binding : Ast.Type_def_lit.t Ast.type_description) =
   failwith "TODO"

@@ -78,14 +78,6 @@ let tuple_p p : 'a Ast.Tuple.t parser =
   let%map () = eat_token Token.RParen in
   res
 
-let single_or_tuple_p p =
-  let single = p () >>| Ast.Single_or_tuple.single in
-  let rec tuple () = tuple_p whole >>| Ast.Single_or_tuple.tuple
-  and whole () = single <|> tuple () in
-  whole ()
-
-let single_type_expr_p = qualified_p (identifier_p ()) >>| Ast.Type_expr.single
-
 let variance_p : Variance.t parser =
   eat_token (Token.Symbol "+")
   >>| (fun () -> Variance.Covariant)
@@ -110,29 +102,36 @@ let type_binding_p () : Ast.Type_binding.t parser =
   in
   poly <|> mono
 
-let type_expr_p () : Ast.Type_expr.t parser =
-  let rec paren () =
-    let%bind () = eat_token LParen in
-    let%bind res = whole () in
-    let%bind () = eat_token RParen in
-    return res
-  and a () = single_type_expr_p <|> paren () <|> pointer ()
-  and pointer () =
-    let%bind () = eat_token (Token.Symbol "&") in
-    let%bind inner = a () in
-    return (Ast.Type_expr.Pointer inner)
-  and tuple () = tuple_p whole >>| Ast.Type_expr.tuple
-  and multi () =
-    let%bind first = single_or_tuple_p (fun () -> lowercase_p) in
-    let%bind next = whole () in
-    return (Ast.Type_expr.Multi (first, next))
-  and whole () = multi () <|> a () <|> tuple () <|> pointer () in
-  whole ()
+let single_type_expr_p = qualified_p (identifier_p ()) >>| Ast.Type_expr.single
 
-let type_expr_no_spaces_p =
-  parse_in_paren (type_expr_p ())
-  <|> single_type_expr_p
-  <|> (tuple_p type_expr_p >>| Ast.Type_expr.tuple)
+let rec type_expr_p () : Ast.Type_expr.t parser =
+  multi_type_expr_p () <|> type_expr_no_spaces_p ()
+
+and multi_type_expr_p () : Ast.Type_expr.t parser =
+  let%bind first = type_expr_no_spaces_p () in
+  let%map next = many1 (qualified_p lowercase_p) in
+  List.fold ~init:first ~f:(fun acc x -> Ast.Type_expr.Multi (acc, x)) next
+
+and type_expr_no_spaces_p () =
+  tuple_type_expr_p () <|> paren_type_expr_p () <|> single_type_expr_p
+  <|> pointer_type_expr_p ()
+
+and paren_type_expr_p () =
+  let%bind () = eat_token Token.LParen in
+  let%bind inner = type_expr_p () in
+  let%map () = eat_token Token.RParen in
+  inner
+
+and pointer_type_expr_p () =
+  let%bind () = eat_token (Token.Symbol "&") in
+  let%bind inner = type_expr_no_spaces_p () in
+  return (Ast.Type_expr.Pointer inner)
+
+and tuple_type_expr_p () =
+  let%bind () = eat_token Token.LParen in
+  let%bind res = many_sep2 (type_expr_p ()) ~sep:(eat_token Token.Comma) in
+  let%map () = eat_token Token.RParen in
+  Ast.Type_expr.Tuple res
 
 let ast_tag_p : (Ast.Tag.t * Token.t list) parser =
   let%bind tag = symbol_p in
@@ -606,7 +605,7 @@ and enum_type_def_lit_p () =
   let%bind _ = optional (eat_token Token.Pipe) in
   let each =
     let%bind constructor = uppercase_p in
-    let%bind value_type = optional type_expr_no_spaces_p in
+    let%bind value_type = optional (type_expr_no_spaces_p ()) in
     return (constructor, value_type)
   in
   let%bind list = many_sep1 each ~sep:(eat_token Token.Pipe) in
