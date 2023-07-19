@@ -28,6 +28,7 @@ type type_constructor =
 and mono =
   | Recursive_constructor
   | Abstract of Lowercase.t Qualified.t * mono option
+  | Weak of Lowercase.t
   (* keep track of the path and arg for equality *)
   | TyVar of Lowercase.t
   | Lambda of mono * mono
@@ -49,8 +50,9 @@ module Module_path = Qualified.Make (struct
 end)
 
 type module_bindings = {
-  toplevel_vars : mono Lowercase.Map.t;
-  toplevel_records : (Lowercase.Set.t * mono) list;
+  toplevel_vars : poly Lowercase.Map.t;
+  toplevel_records : poly Lowercase.Set.Map.t;
+  toplevel_constructors : poly Uppercase.Map.t;
   toplevel_type_constructors : type_constructor Lowercase.Map.t;
   toplevel_types : mono Lowercase.Map.t;
   toplevel_modules : module_bindings Uppercase.Map.t;
@@ -61,7 +63,8 @@ type module_bindings = {
 let empty_module_bindngs =
   {
     toplevel_vars = Lowercase.Map.empty;
-    toplevel_records = [];
+    toplevel_records = Lowercase.Set.Map.empty;
+    toplevel_constructors = Uppercase.Map.empty;
     toplevel_type_constructors = Lowercase.Map.empty;
     toplevel_types = Lowercase.Map.empty;
     toplevel_modules = Uppercase.Map.empty;
@@ -72,8 +75,6 @@ type state = {
   mono_ufds : Mono_ufds.t;
   current_module_binding : module_bindings;
   current_qualification : Uppercase.t list;
-  (* type var in code -> type var *)
-  type_var_map : Lowercase.t List.t Lowercase.Map.t;
   symbol_n : int;
 }
 [@@deriving sexp, equal, compare, fields]
@@ -81,25 +82,39 @@ type state = {
 type 'a state_m = ('a, state) State.t [@@deriving sexp]
 type 'a state_result_m = ('a, Sexp.t, state) State.Result.t [@@deriving sexp]
 
-let add_type_constructor arg name mono =
-  let open State.Let_syntax in
-  let%bind state = State.get in
+let operate_on_toplevel_type_constructors arg name mono ~f =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
   let data = (arg, name, mono) in
-  let toplevel_type_constructors =
-    Lowercase.Map.set state.current_module_binding.toplevel_type_constructors
-      ~key:name ~data
+  let%bind toplevel_type_constructors =
+    (f state.current_module_binding.toplevel_type_constructors ~key:name ~data
+      : _ state_result_m)
   in
   let current_module_binding =
     { state.current_module_binding with toplevel_type_constructors }
   in
   State.Result.put { state with current_module_binding }
 
+let add_type_constructor arg name mono =
+  operate_on_toplevel_type_constructors arg name mono
+    ~f:(fun toplevel_type_constructors ~key ~data ->
+      match Lowercase.Map.add toplevel_type_constructors ~key ~data with
+      | `Ok m -> State.Result.return m
+      | `Duplicate ->
+          State.Result.error
+            [%message "Duplicate type constructor" (name : Lowercase.t)])
+
+let set_type_constructor arg name mono =
+  operate_on_toplevel_type_constructors arg name mono
+    ~f:(fun toplevel_type_constructors ~key ~data ->
+      State.Result.return
+      @@ Lowercase.Map.set toplevel_type_constructors ~key ~data)
+
 let empty_state =
   {
     mono_ufds = Mono_ufds.empty;
     current_module_binding = empty_module_bindngs;
     current_qualification = [];
-    type_var_map = Lowercase.Map.empty;
     symbol_n = 0;
   }
 
@@ -111,22 +126,6 @@ let gensym : string state_m =
   let letter = Char.of_int_exn (Char.to_int 'a' + (s mod 26)) in
   let s = String.make 1 letter ^ Int.to_string (s / 26) in
   return s
-
-let push_type_var name =
-  let open State.Let_syntax in
-  let%bind state = State.get in
-  let%bind var = gensym in
-  let type_var_map =
-    Lowercase.Map.add_multi state.type_var_map ~key:name ~data:var
-  in
-  let%bind () = State.put { state with type_var_map } in
-  return var
-
-let pop_type_var name =
-  let open State.Let_syntax in
-  let%bind state = State.get in
-  let type_var_map = Lowercase.Map.remove_multi state.type_var_map name in
-  State.put { state with type_var_map }
 
 let add_type name mono =
   let open State.Let_syntax in
@@ -181,13 +180,13 @@ let merge_variance_map_list =
 (*   | Record _ -> failwith "TODO" *)
 (*   | Enum _ -> failwith "TODO" *)
 
-let find mono =
+let find mono : mono state_m =
   let%bind.State state = State.get in
   let mono, mono_ufds = Mono_ufds.find state.mono_ufds mono in
   let%map.State () = State.put { state with mono_ufds } in
   mono
 
-let union mono1 mono2 =
+let union mono1 mono2 : unit state_m =
   let%bind.State state = State.get in
   let mono_ufds = Mono_ufds.union state.mono_ufds mono1 mono2 in
   State.put { state with mono_ufds }
@@ -244,28 +243,39 @@ let lookup_type qualified_name =
   let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let qualifications, type_name = Qualified.split qualified_name in
-  (* let type_var_type = *)
-  (*   match qualifications with *)
-  (*   | [] -> *)
-  (*       Option.bind (Lowercase.Map.find state.type_var_map type_name) ~f:List.hd *)
-  (*       |> Option.map ~f:(fun x -> TyVar x) *)
-  (*   | _ -> None *)
-  (* in *)
+  let type_var_type =
+    match qualifications with [] -> Some (TyVar type_name) | _ -> None
+  in
   let res =
     search_modules state.current_module_binding ~qualifications
       ~search_for:(fun module_bindings ->
         Lowercase.Map.find module_bindings.toplevel_types type_name)
   in
-  State.Result.return (Option.value res ~default:(TyVar type_name))
-(* match Option.first_some type_var_type res with *)
-(* | Some x -> State.Result.return x *)
-(* | None -> *)
-(*     State.Result.error *)
-(*       [%message "type not found" (qualified_name : Lowercase.t Qualified.t)] *)
+  match Option.first_some res type_var_type with
+  | Some x -> State.Result.return x
+  | None ->
+      State.Result.error
+        [%message "type not found" (qualified_name : Lowercase.t Qualified.t)]
+
+let lookup_var qualified_name : _ state_result_m =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  let qualifications, type_name = Qualified.split qualified_name in
+  let res =
+    search_modules state.current_module_binding ~qualifications
+      ~search_for:(fun module_bindings ->
+        Lowercase.Map.find module_bindings.toplevel_vars type_name)
+  in
+  match res with
+  | Some x -> State.Result.return x
+  | None ->
+      State.Result.error
+        [%message "var not in scope" (qualified_name : Lowercase.t Qualified.t)]
 
 let rec map_ty_vars ~f (mono : mono) =
   match mono with
   | TyVar m -> Option.value (f m) ~default:mono
+  | Weak _ -> mono
   | Lambda (a, b) -> Lambda (map_ty_vars ~f a, map_ty_vars ~f b)
   | Tuple l -> Tuple (List.map l ~f:(map_ty_vars ~f))
   | Record l ->
@@ -353,6 +363,12 @@ let rec type_of_type_expr type_expr : mono state_result_m =
       in
       replace_ty_vars ~replacement_map mono
 
+let gen (mono : mono) : poly state_m =
+  free_ty_vars mono
+  |> Lowercase.Set.fold ~init:(Mono mono) ~f:(fun acc x -> Forall (x, acc))
+  |> State.return
+
+(* Updates toplevel_records and toplevel_constructors *)
 let type_of_type_def_lit (type_def_lit : Ast.Type_def_lit.t) =
   let open State.Result.Let_syntax in
   match type_def_lit with
@@ -364,7 +380,9 @@ let type_of_type_def_lit (type_def_lit : Ast.Type_def_lit.t) =
             (name, (mono, mutability)))
         |> State.Result.all
       in
-      Record monos
+      let mono = Record monos in
+      let _poly = gen mono in
+      mono
   | Ast.Type_def_lit.Enum l ->
       let%map monos =
         List.map l ~f:(fun (name, type_expr) ->
@@ -376,7 +394,9 @@ let type_of_type_def_lit (type_def_lit : Ast.Type_def_lit.t) =
             (name, mono))
         |> State.Result.all
       in
-      Enum monos
+      let mono = Enum monos in
+      let _poly = gen mono in
+      mono
 
 let process_type_def
     ({ type_name; type_def; ast_tags = _ } :
@@ -411,7 +431,7 @@ let process_type_def
       let%bind mono = type_of_type_def_lit type_def in
       let rhs_ty_vars = free_ty_vars mono in
       match Lowercase.Set.equal lhs_ty_vars rhs_ty_vars with
-      | true -> add_type_constructor constructor_arg type_name mono
+      | true -> set_type_constructor constructor_arg type_name mono
       | false ->
           State.Result.error
             [%message
@@ -435,13 +455,105 @@ let inst (poly : poly) : mono state_m =
   in
   inner ~replacement_map:Lowercase.Map.empty poly
 
-let gen (mono : mono) : poly state_m =
-  Lowercase.Set.fold ~init:(Mono mono) ~f:(fun acc x -> Forall (x, acc))
-  @@ free_ty_vars mono
-  |> State.return
-
-let unify mono1 mono2 =
-  (* let open State.Result in *)
+let rec unify mono1 mono2 =
+  let open State.Result.Let_syntax in
+  let unification_error () =
+    State.Result.error
+      [%message
+        "failed to unify types" ~first:(mono1 : mono) ~second:(mono2 : mono)]
+  in
   let%bind.State mono1 = find mono1 in
   let%bind.State mono2 = find mono2 in
-  match (mono1, mono2) with _ -> failwith "TODO"
+  match (mono1, mono2) with
+  (* this should only happen with recursive calls from enum because
+     there are no toplevel recursive constructors *)
+  | Recursive_constructor, Recursive_constructor -> State.Result.return ()
+  | Recursive_constructor, _ | _, Recursive_constructor -> unification_error ()
+  | TyVar x, TyVar y when String.equal x y -> State.Result.return ()
+  | TyVar _, _ -> union mono2 mono1 |> State.map ~f:Result.return
+  | _, TyVar _ -> union mono1 mono2 |> State.map ~f:Result.return
+  | Weak x, Weak y when String.equal x y -> State.Result.return ()
+  | Weak _, _ -> union mono2 mono1 |> State.map ~f:Result.return
+  | _, Weak _ -> union mono1 mono2 |> State.map ~f:Result.return
+  | Pointer x, Pointer y -> unify x y
+  | Abstract (x, x_arg), Abstract (y, y_arg)
+    when Qualified.equal String.equal x y -> (
+      match (x_arg, y_arg) with
+      | Some x_arg, Some y_arg -> unify x_arg y_arg
+      | None, None -> State.Result.return ()
+      | Some _, None | None, Some _ -> unification_error ())
+  | Lambda (x1, x2), Lambda (y1, y2) ->
+      let%bind () = unify x1 y1 in
+      unify x2 y2
+  | Tuple l1, Tuple l2 ->
+      let%bind zipped =
+        match List.zip l1 l2 with
+        | Unequal_lengths -> unification_error ()
+        | Ok zipped -> return zipped
+      in
+      let f (mono1, mono2) = unify mono1 mono2 in
+      State.Result.all_unit (List.map zipped ~f)
+  | Record l1, Record l2 ->
+      let%bind zipped =
+        match List.zip l1 l2 with
+        | Unequal_lengths -> unification_error ()
+        | Ok zipped -> return zipped
+      in
+      let f ((field1, (mono1, mut1)), (field2, (mono2, mut2))) =
+        match (String.equal field1 field2, mut1, mut2) with
+        | true, `Mutable, `Mutable | true, `Immutable, `Immutable ->
+            unify mono1 mono2
+        | _ -> unification_error ()
+      in
+      State.Result.all_unit (List.map zipped ~f)
+  | Enum l1, Enum l2 ->
+      let%bind zipped =
+        match List.zip l1 l2 with
+        | Unequal_lengths -> unification_error ()
+        | Ok zipped -> return zipped
+      in
+      let f ((field1, mono1), (field2, mono2)) =
+        match String.equal field1 field2 with
+        | false -> unification_error ()
+        | true -> (
+            match (mono1, mono2) with
+            | Some mono1, Some mono2 -> unify mono1 mono2
+            | None, None -> State.Result.return ()
+            | Some _, None | None, Some _ -> unification_error ())
+      in
+      State.Result.all_unit (List.map zipped ~f)
+  | _ -> unification_error ()
+
+let make_abstract s = Abstract (Qualified.Unqualified s, None)
+let int_type = make_abstract "int"
+let float_type = make_abstract "float"
+let bool_type = make_abstract "bool"
+let unit_type = make_abstract "unit"
+let string_type = make_abstract "string"
+let char_type = make_abstract "char"
+
+(* TODO: modules *)
+let open_module (_qualifications : Qualified.qualifications) =
+  State.Result.return ()
+
+let rec type_of_node node =
+  let open State.Result.Let_syntax in
+  match node with
+  | Ast.Literal (Ast.Literal.Int _) -> State.Result.return int_type
+  | Ast.Literal (Ast.Literal.Float _) -> State.Result.return float_type
+  | Ast.Literal (Ast.Literal.Bool _) -> State.Result.return bool_type
+  | Ast.Literal Ast.Literal.Unit -> State.Result.return unit_type
+  | Ast.Literal (Ast.Literal.String _) -> State.Result.return string_type
+  | Ast.Literal (Ast.Literal.Char _) -> State.Result.return char_type
+  | Ast.Var var_name ->
+      let%bind poly = lookup_var var_name in
+      State.map (inst poly) ~f:Result.return
+  | Ast.Tuple qualified_tuple ->
+      let qualifications, tuple = Qualified.split qualified_tuple in
+      let%bind () = open_module qualifications in
+      let%bind l = State.Result.all (List.map tuple ~f:type_of_expr) in
+      State.Result.return (Tuple l)
+
+and type_of_expr expr =
+  let _ = expr in
+  failwith "TODO"

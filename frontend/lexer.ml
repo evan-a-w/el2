@@ -63,6 +63,7 @@ let string_p =
 let bool_p =
   string "true" *> return true <|> string "false" *> return false >>| Token.bool
 
+let char_p = char '\'' *> any_char <* char '\'' >>| Token.char
 let arrow_p = string "->" *> return Token.Arrow
 let ident_op_chars = "!#$%^&*-+:<>?/=~"
 let ident_extras = "?'"
@@ -111,7 +112,7 @@ let parser =
     colon_p <|> float_p <|> int_p <|> string_p <|> bool_p <|> arrow_p
     <|> op_symbol_p <|> ident_symbol_p <|> pipe_p <|> comma_p <|> lparen_p
     <|> rparen_p <|> lbrack_p <|> rbrack_p <|> at_p <|> dot_p <|> semicolon_p
-    <|> lbrace_p <|> rbrace_p <|> backslash_p
+    <|> lbrace_p <|> rbrace_p <|> backslash_p <|> char_p
   in
   let%bind () = whitespace_p in
   return token

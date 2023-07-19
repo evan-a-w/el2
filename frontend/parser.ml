@@ -65,6 +65,7 @@ let literal_p : Ast.Literal.t parser =
   | Float f -> Ast.Literal.Float f |> return
   | Bool b -> Ast.Literal.Bool b |> return
   | String s -> Ast.Literal.String s |> return
+  | Char c -> Ast.Literal.Char c |> return
   | LParen ->
       let%bind () = eat_token RParen in
       return Ast.Literal.Unit

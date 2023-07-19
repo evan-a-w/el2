@@ -4,6 +4,7 @@ type t =
   | Int of int
   | Float of float
   | Bool of bool
+  | Char of char
   | String of string
   | Arrow
   | Pipe

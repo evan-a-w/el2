@@ -63,6 +63,7 @@ module Literal = struct
     | Bool of bool
     | Float of float
     | String of string
+    | Char of char
   [@@deriving sexp, equal, hash, compare]
 end
 

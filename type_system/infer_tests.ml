@@ -37,7 +37,7 @@ let%expect_test "type_expr single lit" =
             ((Single_arg Covariant a) list (Abstract (Unqualified list) ())))))
          (toplevel_types ((int (Abstract (Unqualified int) ()))))
          (toplevel_modules ()) (opened_modules ())))
-       (current_qualification ()) (type_var_map ()) (symbol_n 0)))) |}]
+       (current_qualification ()) (symbol_n 0)))) |}]
 
 let%expect_test "type_expr multi lit" =
   let lit =
@@ -62,7 +62,7 @@ let%expect_test "type_expr multi lit" =
             ((Single_arg Covariant a) list (Abstract (Unqualified list) ())))))
          (toplevel_types ((int (Abstract (Unqualified int) ()))))
          (toplevel_modules ()) (opened_modules ())))
-       (current_qualification ()) (type_var_map ()) (symbol_n 0)))) |}]
+       (current_qualification ()) (symbol_n 0)))) |}]
 
 let%expect_test "type_expr multi lit" =
   let action : unit state_result_m =
