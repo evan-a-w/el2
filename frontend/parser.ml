@@ -649,3 +649,12 @@ let parse_t =
   match%bind get >>| Sequence.next with
   | None -> return res
   | Some (got, _) -> error [%message "Unexpected token" (got : Token.t)]
+
+let try_parse p string =
+  let open Result.Let_syntax in
+  let%bind tokens =
+    Lexer.lex ~program:string
+    |> Result.map_error ~f:(fun error ->
+           [%message "Failed to lex" (error : string)])
+  in
+  run p ~tokens |> fst

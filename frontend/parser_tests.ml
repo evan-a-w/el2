@@ -17,8 +17,7 @@ let%expect_test "type_expr_single_extra_paren" =
 
 let%expect_test "type_expr_multi1" =
   print_type_expr ~program:"a int";
-  [%expect
-    {| (ast (Ok (Multi (Single (Unqualified a)) (Unqualified int)))) |}]
+  [%expect {| (ast (Ok (Multi (Single (Unqualified a)) (Unqualified int)))) |}]
 
 let%expect_test "type_expr_multi2" =
   print_type_expr ~program:"(a, (b int)) int d";
@@ -947,3 +946,25 @@ let%expect_test "test_exp_binding" =
           (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 4))))
            (Node (Literal (Int 5)))))))))))
    (tokens ())) |}]
+
+let%expect_test "test_type_define_enum" =
+  let program = {| type a list = Cons (a, &(a list)) | Nil |} in
+  let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
+  let ast, tokens = run parse_t ~tokens in
+  let tokens = Sequence.to_list tokens in
+  print_s [%message (ast : (Ast.t, Sexp.t) Result.t) (tokens : Token.t list)];
+  [%expect
+    {|
+    ((ast
+      (Ok
+       ((Type_def
+         ((type_name (Poly ((Single (Invariant a)) list)))
+          (type_def
+           (Enum
+            ((Cons
+              ((Tuple
+                ((Single (Unqualified a))
+                 (Pointer (Multi (Single (Unqualified a)) (Unqualified list)))))))
+             (Nil ()))))
+          (ast_tags ()))))))
+     (tokens ())) |}]

@@ -26,6 +26,7 @@ type type_constructor =
 (* Variances of record fields is covariant if not mutable, invariant if mutable *)
 (* Variances of Enum is the combination of all underlying types *)
 and mono =
+  | Recursive_constructor
   | Abstract of Lowercase.t Qualified.t * mono option
   (* keep track of the path and arg for equality *)
   | TyVar of Lowercase.t
@@ -91,7 +92,7 @@ let add_type_constructor arg name mono =
   let current_module_binding =
     { state.current_module_binding with toplevel_type_constructors }
   in
-  State.put { state with current_module_binding }
+  State.Result.put { state with current_module_binding }
 
 let empty_state =
   {
@@ -137,7 +138,7 @@ let add_type name mono =
   let current_module_binding =
     { state.current_module_binding with toplevel_types }
   in
-  State.put { state with current_module_binding }
+  State.Result.put { state with current_module_binding }
 
 let merge_variance_one variances ~name ~variance =
   Lowercase.Map.change variances name ~f:(function
@@ -243,23 +244,24 @@ let lookup_type qualified_name =
   let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let qualifications, type_name = Qualified.split qualified_name in
-  let type_var_type =
-    match qualifications with
-    | [] ->
-        Option.bind (Lowercase.Map.find state.type_var_map type_name) ~f:List.hd
-        |> Option.map ~f:(fun x -> TyVar x)
-    | _ -> None
-  in
+  (* let type_var_type = *)
+  (*   match qualifications with *)
+  (*   | [] -> *)
+  (*       Option.bind (Lowercase.Map.find state.type_var_map type_name) ~f:List.hd *)
+  (*       |> Option.map ~f:(fun x -> TyVar x) *)
+  (*   | _ -> None *)
+  (* in *)
   let res =
     search_modules state.current_module_binding ~qualifications
       ~search_for:(fun module_bindings ->
         Lowercase.Map.find module_bindings.toplevel_types type_name)
   in
-  match Option.first_some type_var_type res with
-  | Some x -> State.Result.return x
-  | None ->
-      State.Result.error
-        [%message "type not found" (qualified_name : Lowercase.t Qualified.t)]
+  State.Result.return (Option.value res ~default:(TyVar type_name))
+(* match Option.first_some type_var_type res with *)
+(* | Some x -> State.Result.return x *)
+(* | None -> *)
+(*     State.Result.error *)
+(*       [%message "type not found" (qualified_name : Lowercase.t Qualified.t)] *)
 
 let rec map_ty_vars ~f (mono : mono) =
   match mono with
@@ -270,13 +272,18 @@ let rec map_ty_vars ~f (mono : mono) =
       Record (List.Assoc.map l ~f:(Tuple2.map_fst ~f:(map_ty_vars ~f)))
   | Enum l -> Enum (List.Assoc.map l ~f:(Option.map ~f:(map_ty_vars ~f)))
   | Pointer x -> Pointer (map_ty_vars ~f x)
-  | Abstract _ -> mono
+  | Abstract _ | Recursive_constructor -> mono
 
 let iter_ty_vars ~f mono =
   ignore
     (map_ty_vars mono ~f:(fun x ->
          f x;
          None))
+
+let constructor_arg_free_ty_vars constructor_arg =
+  match constructor_arg with
+  | Tuple_arg l -> List.map ~f:snd l |> Lowercase.Set.of_list
+  | Single_arg (_, x) -> Lowercase.Set.singleton x
 
 let free_ty_vars mono =
   let set = ref Lowercase.Set.empty in
@@ -371,10 +378,48 @@ let type_of_type_def_lit (type_def_lit : Ast.Type_def_lit.t) =
       in
       Enum monos
 
-let process_type_def (_type_binding : Ast.Type_def_lit.t Ast.type_description) =
-  failwith "TODO"
-(* let process_type_def (type_def : Ast.Type_def_lit.t Ast.type_description) = *)
-(*   failwith "TODO" *)
+let process_type_def
+    ({ type_name; type_def; ast_tags = _ } :
+      Ast.Type_def_lit.t Ast.type_description) =
+  let open State.Result.Let_syntax in
+  match type_name with
+  | Ast.Type_binding.Mono type_name ->
+      let%bind mono = type_of_type_def_lit type_def in
+      let rhs_ty_vars = free_ty_vars mono in
+      let%bind () =
+        match Lowercase.Set.length rhs_ty_vars with
+        | 0 -> State.Result.return ()
+        | _ ->
+            State.Result.error
+              [%message
+                "type definition has free type variables"
+                  (mono : mono)
+                  ~vars:(Lowercase.Set.to_list rhs_ty_vars : Lowercase.t list)
+                  (type_name : Lowercase.t)]
+      in
+      add_type type_name mono
+  | Ast.Type_binding.Poly (arg, type_name) -> (
+      let constructor_arg =
+        match arg with
+        | Ast.Type_binding.Single (v, l) -> Single_arg (v, l)
+        | Ast.Type_binding.Tuple l -> Tuple_arg l
+      in
+      let lhs_ty_vars = constructor_arg_free_ty_vars constructor_arg in
+      let%bind () =
+        add_type_constructor constructor_arg type_name Recursive_constructor
+      in
+      let%bind mono = type_of_type_def_lit type_def in
+      let rhs_ty_vars = free_ty_vars mono in
+      match Lowercase.Set.equal lhs_ty_vars rhs_ty_vars with
+      | true -> add_type_constructor constructor_arg type_name mono
+      | false ->
+          State.Result.error
+            [%message
+              "Type vars not equal in type def"
+                (type_name : Lowercase.t)
+                (mono : mono)
+                (lhs_ty_vars : Lowercase.Set.t)
+                (rhs_ty_vars : Lowercase.Set.t)])
 
 let unify mono1 mono2 =
   (* let open State.Result in *)
