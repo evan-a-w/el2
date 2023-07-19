@@ -421,6 +421,25 @@ let process_type_def
                 (lhs_ty_vars : Lowercase.Set.t)
                 (rhs_ty_vars : Lowercase.Set.t)])
 
+let inst (poly : poly) : mono state_m =
+  let open State.Let_syntax in
+  let rec inner ~replacement_map poly =
+    match poly with
+    | Mono x -> return (replace_ty_vars ~replacement_map x)
+    | Forall (a, poly) ->
+        let%bind sym = gensym in
+        let replacement_map =
+          Lowercase.Map.set replacement_map ~key:a ~data:(TyVar sym)
+        in
+        inner ~replacement_map poly
+  in
+  inner ~replacement_map:Lowercase.Map.empty poly
+
+let gen (mono : mono) : poly state_m =
+  Lowercase.Set.fold ~init:(Mono mono) ~f:(fun acc x -> Forall (x, acc))
+  @@ free_ty_vars mono
+  |> State.return
+
 let unify mono1 mono2 =
   (* let open State.Result in *)
   let%bind.State mono1 = find mono1 in
