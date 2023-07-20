@@ -56,7 +56,7 @@ module Module_path = Qualified.Make (struct
 end)
 
 type module_bindings = {
-  toplevel_vars : poly Lowercase.Map.t;
+  toplevel_vars : poly list Lowercase.Map.t;
   toplevel_records : (poly Lowercase.Map.t * poly) Lowercase.Set.Map.t;
   toplevel_constructors : (poly option * poly) Uppercase.Map.t;
   toplevel_type_constructors : type_constructor Lowercase.Map.t;
@@ -142,6 +142,29 @@ let add_type name mono =
   in
   let current_module_binding =
     { state.current_module_binding with toplevel_types }
+  in
+  State.Result.put { state with current_module_binding }
+
+let add_var name poly =
+  let open State.Let_syntax in
+  let%bind state = State.get in
+  let toplevel_vars =
+    Lowercase.Map.add_multi state.current_module_binding.toplevel_vars ~key:name
+      ~data:poly
+  in
+  let current_module_binding =
+    { state.current_module_binding with toplevel_vars }
+  in
+  State.Result.put { state with current_module_binding }
+
+let pop_var name =
+  let open State.Let_syntax in
+  let%bind state = State.get in
+  let toplevel_vars =
+    Lowercase.Map.remove_multi state.current_module_binding.toplevel_vars name
+  in
+  let current_module_binding =
+    { state.current_module_binding with toplevel_vars }
   in
   State.Result.put { state with current_module_binding }
 
@@ -273,8 +296,8 @@ let lookup_var qualified_name : _ state_result_m =
         Lowercase.Map.find module_bindings.toplevel_vars type_name)
   in
   match res with
-  | Some x -> State.Result.return x
-  | None ->
+  | Some (x :: _) -> State.Result.return x
+  | None | Some [] ->
       State.Result.error
         [%message "var not in scope" (qualified_name : Lowercase.t Qualified.t)]
 
@@ -570,6 +593,8 @@ let inst (poly : poly) : mono state_m =
   in
   inner ~replacement_map:Lowercase.Map.empty poly
 
+let inst_result x = State.map (inst x) ~f:Result.return
+
 let unification_error mono1 mono2 =
   State.Result.error
     [%message
@@ -682,41 +707,113 @@ let make_free_vars_weak mono =
   in
   replace_ty_vars ~replacement_map mono
 
-let rec poly_of_node node =
+(* let rec poly_of_node node = *)
+(*   let open State.Result.Let_syntax in *)
+(*   match node with *)
+(*   | Ast.Literal (Ast.Literal.Int _) -> State.Result.return @@ mono int_type *)
+(*   | Ast.Literal (Ast.Literal.Float _) -> State.Result.return @@ mono float_type *)
+(*   | Ast.Literal (Ast.Literal.Bool _) -> State.Result.return @@ mono bool_type *)
+(*   | Ast.Literal Ast.Literal.Unit -> State.Result.return @@ mono unit_type *)
+(*   | Ast.Literal (Ast.Literal.String _) -> *)
+(*       State.Result.return @@ mono string_type *)
+(*   | Ast.Literal (Ast.Literal.Char _) -> State.Result.return @@ mono char_type *)
+(*   | Ast.Var var_name -> lookup_var var_name *)
+(*   | Ast.Tuple qualified_tuple -> *)
+(*       let qualifications, tuple = Qualified.split qualified_tuple in *)
+(*       let%bind () = open_module qualifications in *)
+(*       let%bind l = State.Result.all (List.map tuple ~f:poly_of_expr) in *)
+(*       let free_vars, monos = split_poly_list l in *)
+(*       let tuple = Tuple (List.rev monos) in *)
+(*       let res = poly_of_mono ~free_vars tuple in *)
+(*       let%map () = pop_module in *)
+(*       res *)
+(*   | Ast.Wrapped qualified_expr -> *)
+(*       let qualifications, expr = Qualified.split qualified_expr in *)
+(*       let%bind () = open_module qualifications in *)
+(*       let%bind res = poly_of_expr expr in *)
+(*       let%map () = pop_module in *)
+(*       res *)
+(*   | Ast.Constructor constructor -> ( *)
+(*       let%map arg, poly_res = lookup_constructor constructor in *)
+(*       match arg with *)
+(*       | None -> poly_res *)
+(*       | Some poly_arg -> *)
+(*           let vars, mono_res = split_poly poly_res in *)
+(*           let vars', mono_arg = split_poly poly_arg in *)
+(*           let free_vars = Lowercase.Set.union vars vars' in *)
+(*           poly_of_mono ~free_vars (Lambda (mono_arg, mono_res))) *)
+(*   | Ast.Record qualified_record -> *)
+(*       let qualifications, record = Qualified.split qualified_record in *)
+(*       let%bind () = open_module qualifications in *)
+(*       let%bind field_map, poly_res = *)
+(*         lookup_record (Qualified.Unqualified record) *)
+(*       in *)
+(*       let field_list = Lowercase.Map.to_alist field_map in *)
+(*       let field_polys = List.map field_list ~f:snd in *)
+(*       let%bind field_monos = *)
+(*         State.map (inst_many field_polys) ~f:Result.return *)
+(*       in *)
+(*       let field_mono_map = *)
+(*         List.map2_exn field_list field_monos ~f:(fun (field, _) mono -> *)
+(*             (field, mono)) *)
+(*         |> Lowercase.Map.of_alist_exn *)
+(*       in *)
+(*       let%map () = *)
+(*         Lowercase.Map.fold record ~init:(State.Result.return ()) *)
+(*           ~f:(fun ~key:field ~data:expr acc -> *)
+(*             let%bind () = acc in *)
+(*             let%bind poly = poly_of_expr expr in *)
+(*             let%bind mono = State.map (inst poly) ~f:Result.return in *)
+(*             match Lowercase.Map.find field_mono_map field with *)
+(*             | None -> *)
+(*                 State.Result.error *)
+(*                   [%message "Unknown field" (field : Lowercase.t)] *)
+(*             | Some field_mono -> unify field_mono mono) *)
+(*       in *)
+(*       poly_res *)
+
+(* and poly_of_expr expr = *)
+(*   let open State.Result.Let_syntax in *)
+(*   match expr with *)
+(*   | Ast.Node node -> poly_of_node node *)
+(*   | If (pred, then_, else_) -> *)
+(*       let%bind pred_mono = poly_of_expr pred >>= inst_result in *)
+(*       let%bind then_mono = poly_of_expr then_ >>= inst_result in *)
+(*       let%bind else_mono = poly_of_expr else_ >>= inst_result in *)
+(*       let%bind () = unify pred_mono bool_type in *)
+(*       let%map () = unify then_mono else_mono in *)
+(*       then_mono *)
+
+let rec mono_of_node node =
   let open State.Result.Let_syntax in
   match node with
-  | Ast.Literal (Ast.Literal.Int _) -> State.Result.return @@ mono int_type
-  | Ast.Literal (Ast.Literal.Float _) -> State.Result.return @@ mono float_type
-  | Ast.Literal (Ast.Literal.Bool _) -> State.Result.return @@ mono bool_type
-  | Ast.Literal Ast.Literal.Unit -> State.Result.return @@ mono unit_type
-  | Ast.Literal (Ast.Literal.String _) ->
-      State.Result.return @@ mono string_type
-  | Ast.Literal (Ast.Literal.Char _) -> State.Result.return @@ mono char_type
-  | Ast.Var var_name -> lookup_var var_name
+  | Ast.Literal (Ast.Literal.Int _) -> State.Result.return int_type
+  | Ast.Literal (Ast.Literal.Float _) -> State.Result.return float_type
+  | Ast.Literal (Ast.Literal.Bool _) -> State.Result.return bool_type
+  | Ast.Literal Ast.Literal.Unit -> State.Result.return unit_type
+  | Ast.Literal (Ast.Literal.String _) -> State.Result.return string_type
+  | Ast.Literal (Ast.Literal.Char _) -> State.Result.return char_type
+  | Ast.Var var_name -> lookup_var var_name >>= inst_result
   | Ast.Tuple qualified_tuple ->
       let qualifications, tuple = Qualified.split qualified_tuple in
       let%bind () = open_module qualifications in
-      let%bind l = State.Result.all (List.map tuple ~f:poly_of_expr) in
-      let free_vars, monos = split_poly_list l in
-      let tuple = Tuple (List.rev monos) in
-      let res = poly_of_mono ~free_vars tuple in
+      let%bind l = State.Result.all (List.map tuple ~f:mono_of_expr) in
       let%map () = pop_module in
-      res
+      Tuple l
   | Ast.Wrapped qualified_expr ->
       let qualifications, expr = Qualified.split qualified_expr in
       let%bind () = open_module qualifications in
-      let%bind res = poly_of_expr expr in
+      let%bind res = mono_of_expr expr in
       let%map () = pop_module in
       res
   | Ast.Constructor constructor -> (
-      let%map arg, poly_res = lookup_constructor constructor in
+      let%bind arg, poly_res = lookup_constructor constructor in
+      let%bind mono_res = inst_result poly_res in
       match arg with
-      | None -> poly_res
+      | None -> return mono_res
       | Some poly_arg ->
-          let vars, mono_res = split_poly poly_res in
-          let vars', mono_arg = split_poly poly_arg in
-          let free_vars = Lowercase.Set.union vars vars' in
-          poly_of_mono ~free_vars (Lambda (mono_arg, mono_res)))
+          let%map mono_arg = inst_result poly_arg in
+          Lambda (mono_arg, mono_res))
   | Ast.Record qualified_record ->
       let qualifications, record = Qualified.split qualified_record in
       let%bind () = open_module qualifications in
@@ -747,6 +844,14 @@ let rec poly_of_node node =
       in
       poly_res
 
-and poly_of_expr expr =
-  let _ = expr in
-  failwith "TODO"
+and mono_of_expr expr =
+  let open State.Result.Let_syntax in
+  match expr with
+  | Ast.Node node -> poly_of_node node
+  | If (pred, then_, else_) ->
+      let%bind pred_mono = poly_of_expr pred >>= inst_result in
+      let%bind then_mono = poly_of_expr then_ >>= inst_result in
+      let%bind else_mono = poly_of_expr else_ >>= inst_result in
+      let%bind () = unify pred_mono bool_type in
+      let%map () = unify then_mono else_mono in
+      then_mono
