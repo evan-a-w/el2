@@ -570,15 +570,16 @@ let inst (poly : poly) : mono state_m =
   in
   inner ~replacement_map:Lowercase.Map.empty poly
 
+let unification_error mono1 mono2 =
+  State.Result.error
+    [%message
+      "failed to unify types" ~first:(mono1 : mono) ~second:(mono2 : mono)]
+
 let rec unify mono1 mono2 =
   let open State.Result.Let_syntax in
-  let unification_error () =
-    State.Result.error
-      [%message
-        "failed to unify types" ~first:(mono1 : mono) ~second:(mono2 : mono)]
-  in
   let%bind.State mono1 = find mono1 in
   let%bind.State mono2 = find mono2 in
+  let unification_error () = unification_error mono1 mono2 in
   match (mono1, mono2) with
   (* this should only happen with recursive calls from enum because
      there are no toplevel recursive constructors *)
@@ -651,6 +652,36 @@ let char_type = make_abstract "char"
 let open_module (_qualifications : Qualified.qualifications) =
   State.Result.return ()
 
+let pop_module = State.Result.return ()
+
+let split_poly_list l =
+  List.fold l ~init:(Lowercase.Set.empty, []) ~f:(fun (set, monos) poly ->
+      let new_vars, mono = split_poly poly in
+      (Lowercase.Set.union set new_vars, mono :: monos))
+
+let poly_of_mono ~free_vars mono =
+  Lowercase.Set.fold free_vars ~init:(Mono mono) ~f:(fun acc var ->
+      Forall (var, acc))
+
+let inst_many poly_list =
+  let open State.Let_syntax in
+  let quantifiers, mono_list = split_poly_list poly_list in
+  let%map replacement_map =
+    Lowercase.Set.to_list quantifiers
+    |> List.map ~f:(fun var ->
+           let%map sym = gensym in
+           (var, TyVar sym))
+    |> State.all >>| Lowercase.Map.of_alist_exn
+  in
+  List.map mono_list ~f:(replace_ty_vars ~replacement_map)
+
+let make_free_vars_weak mono =
+  let free_vars = free_ty_vars mono in
+  let replacement_map =
+    Lowercase.Set.to_map free_vars ~f:(fun x -> Weak x) |> Obj.magic
+  in
+  replace_ty_vars ~replacement_map mono
+
 let rec poly_of_node node =
   let open State.Result.Let_syntax in
   match node with
@@ -665,28 +696,56 @@ let rec poly_of_node node =
   | Ast.Tuple qualified_tuple ->
       let qualifications, tuple = Qualified.split qualified_tuple in
       let%bind () = open_module qualifications in
-      let%map l = State.Result.all (List.map tuple ~f:poly_of_expr) in
-      let free_vars, monos =
-        List.fold l ~init:(Lowercase.Set.empty, []) ~f:(fun (set, monos) poly ->
-            let new_vars, mono = split_poly poly in
-            (Lowercase.Set.union set new_vars, mono :: monos))
-      in
+      let%bind l = State.Result.all (List.map tuple ~f:poly_of_expr) in
+      let free_vars, monos = split_poly_list l in
       let tuple = Tuple (List.rev monos) in
-      Lowercase.Set.fold free_vars ~init:(Mono tuple) ~f:(fun acc var ->
-          Forall (var, acc))
+      let res = poly_of_mono ~free_vars tuple in
+      let%map () = pop_module in
+      res
   | Ast.Wrapped qualified_expr ->
       let qualifications, expr = Qualified.split qualified_expr in
       let%bind () = open_module qualifications in
-      poly_of_expr expr
+      let%bind res = poly_of_expr expr in
+      let%map () = pop_module in
+      res
   | Ast.Constructor constructor -> (
-      let%bind arg, poly = lookup_constructor constructor in
+      let%map arg, poly_res = lookup_constructor constructor in
       match arg with
-      | None -> State.Result.return poly
-      | Some _ ->
-          State.Result.error
-          @@ [%message
-               "Constructor requires argument"
-                 (constructor : Uppercase.t Qualified.t)])
+      | None -> poly_res
+      | Some poly_arg ->
+          let vars, mono_res = split_poly poly_res in
+          let vars', mono_arg = split_poly poly_arg in
+          let free_vars = Lowercase.Set.union vars vars' in
+          poly_of_mono ~free_vars (Lambda (mono_arg, mono_res)))
+  | Ast.Record qualified_record ->
+      let qualifications, record = Qualified.split qualified_record in
+      let%bind () = open_module qualifications in
+      let%bind field_map, poly_res =
+        lookup_record (Qualified.Unqualified record)
+      in
+      let field_list = Lowercase.Map.to_alist field_map in
+      let field_polys = List.map field_list ~f:snd in
+      let%bind field_monos =
+        State.map (inst_many field_polys) ~f:Result.return
+      in
+      let field_mono_map =
+        List.map2_exn field_list field_monos ~f:(fun (field, _) mono ->
+            (field, mono))
+        |> Lowercase.Map.of_alist_exn
+      in
+      let%map () =
+        Lowercase.Map.fold record ~init:(State.Result.return ())
+          ~f:(fun ~key:field ~data:expr acc ->
+            let%bind () = acc in
+            let%bind poly = poly_of_expr expr in
+            let%bind mono = State.map (inst poly) ~f:Result.return in
+            match Lowercase.Map.find field_mono_map field with
+            | None ->
+                State.Result.error
+                  [%message "Unknown field" (field : Lowercase.t)]
+            | Some field_mono -> unify field_mono mono)
+      in
+      poly_res
 
 and poly_of_expr expr =
   let _ = expr in

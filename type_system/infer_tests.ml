@@ -31,7 +31,7 @@ let%expect_test "type_expr single lit" =
      (state
       ((mono_ufds ())
        (current_module_binding
-        ((toplevel_vars ()) (toplevel_records ())
+        ((toplevel_vars ()) (toplevel_records ()) (toplevel_constructors ())
          (toplevel_type_constructors
           ((list
             ((Single_arg Covariant a) list (Abstract (Unqualified list) ())))))
@@ -56,7 +56,7 @@ let%expect_test "type_expr multi lit" =
      (state
       ((mono_ufds ())
        (current_module_binding
-        ((toplevel_vars ()) (toplevel_records ())
+        ((toplevel_vars ()) (toplevel_records ()) (toplevel_constructors ())
          (toplevel_type_constructors
           ((list
             ((Single_arg Covariant a) list (Abstract (Unqualified list) ())))))
