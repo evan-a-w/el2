@@ -136,7 +136,6 @@ and expr =
   | Let_in of Binding.t * expr * expr
   | Match of expr * (Binding.t * expr) list
   | Typed of expr * Value_tag.t
-  | Module of module_def
 [@@deriving sexp, equal, hash, compare]
 
 and toplevel =

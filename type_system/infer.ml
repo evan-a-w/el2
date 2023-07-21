@@ -220,6 +220,10 @@ let union mono1 mono2 : unit state_m =
   let mono_ufds = Mono_ufds.union state.mono_ufds mono1 mono2 in
   State.put { state with mono_ufds }
 
+let ufds_find mono =
+  let%map.State state = State.get in
+  Mono_ufds.find state.mono_ufds mono
+
 let rec search_modules :
     type a.
     module_bindings ->
@@ -784,15 +788,23 @@ let make_free_vars_weak mono =
 (*       let%map () = unify then_mono else_mono in *)
 (*       then_mono *)
 
+let gen_ty_var : _ state_result_m =
+  let%map.State sym = gensym in
+  Ok (TyVar sym)
+
+let mono_of_literal literal =
+  match literal with
+  | Ast.Literal.Int _ -> State.Result.return int_type
+  | Ast.Literal.Float _ -> State.Result.return float_type
+  | Ast.Literal.Bool _ -> State.Result.return bool_type
+  | Ast.Literal.Unit -> State.Result.return unit_type
+  | Ast.Literal.String _ -> State.Result.return string_type
+  | Ast.Literal.Char _ -> State.Result.return char_type
+
 let rec mono_of_node node =
   let open State.Result.Let_syntax in
   match node with
-  | Ast.Literal (Ast.Literal.Int _) -> State.Result.return int_type
-  | Ast.Literal (Ast.Literal.Float _) -> State.Result.return float_type
-  | Ast.Literal (Ast.Literal.Bool _) -> State.Result.return bool_type
-  | Ast.Literal Ast.Literal.Unit -> State.Result.return unit_type
-  | Ast.Literal (Ast.Literal.String _) -> State.Result.return string_type
-  | Ast.Literal (Ast.Literal.Char _) -> State.Result.return char_type
+  | Ast.Literal literal -> mono_of_literal literal
   | Ast.Var var_name -> lookup_var var_name >>= inst_result
   | Ast.Tuple qualified_tuple ->
       let qualifications, tuple = Qualified.split qualified_tuple in
@@ -820,6 +832,7 @@ let rec mono_of_node node =
       let%bind field_map, poly_res =
         lookup_record (Qualified.Unqualified record)
       in
+      let%bind mono_res = inst_result poly_res in
       let field_list = Lowercase.Map.to_alist field_map in
       let field_polys = List.map field_list ~f:snd in
       let%bind field_monos =
@@ -834,24 +847,42 @@ let rec mono_of_node node =
         Lowercase.Map.fold record ~init:(State.Result.return ())
           ~f:(fun ~key:field ~data:expr acc ->
             let%bind () = acc in
-            let%bind poly = poly_of_expr expr in
-            let%bind mono = State.map (inst poly) ~f:Result.return in
+            let%bind mono = mono_of_expr expr in
             match Lowercase.Map.find field_mono_map field with
             | None ->
                 State.Result.error
                   [%message "Unknown field" (field : Lowercase.t)]
             | Some field_mono -> unify field_mono mono)
       in
-      poly_res
+      mono_res
+(* and mono_of_binding (binding : Ast.Binding.t) = *)
+(*   match binding with *)
+(*   | Ast.Binding.Name _ | Ast.Binding.Constructor (_, _) | Ast.Binding.Literal _ *)
+(*   | Ast.Binding.Record _ | Ast.Binding.Tuple _ | Ast.Binding.Typed (_, _) *)
+(*   | Ast.Binding.Renamed (_, _) *)
 
 and mono_of_expr expr =
   let open State.Result.Let_syntax in
   match expr with
-  | Ast.Node node -> poly_of_node node
+  | Ast.Node node -> mono_of_node node
   | If (pred, then_, else_) ->
-      let%bind pred_mono = poly_of_expr pred >>= inst_result in
-      let%bind then_mono = poly_of_expr then_ >>= inst_result in
-      let%bind else_mono = poly_of_expr else_ >>= inst_result in
+      let%bind pred_mono = mono_of_expr pred in
+      let%bind then_mono = mono_of_expr then_ in
+      let%bind else_mono = mono_of_expr else_ in
       let%bind () = unify pred_mono bool_type in
       let%map () = unify then_mono else_mono in
       then_mono
+  | App (func, arg) ->
+      let%bind func_mono = mono_of_expr func in
+      let%bind arg_mono = mono_of_expr arg in
+      let%bind res_mono = gen_ty_var in
+      let%map () = unify func_mono (Lambda (arg_mono, res_mono)) in
+      res_mono
+  | Typed (expr, ty) -> (
+      let%bind mono = mono_of_expr expr in
+      match ty.type_expr with
+      | None -> return mono
+      | Some ty ->
+          let%bind ty_mono = type_of_type_expr ty in
+          let%map () = unify mono ty_mono in
+          mono)
