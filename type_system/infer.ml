@@ -400,8 +400,11 @@ let rec type_of_type_expr type_expr : mono state_result_m =
 
 let gen (mono : mono) : poly state_m =
   free_ty_vars mono
-  |> Lowercase.Set.fold ~init:(Mono mono) ~f:(fun acc x -> Forall (x, acc))
+  |> Lowercase.Set.fold ~init:(Mono mono) ~f:(fun acc var -> Forall (var, acc))
   |> State.return
+
+let poly_of_mono mono ~generalize =
+  if generalize then gen mono else State.return @@ Mono (make_weak mono)
 
 let add_constructor name arg result =
   let open State.Result.Let_syntax in
@@ -688,10 +691,6 @@ let split_poly_list l =
       let new_vars, mono = split_poly poly in
       (Lowercase.Set.union set new_vars, mono :: monos))
 
-let poly_of_mono ~free_vars mono =
-  Lowercase.Set.fold free_vars ~init:(Mono mono) ~f:(fun acc var ->
-      Forall (var, acc))
-
 let inst_many poly_list =
   let open State.Let_syntax in
   let quantifiers, mono_list = split_poly_list poly_list in
@@ -788,6 +787,8 @@ let make_free_vars_weak mono =
 (*       let%map () = unify then_mono else_mono in *)
 (*       then_mono *)
 
+let value_restriction expr = match expr with Lambda _ -> true | _ -> false
+
 let gen_ty_var : _ state_result_m =
   let%map.State sym = gensym in
   Ok (TyVar sym)
@@ -855,11 +856,31 @@ let rec mono_of_node node =
             | Some field_mono -> unify field_mono mono)
       in
       mono_res
-(* and mono_of_binding (binding : Ast.Binding.t) = *)
-(*   match binding with *)
-(*   | Ast.Binding.Name _ | Ast.Binding.Constructor (_, _) | Ast.Binding.Literal _ *)
-(*   | Ast.Binding.Record _ | Ast.Binding.Tuple _ | Ast.Binding.Typed (_, _) *)
-(*   | Ast.Binding.Renamed (_, _) *)
+
+and mono_of_binding_typed ~(binding : Ast.Binding.t) ~mono1 ~expr2 ~generalize =
+  let open State.Result.Let_syntax in
+  match binding with
+  | Ast.Binding.Literal l ->
+      let%bind binding_mono = mono_of_literal l in
+      let%bind () = unify binding_mono mono1 in
+      mono_of_expr expr2
+  | Ast.Binding.Name var ->
+      let%bind poly =
+        State.map (poly_of_mono ~generalize mono1) ~f:Result.return
+      in
+      let%bind () = add_var var poly in
+      let%bind res = mono_of_expr expr2 in
+      let%map () = pop_var var in
+      res
+  | Ast.Binding.Constructor (_, _)
+  | Ast.Binding.Record _ | Ast.Binding.Tuple _
+  | Ast.Binding.Typed (_, _)
+  | Ast.Binding.Renamed (_, _) ->
+      failwith "TODO"
+
+and mono_of_binding ~(binding : Ast.Binding.t) ~expr1 ~expr2 ~generalize =
+  let%bind.State.Result mono1 = mono_of_expr expr1 in
+  mono_of_binding_typed ~binding ~mono1 ~expr2 ~generalize
 
 and mono_of_expr expr =
   let open State.Result.Let_syntax in
@@ -886,3 +907,23 @@ and mono_of_expr expr =
           let%bind ty_mono = type_of_type_expr ty in
           let%map () = unify mono ty_mono in
           mono)
+  | Let_in (binding, expr1, expr2) ->
+      mono_of_binding ~binding ~expr1 ~expr2 ~generalize:true
+  | Match (expr1, cases) -> (
+      match%bind
+        State.Result.all
+          (List.map cases ~f:(fun (binding, expr2) ->
+               mono_of_binding ~binding ~expr1 ~expr2 ~generalize:false))
+      with
+      | [] -> State.Result.error [%message "Empty match"]
+      | mono :: _ -> return mono)
+  | Lambda (binding, body) ->
+      let%bind weak_var =
+        let%map.State sym = gensym in
+        Ok (Weak sym)
+      in
+      let%map res_type =
+        mono_of_binding_typed ~binding ~mono1:weak_var ~expr2:body
+          ~generalize:false
+      in
+      Lambda (weak_var, res_type)
