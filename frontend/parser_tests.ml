@@ -968,3 +968,21 @@ let%expect_test "test_type_define_enum" =
              (Nil ()))))
           (ast_tags ()))))))
      (tokens ())) |}]
+
+let%expect_test "test_match" =
+  let program =
+    {|
+      match Cons 1 with
+      | Cons a -> a
+      | Nil -> 1 |}
+  in
+  test_parse_one ~program;
+  [%expect {|
+    ((ast
+      (Ok
+       (Match
+        (App (Node (Constructor (Unqualified Cons))) (Node (Literal (Int 1))))
+        (((Constructor (Unqualified Cons) ((Name a)))
+          (Node (Var (Unqualified a))))
+         ((Constructor (Unqualified Nil) ()) (Node (Literal (Int 1))))))))
+     (tokens ())) |}]
