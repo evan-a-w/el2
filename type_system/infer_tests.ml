@@ -9,12 +9,15 @@ let state_with_some_stuff =
   let m =
     let%bind () = State.put empty_state in
     let%bind () =
-      add_type "int" (Abstract (Unqualified "int", None))
+      add_type "int" (Abstract (Unqualified "int", Lowercase.Map.empty, 0))
       >>| Result.map_error ~f:Sexp.to_string_hum
       >>| Result.ok_or_failwith
     in
     let arg = Single_arg (Variance.Covariant, "a") in
-    let mono = Abstract (Unqualified "list", None) in
+    let mono =
+      Abstract
+        (Unqualified "list", Lowercase.Map.of_alist_exn [ ("a", TyVar "a") ], 0)
+    in
     add_type_constructor arg "list" mono
   in
   State.run m ~state:empty_state |> snd
@@ -27,15 +30,16 @@ let%expect_test "type_expr single lit" =
   print_s [%message (res : (mono, Sexp.t) Result.t) (state : state)];
   [%expect
     {|
-    ((res (Ok (Abstract (Unqualified int) ())))
+    ((res (Ok (Abstract ((Unqualified int) () 0))))
      (state
       ((mono_ufds ())
        (current_module_binding
         ((toplevel_vars ()) (toplevel_records ()) (toplevel_constructors ())
          (toplevel_type_constructors
           ((list
-            ((Single_arg Covariant a) list (Abstract (Unqualified list) ())))))
-         (toplevel_types ((int (Abstract (Unqualified int) ()))))
+            ((Single_arg Covariant a) list
+             (Abstract ((Unqualified list) ((a (TyVar a))) 0))))))
+         (toplevel_types ((int (Abstract ((Unqualified int) () 0)))))
          (toplevel_modules ()) (opened_modules ())))
        (current_qualification ()) (symbol_n 0)))) |}]
 
@@ -52,15 +56,19 @@ let%expect_test "type_expr multi lit" =
   print_s [%message (res : (mono, Sexp.t) Result.t) (state : state)];
   [%expect
     {|
-    ((res (Ok (Abstract (Unqualified list) ((Abstract (Unqualified int) ())))))
+    ((res
+      (Ok
+       (Abstract
+        ((Unqualified list) ((a (Abstract ((Unqualified int) () 0)))) 0))))
      (state
       ((mono_ufds ())
        (current_module_binding
         ((toplevel_vars ()) (toplevel_records ()) (toplevel_constructors ())
          (toplevel_type_constructors
           ((list
-            ((Single_arg Covariant a) list (Abstract (Unqualified list) ())))))
-         (toplevel_types ((int (Abstract (Unqualified int) ()))))
+            ((Single_arg Covariant a) list
+             (Abstract ((Unqualified list) ((a (TyVar a))) 0))))))
+         (toplevel_types ((int (Abstract ((Unqualified int) () 0)))))
          (toplevel_modules ()) (opened_modules ())))
        (current_qualification ()) (symbol_n 0)))) |}]
 
@@ -84,11 +92,14 @@ let%expect_test "type_expr multi lit" =
   [%expect
     {|
       (mono
-       (Enum
-        ((Cons ((Tuple ((TyVar int) (Recursive_constructor (Unqualified list))))))
+       (Enum ((Unqualified list) ((a (TyVar int))) 1)
+        ((Cons
+          ((Tuple
+            ((TyVar int)
+             (Recursive_constructor ((Unqualified list) ((a (TyVar int))) 0))))))
          (Nil ())))) |}]
 
-let infer_type_of_expr ~programs =
+let infer_type_of_expr ~programs ~print_state =
   let action program : unit state_result_m =
     let%bind type_name, type_def, ast_tags =
       Parser.try_parse (Parser.typedef_p ())
@@ -102,54 +113,77 @@ let infer_type_of_expr ~programs =
     print_s [%message (mono : mono)]
   in
   List.iter programs ~f:(fun program ->
-      match State.Result.run (action program) ~state:empty_state with
-      | Ok (), _ -> ()
-      | Error error, _ -> print_s [%message (error : Sexp.t)])
+      match
+        (print_state, State.Result.run (action program) ~state:empty_state)
+      with
+      | true, (Ok (), state) -> print_s [%message (state : state)]
+      | true, (Error error, state) ->
+          print_s [%message (error : Sexp.t) (state : state)]
+      | false, (Ok (), _) -> ()
+      | false, (Error error, _) -> print_s [%message (error : Sexp.t)])
 
 let%expect_test "simple" =
-  infer_type_of_expr ~programs:[ {| Cons (1, Nil) |}; {| Cons |}; {| Nil |} ];
+  infer_type_of_expr ~print_state:false
+    ~programs:[ {| Cons (1, Nil) |}; {| Cons |}; {| Nil |} ];
   [%expect
     {|
     (mono
-     (Enum
-      ((Cons ((Tuple ((TyVar a0) (Recursive_constructor (Unqualified list))))))
+     (Enum ((Unqualified list) ((a (TyVar a0))) 1)
+      ((Cons
+        ((Tuple
+          ((TyVar a0)
+           (Recursive_constructor ((Unqualified list) ((a (TyVar a0))) 0))))))
        (Nil ()))))
     (mono
-     (Lambda (Tuple ((TyVar b0) (Recursive_constructor (Unqualified list))))
-      (Enum
-       ((Cons ((Tuple ((TyVar a0) (Recursive_constructor (Unqualified list))))))
+     (Lambda
+      (Tuple
+       ((TyVar b0)
+        (Recursive_constructor ((Unqualified list) ((a (TyVar b0))) 0))))
+      (Enum ((Unqualified list) ((a (TyVar a0))) 1)
+       ((Cons
+         ((Tuple
+           ((TyVar a0)
+            (Recursive_constructor ((Unqualified list) ((a (TyVar a0))) 0))))))
         (Nil ())))))
     (mono
-     (Enum
-      ((Cons ((Tuple ((TyVar a0) (Recursive_constructor (Unqualified list))))))
+     (Enum ((Unqualified list) ((a (TyVar a0))) 1)
+      ((Cons
+        ((Tuple
+          ((TyVar a0)
+           (Recursive_constructor ((Unqualified list) ((a (TyVar a0))) 0))))))
        (Nil ())))) |}]
 
 let%expect_test "if_expr" =
-  infer_type_of_expr ~programs:[ "if true then 1 else 0" ];
+  infer_type_of_expr ~print_state:false ~programs:[ "if true then 1 else 0" ];
   [%expect {|
-    (mono (Abstract (Unqualified int) ())) |}];
-  infer_type_of_expr ~programs:[ "if 1 then 1 else 0" ];
+    (mono (Abstract ((Unqualified int) () 0))) |}];
+  infer_type_of_expr ~print_state:false ~programs:[ "if 1 then 1 else 0" ];
   [%expect
     {|
     (error
-     ("failed to unify types" (first (Abstract (Unqualified int) ()))
-      (second (Abstract (Unqualified bool) ())))) |}];
-  infer_type_of_expr ~programs:[ "if true then \"hi\" else 0" ];
+     ("types failed to unify" (first (Unqualified int))
+      (second (Unqualified bool)))) |}];
+  infer_type_of_expr ~print_state:false
+    ~programs:[ "if true then \"hi\" else 0" ];
   [%expect
     {|
     (error
-     ("failed to unify types" (first (Abstract (Unqualified string) ()))
-      (second (Abstract (Unqualified int) ())))) |}];
-  infer_type_of_expr
+     ("types failed to unify" (first (Unqualified string))
+      (second (Unqualified int)))) |}];
+  infer_type_of_expr ~print_state:false
     ~programs:[ "if true then Cons (1, Nil) else Cons (2, Nil)" ];
-  [%expect {|
+  [%expect
+    {|
     (mono
-     (Enum
-      ((Cons ((Tuple ((TyVar a0) (Recursive_constructor (Unqualified list))))))
+     (Enum ((Unqualified list) ((a (TyVar a0))) 1)
+      ((Cons
+        ((Tuple
+          ((TyVar a0)
+           (Recursive_constructor ((Unqualified list) ((a (TyVar a0))) 0))))))
        (Nil ())))) |}]
 
 let%expect_test "match_expr" =
-  infer_type_of_expr
+  infer_type_of_expr ~print_state:false
     ~programs:
       [
         {| match Nil with | Nil -> 0 | Cons (x, _) -> x |};
@@ -160,25 +194,51 @@ let%expect_test "match_expr" =
       ];
   [%expect
     {|
-    (mono (Abstract (Unqualified int) ()))
-    (mono (Abstract (Unqualified string) ()))
+    (mono (Abstract ((Unqualified int) () 0)))
+    (mono (Abstract ((Unqualified string) () 0)))
     (error
-     ("failed to unify types" (first (Abstract (Unqualified int) ()))
+     ("failed to unify types" (first (Abstract ((Unqualified int) () 0)))
       (second
-       (Enum
-        ((Cons ((Tuple ((TyVar a0) (Recursive_constructor (Unqualified list))))))
+       (Enum ((Unqualified list) ((a (TyVar a0))) 1)
+        ((Cons
+          ((Tuple
+            ((TyVar a0)
+             (Recursive_constructor ((Unqualified list) ((a (TyVar a0))) 0))))))
          (Nil ()))))))
-    (mono (Abstract (Unqualified int) ()))
-    (mono (Abstract (Unqualified string) ())) |}]
+    (mono (Abstract ((Unqualified int) () 0)))
+    (mono (Abstract ((Unqualified string) () 0))) |}]
 
 let%expect_test "lambda_expr" =
-  infer_type_of_expr ~programs:[ {| (fun x -> 1) |}; {| (fun x -> 1) 1 |} ];
+  infer_type_of_expr ~print_state:false
+    ~programs:[ {| (fun x -> 1) |}; {| (fun x -> 1) 1 |} ];
   [%expect
     {|
-    (mono (Lambda (Weak a0) (Abstract (Unqualified int) ())))
-    (mono (Abstract (Unqualified int) ())) |}]
+    (mono (Lambda (TyVar a0) (Abstract ((Unqualified int) () 0))))
+    (mono (Abstract ((Unqualified int) () 0))) |}]
 
-(* let%expect_test "let_expr" = *)
-(*   infer_type_of_expr *)
-(*     ~programs: *)
-(*       [ {| let x = (fun x -> 1) in x 1 |}; {| let x = fun x -> 1 in x |} ] *)
+let%expect_test "let_expr" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let x = (fun x -> 1) in x 1 |};
+        {| let x = fun y -> y in x |};
+        {| (fun x -> match x with | Nil -> 1 | Cons (1, Cons (2, Nil)) -> 2) |};
+      ];
+  [%expect
+    {|
+    (mono (Abstract ((Unqualified int) () 0)))
+    (mono (Lambda (TyVar b0) (TyVar b0)))
+    (mono (Lambda (TyVar a0) (Abstract ((Unqualified int) () 0)))) |}]
+
+let%expect_test "let_expr" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {|
+        let x = (fun x -> match x with | Nil -> 1 | Cons (1, Cons (2, Nil)) -> 2) in
+        let y = x 1 in
+        y |};
+      ];
+  [%expect
+    {|
+    (mono (TyVar f0)) |}]

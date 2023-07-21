@@ -417,9 +417,6 @@ let gen (mono : mono) : poly state_m =
   |> Lowercase.Set.fold ~init:(Mono mono) ~f:(fun acc var -> Forall (var, acc))
   |> State.return
 
-let poly_of_mono mono ~generalize =
-  if generalize then gen mono else State.return @@ Mono (make_weak mono)
-
 let add_constructor name arg result =
   let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
@@ -606,7 +603,7 @@ let process_type_def
             Lowercase.Map.add_exn acc ~key ~data:(TyVar key))
       in
       let recursive_constructor =
-        Recursive_constructor (Qualified.Unqualified type_name, lhs_ty_vars, 1)
+        Recursive_constructor (Qualified.Unqualified type_name, lhs_ty_vars, 0)
       in
       let%bind () =
         add_type_constructor constructor_arg type_name recursive_constructor
@@ -659,32 +656,36 @@ let type_of_constructor constructor =
       let%map mono_arg = inst_result poly_arg in
       Lambda (mono_arg, mono_res)
 
-let type_recursion_level ~unification_error mono =
-  let open State.Result.Let_syntax in
+let get_type_proof mono =
   match mono with
-  | Recursive_constructor (_, _, level) -> return level
-  | Record ((_, _, level), _) -> return level
-  | Enum ((_, _, level), _) -> return level
-  | _ -> unification_error ()
+  | Recursive_constructor proof -> Some proof
+  | Record (proof, _) -> Some proof
+  | Enum (proof, _) -> Some proof
+  | _ -> None
 
-let fix_recursive_constructor ~unification_error mono1 mono2 =
+let unfold_once (name, replacement_map, _) mono =
   let open State.Result.Let_syntax in
-  let inner (name, replacement_map, _) mono =
-    let%bind _, _, type_ = lookup_type_constructor name in
-    let%map poly = State.map (gen type_) ~f:Result.return in
-    let _, mono' = split_poly poly in
-    let mono' = replace_ty_vars ~replacement_map mono' in
-    (mono', mono)
-  in
-  match (mono1, mono2) with
-  | Recursive_constructor _, Recursive_constructor _ -> return (mono1, mono2)
-  | Recursive_constructor arg, mono ->
-      let%map left, right = inner arg mono in
-      (left, right)
-  | mono, Recursive_constructor arg ->
-      let%map left, right = inner arg mono in
-      (right, left)
-  | _ -> return (mono1, mono2)
+  let%bind _, _, type_ = lookup_type_constructor name in
+  let%map poly = State.map (gen type_) ~f:Result.return in
+  let _, mono' = split_poly poly in
+  let mono' = replace_ty_vars ~replacement_map mono' in
+  (mono', mono)
+
+let rec get_to_same_recursion_level ~unification_error mono1 mono2 =
+  let open State.Result.Let_syntax in
+  match (get_type_proof mono1, get_type_proof mono2) with
+  | None, _ | _, None -> return (mono1, mono2)
+  | Some p1, Some p2 -> (
+      let _, _, level1 = p1 in
+      let _, _, level2 = p2 in
+      match Int.compare level1 level2 with
+      | 0 -> return (mono1, mono2)
+      | x when x < 0 ->
+          let%bind mono1, mono2 = unfold_once p1 mono2 in
+          get_to_same_recursion_level ~unification_error mono1 mono2
+      | _ ->
+          let%bind mono2, mono1 = unfold_once p2 mono1 in
+          get_to_same_recursion_level ~unification_error mono1 mono2)
 
 let occurs_check a mono =
   let open State.Result.Let_syntax in
@@ -701,24 +702,14 @@ let rec unify mono1 mono2 =
   let%bind.State mono2 = find mono2 in
   let unification_error () = unification_error mono1 mono2 in
   let%bind mono1, mono2 =
-    fix_recursive_constructor ~unification_error mono1 mono2
+    get_to_same_recursion_level ~unification_error mono1 mono2
   in
   match (mono1, mono2) with
   (* this should only happen with recursive calls from enum because
      there are no toplevel recursive constructors *)
-  | ( Recursive_constructor (name1, rep1, _),
-      Recursive_constructor (name2, rep2, _) )
-  | Abstract (name1, rep1, _), Abstract (name2, rep2, _) -> (
-      let monos1 = Lowercase.Map.data rep1 in
-      let monos2 = Lowercase.Map.data rep2 in
-      match Qualified.equal Lowercase.equal name1 name2 with
-      | true -> unify_lists monos1 monos2
-      | false ->
-          State.Result.error
-            [%message
-              "recursive constructors not equal"
-                (name1 : Lowercase.t Qualified.t)
-                (name2 : Lowercase.t Qualified.t)])
+  | Recursive_constructor p1, Recursive_constructor p2
+  | Abstract p1, Abstract p2 ->
+      unify_typr_proof ~unification_error p1 p2
   | Recursive_constructor _, _ | _, Recursive_constructor _ ->
       unification_error ()
   | TyVar x, TyVar y when String.equal x y -> State.Result.return ()
@@ -739,8 +730,9 @@ let rec unify mono1 mono2 =
   | Lambda (x1, x2), Lambda (y1, y2) ->
       let%bind () = unify x1 y1 in
       unify x2 y2
-  | Tuple l1, Tuple l2 -> unify_lists unification_error l1 l2
-  | Record l1, Record l2 ->
+  | Tuple l1, Tuple l2 -> unify_lists ~unification_error l1 l2
+  | Record (p1, l1), Record (p2, l2) ->
+      let%bind () = unify_typr_proof ~unification_error p1 p2 in
       let%bind zipped =
         match List.zip l1 l2 with
         | Unequal_lengths -> unification_error ()
@@ -753,7 +745,8 @@ let rec unify mono1 mono2 =
         | _ -> unification_error ()
       in
       State.Result.all_unit (List.map zipped ~f)
-  | Enum l1, Enum l2 ->
+  | Enum (p1, l1), Enum (p2, l2) ->
+      let%bind () = unify_typr_proof ~unification_error p1 p2 in
       let%bind zipped =
         match List.zip l1 l2 with
         | Unequal_lengths -> unification_error ()
@@ -771,7 +764,19 @@ let rec unify mono1 mono2 =
       State.Result.all_unit (List.map zipped ~f)
   | _ -> unification_error ()
 
-and unify_lists unification_error l1 l2 =
+and unify_typr_proof ~unification_error (name1, rep1, _) (name2, rep2, _) =
+  let monos1 = Lowercase.Map.data rep1 in
+  let monos2 = Lowercase.Map.data rep2 in
+  match Qualified.equal Lowercase.equal name1 name2 with
+  | true -> unify_lists ~unification_error monos1 monos2
+  | false ->
+      State.Result.error
+        [%message
+          "types failed to unify"
+            ~first:(name1 : Lowercase.t Qualified.t)
+            ~second:(name2 : Lowercase.t Qualified.t)]
+
+and unify_lists ~unification_error l1 l2 =
   let open State.Result.Let_syntax in
   let%bind zipped =
     match List.zip l1 l2 with
@@ -781,7 +786,7 @@ and unify_lists unification_error l1 l2 =
   let f (mono1, mono2) = unify mono1 mono2 in
   State.Result.all_unit (List.map zipped ~f)
 
-let make_abstract s = Abstract (Qualified.Unqualified s, None)
+let make_abstract s = Abstract (Qualified.Unqualified s, Lowercase.Map.empty, 0)
 let int_type = make_abstract "int"
 let float_type = make_abstract "float"
 let bool_type = make_abstract "bool"
@@ -819,7 +824,7 @@ let make_free_vars_weak mono =
   in
   replace_ty_vars ~replacement_map mono
 
-let value_restriction expr = match expr with Lambda _ -> true | _ -> false
+let value_restriction expr = match expr with Ast.Lambda _ -> true | _ -> false
 
 let gen_ty_var : _ state_result_m =
   let%map.State sym = gensym in
@@ -833,6 +838,12 @@ let mono_of_literal literal =
   | Ast.Literal.Unit -> State.Result.return unit_type
   | Ast.Literal.String _ -> State.Result.return string_type
   | Ast.Literal.Char _ -> State.Result.return char_type
+
+let poly_of_mono mono ~generalize ~value_restriction =
+  match (generalize, value_restriction) with
+  | false, _ -> State.Result.return @@ Mono mono
+  | true, false -> State.map (gen mono) ~f:Result.return
+  | true, true -> State.Result.return @@ Mono (make_weak mono)
 
 let rec mono_of_node node =
   let open State.Result.Let_syntax in
@@ -882,8 +893,8 @@ let rec mono_of_node node =
       in
       mono_res
 
-and process_binding ~(binding : Ast.Binding.t) ~mono ~generalize :
-    (poly * Lowercase.t list) state_result_m =
+and process_binding ~(binding : Ast.Binding.t) ~mono ~generalize
+    ~value_restriction : (poly * Lowercase.t list) state_result_m =
   let open State.Result.Let_syntax in
   match binding with
   | Ast.Binding.Literal l ->
@@ -891,9 +902,7 @@ and process_binding ~(binding : Ast.Binding.t) ~mono ~generalize :
       let%map () = unify binding_mono mono in
       (Mono mono, [])
   | Ast.Binding.Name var ->
-      let%bind poly =
-        State.map (poly_of_mono ~generalize mono) ~f:Result.return
-      in
+      let%bind poly = poly_of_mono ~generalize ~value_restriction mono in
       let%map () = add_var var poly in
       (poly, [ var ])
   | Ast.Binding.Constructor (constructor, rest) -> (
@@ -914,18 +923,22 @@ and process_binding ~(binding : Ast.Binding.t) ~mono ~generalize :
                 (given : Ast.Binding.t)]
       | Some binding, Some arg_poly ->
           let%bind mono = inst_result arg_poly in
-          let%map _, vars = process_binding ~binding ~mono ~generalize in
+          let%map _, vars =
+            process_binding ~binding ~mono ~generalize ~value_restriction
+          in
           (poly, vars))
   | Ast.Binding.Typed (binding, value_tag) -> (
       let type_expr = value_tag.Ast.Value_tag.type_expr in
       match type_expr with
-      | None -> process_binding ~binding ~mono ~generalize
+      | None -> process_binding ~binding ~mono ~generalize ~value_restriction
       | Some type_expr ->
           let%bind tagged_mono = type_of_type_expr type_expr in
           let%bind () = unify tagged_mono mono in
-          process_binding ~binding ~mono ~generalize)
+          process_binding ~binding ~mono ~generalize ~value_restriction)
   | Ast.Binding.Renamed (binding, var) ->
-      let%bind poly, vars = process_binding ~binding ~mono ~generalize in
+      let%bind poly, vars =
+        process_binding ~binding ~mono ~generalize ~value_restriction
+      in
       let%map () = add_var var poly in
       (poly, var :: vars)
   | Ast.Binding.Tuple qualified ->
@@ -947,7 +960,7 @@ and process_binding ~(binding : Ast.Binding.t) ~mono ~generalize :
       let%bind processed_list =
         State.Result.all
           (List.map tuple_zipped ~f:(fun (binding, mono) ->
-               process_binding ~binding ~mono ~generalize))
+               process_binding ~binding ~mono ~generalize ~value_restriction))
       in
       let polys, vars_list = List.unzip processed_list in
       let vars = List.concat (List.rev vars_list) in
@@ -977,7 +990,9 @@ and process_binding ~(binding : Ast.Binding.t) ~mono ~generalize :
               | Some poly -> State.Result.return poly
             in
             let%bind mono = inst_result poly in
-            let%map _, vars = process_binding ~binding ~mono ~generalize in
+            let%map _, vars =
+              process_binding ~binding ~mono ~generalize ~value_restriction
+            in
             vars :: vars_list)
       in
       let res_vars = List.concat (List.rev vars_list) in
@@ -986,7 +1001,10 @@ and process_binding ~(binding : Ast.Binding.t) ~mono ~generalize :
 
 and mono_of_binding_typed ~(binding : Ast.Binding.t) ~mono1 ~expr2 ~generalize =
   let open State.Result.Let_syntax in
-  let%bind _, vars = process_binding ~binding ~mono:mono1 ~generalize in
+  let value_restriction = value_restriction expr2 in
+  let%bind _, vars =
+    process_binding ~binding ~mono:mono1 ~generalize ~value_restriction
+  in
   let%bind res = mono_of_expr expr2 in
   let%map () = State.Result.all_unit (List.map vars ~f:pop_var) in
   res
@@ -1033,55 +1051,15 @@ and mono_of_expr expr =
           let%map () = State.Result.all_unit (List.map l ~f:(unify mono)) in
           mono)
   | Lambda (binding, body) ->
-      let%bind weak_var =
-        let%map.State sym = gensym in
-        Ok (Weak sym)
-      in
+      let%bind var = gen_ty_var in
       let%map res_type =
-        mono_of_binding_typed ~binding ~mono1:weak_var ~expr2:body
-          ~generalize:false
+        mono_of_binding_typed ~binding ~mono1:var ~expr2:body ~generalize:false
       in
-      Lambda (weak_var, res_type)
+      Lambda (var, res_type)
 
-let rec apply_substs (mono : mono) =
-  let open State.Result.Let_syntax in
-  match mono with
-  | Recursive_constructor (name, monos) ->
-      let%map monos = State.Result.all (List.map monos ~f:apply_substs) in
-      Recursive_constructor (name, monos)
-  | Abstract (_, _) | Weak _ | TyVar _ -> State.map (find mono) ~f:Result.return
-  | Lambda (a, b) ->
-      let%bind a = apply_substs a in
-      let%map b = apply_substs b in
-      Lambda (a, b)
-  | Tuple l ->
-      let%map l = State.Result.all (List.map l ~f:apply_substs) in
-      Tuple l
-  (* | Recursive_constructor l -> *)
-  (*     let%map l = State.Result.all (List.map l ~f:apply_substs) in *)
-  (*     Recursive_constructor l *)
-  | Record m ->
-      let%map m =
-        State.Result.all
-          (List.map m ~f:(fun (field, (mono, mut)) ->
-               let%map mono = apply_substs mono in
-               (field, (mono, mut))))
-      in
-      Record m
-  | Pointer m ->
-      let%map m = apply_substs m in
-      Pointer m
-  | Enum l ->
-      let%map l =
-        State.Result.all
-          (List.map l ~f:(fun (name, mono) ->
-               let%map mono =
-                 match mono with
-                 | None -> State.Result.return None
-                 | Some mono ->
-                     let%map mono = apply_substs mono in
-                     Some mono
-               in
-               (name, mono)))
-      in
-      Enum l
+let apply_substs mono =
+  let%map.State state = State.get in
+  Ok
+    (map_ty_vars mono ~f:(fun mono ->
+         let mono, _ = Mono_ufds.find state.mono_ufds (TyVar mono) in
+         Some mono))
