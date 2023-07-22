@@ -261,3 +261,8 @@ let%expect_test "let_expr2" =
       (second (Unqualified string))))
     (Lambda ((named_type (Unqualified list)) (map ((a (TyVar e0)))))
      ((named_type (Unqualified list)) (map ((a (TyVar e0)))))) |}]
+
+let%expect_test "let_expr3" =
+  infer_type_of_expr ~print_state:false
+    ~programs:[ {| let x = fun x -> (fun x -> x) (fun x -> x) x in x |} ];
+  [%expect {| (Lambda (TyVar f0) (TyVar f0)) |}]
