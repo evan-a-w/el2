@@ -41,7 +41,7 @@ let%expect_test "type_expr single lit" =
              (Abstract ((Unqualified list) ((a (TyVar a))) 0))))))
          (toplevel_types ((int (Abstract ((Unqualified int) () 0)))))
          (toplevel_modules ()) (opened_modules ())))
-       (current_qualification ()) (symbol_n 0)))) |}]
+       (current_qualification ()) (type_vars ()) (current_level 0) (symbol_n 0)))) |}]
 
 let%expect_test "type_expr multi lit" =
   let lit =
@@ -70,7 +70,7 @@ let%expect_test "type_expr multi lit" =
              (Abstract ((Unqualified list) ((a (TyVar a))) 0))))))
          (toplevel_types ((int (Abstract ((Unqualified int) () 0)))))
          (toplevel_modules ()) (opened_modules ())))
-       (current_qualification ()) (symbol_n 0)))) |}]
+       (current_qualification ()) (type_vars ()) (current_level 0) (symbol_n 0)))) |}]
 
 let%expect_test "type_expr multi lit" =
   let action : unit state_result_m =
@@ -266,3 +266,38 @@ let%expect_test "let_expr3" =
   infer_type_of_expr ~print_state:false
     ~programs:[ {| let x = fun x -> (fun x -> x) (fun x -> x) x in x |} ];
   [%expect {| (Lambda (TyVar f0) (TyVar f0)) |}]
+
+let%expect_test "let_expr_tag1" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let head = fun l default ->
+             match l with
+             | Nil -> default
+             | Cons (x, rest) -> x
+           in head |};
+        {| let head = fun (l : a list) (default : a) ->
+             match l with
+             | Nil -> default
+             | Cons (x, rest) -> x
+           in head |};
+        {| let head = fun (l : int) (default : a) ->
+             match l with
+             | Nil -> default
+             | Cons (x, rest) -> x
+           in head |};
+        {| let head : int -> int = fun (l : int) (default : a) ->
+             match l with
+             | Nil -> default
+             | Cons (x, rest) -> x
+           in head |};
+      ];
+  [%expect
+    {|
+    (Lambda ((named_type (Unqualified list)) (map ((a (TyVar e0)))))
+     (Lambda (TyVar e0) (TyVar e0)))
+    (Lambda ((named_type (Unqualified list)) (map ((a (TyVar e0)))))
+     (Lambda (TyVar e0) (TyVar e0)))
+    (Lambda ((named_type (Unqualified list)) (map ((a (TyVar e0)))))
+     (Lambda (TyVar e0) (TyVar e0)))
+    (error "Failed to parse (b expr)") |}]

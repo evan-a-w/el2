@@ -88,6 +88,8 @@ module Module_path = Qualified.Make (struct
   type arg = Uppercase.t [@@deriving sexp, compare, equal, hash]
 end)
 
+type level = int [@@deriving sexp, equal, hash, compare]
+
 type module_bindings = {
   toplevel_vars : poly list Lowercase.Map.t;
   toplevel_records : (poly Lowercase.Map.t * poly) Lowercase.Set.Map.t;
@@ -114,12 +116,26 @@ type state = {
   mono_ufds : Mono_ufds.t;
   current_module_binding : module_bindings;
   current_qualification : Uppercase.t list;
+  type_vars : (Lowercase.t * level) Lowercase.Map.t;
+  current_level : level;
   symbol_n : int;
 }
 [@@deriving sexp, equal, compare, fields]
 
 type 'a state_m = ('a, state) State.t [@@deriving sexp]
 type 'a state_result_m = ('a, Sexp.t, state) State.Result.t [@@deriving sexp]
+
+let get_level =
+  let%map.State state = State.get in
+  state.current_level
+
+let incr_level =
+  let%map.State state = State.get in
+  { state with current_level = state.current_level + 1 }
+
+let decr_level =
+  let%map.State state = State.get in
+  { state with current_level = state.current_level - 1 }
 
 let operate_on_toplevel_type_constructors arg name mono ~f =
   let open State.Result.Let_syntax in
@@ -155,6 +171,8 @@ let empty_state =
     current_module_binding = empty_module_bindngs;
     current_qualification = [];
     symbol_n = 0;
+    type_vars = Lowercase.Map.empty;
+    current_level = 0;
   }
 
 let gensym : string state_m =
@@ -310,12 +328,13 @@ let lookup_type_constructor qualified_name =
       State.Result.error
         [%message "type not found" (qualified_name : Lowercase.t Qualified.t)]
 
-let lookup_type qualified_name =
+let lookup_type ?(type_var = true) qualified_name =
   let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let qualifications, type_name = Qualified.split qualified_name in
+  let type_var_fn = if type_var then Option.some else Fn.const None in
   let type_var_type =
-    match qualifications with [] -> Some (TyVar type_name) | _ -> None
+    match qualifications with [] -> type_var_fn (TyVar type_name) | _ -> None
   in
   let res =
     search_modules state.current_module_binding ~qualifications
@@ -1016,10 +1035,10 @@ and process_binding ~(binding : Ast.Binding.t) ~mono ~generalize
       | Some type_expr ->
           let%bind tagged_mono = type_of_type_expr type_expr in
           let%bind () = unify tagged_mono mono in
-          let%bind mono, vars =
+          let%bind mono_res, vars =
             process_binding ~binding ~mono ~generalize ~value_restriction
           in
-          let%map () = unify tagged_mono mono in
+          let%map () = unify mono_res tagged_mono in
           (mono, vars))
   | Ast.Binding.Renamed (binding, var) ->
       let%bind mono, vars =
