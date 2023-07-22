@@ -110,53 +110,53 @@ let infer_type_of_expr ~programs ~print_state =
     let%bind expr = Parser.try_parse Parser.parse_one program |> State.return in
     let%bind mono = mono_of_expr expr in
     let%map mono = apply_substs mono in
-    print_s [%message (mono : mono)]
+    let sexp = show_mono mono in
+    print_s sexp
   in
   List.iter programs ~f:(fun program ->
       match
         (print_state, State.Result.run (action program) ~state:empty_state)
       with
-      | true, (Ok (), state) -> print_s [%message (state : state)]
+      | true, (Ok (), state) ->
+          let mono_ufds = show_mono_ufds state.mono_ufds in
+          print_s [%message (mono_ufds : Sexp.t)]
       | true, (Error error, state) ->
-          print_s [%message (error : Sexp.t) (state : state)]
+          print_s
+            [%message
+              (error : Sexp.t)
+                ~mono_ufds:(show_mono_ufds state.mono_ufds : Sexp.t)]
       | false, (Ok (), _) -> ()
       | false, (Error error, _) -> print_s [%message (error : Sexp.t)])
 
 let%expect_test "simple" =
   infer_type_of_expr ~print_state:false
-    ~programs:[ {| Cons (1, Nil) |}; {| Cons |}; {| Nil |} ];
+    ~programs:
+      [
+        {| Cons (1, Nil) |};
+        {| Cons |};
+        {| Nil |};
+        {| (1, Nil) |};
+        {| Cons (1, (Cons (2, Nil))) |};
+      ];
   [%expect
     {|
-    (mono
-     (Enum ((Unqualified list) ((a (TyVar a0))) 1)
-      ((Cons
-        ((Tuple
-          ((TyVar a0)
-           (Recursive_constructor ((Unqualified list) ((a (TyVar a0))) 0))))))
-       (Nil ()))))
-    (mono
-     (Lambda
-      (Tuple
-       ((TyVar b0)
-        (Recursive_constructor ((Unqualified list) ((a (TyVar b0))) 0))))
-      (Enum ((Unqualified list) ((a (TyVar a0))) 1)
-       ((Cons
-         ((Tuple
-           ((TyVar a0)
-            (Recursive_constructor ((Unqualified list) ((a (TyVar a0))) 0))))))
-        (Nil ())))))
-    (mono
-     (Enum ((Unqualified list) ((a (TyVar a0))) 1)
-      ((Cons
-        ((Tuple
-          ((TyVar a0)
-           (Recursive_constructor ((Unqualified list) ((a (TyVar a0))) 0))))))
-       (Nil ())))) |}]
+    ((named_type (Unqualified list))
+     (map ((a ((named_type (Unqualified int)) (map ()))))))
+    (Lambda
+     (Tuple
+      ((TyVar a0) ((named_type (Unqualified list)) (map ((a (TyVar a0)))))))
+     ((named_type (Unqualified list)) (map ((a (TyVar a0))))))
+    ((named_type (Unqualified list)) (map ((a (TyVar a0)))))
+    (Tuple
+     (((named_type (Unqualified int)) (map ()))
+      ((named_type (Unqualified list)) (map ((a (TyVar a0)))))))
+    ((named_type (Unqualified list))
+     (map ((a ((named_type (Unqualified int)) (map ())))))) |}]
 
 let%expect_test "if_expr" =
   infer_type_of_expr ~print_state:false ~programs:[ "if true then 1 else 0" ];
   [%expect {|
-    (mono (Abstract ((Unqualified int) () 0))) |}];
+    ((named_type (Unqualified int)) (map ())) |}];
   infer_type_of_expr ~print_state:false ~programs:[ "if 1 then 1 else 0" ];
   [%expect
     {|
@@ -171,16 +171,11 @@ let%expect_test "if_expr" =
      ("types failed to unify" (first (Unqualified string))
       (second (Unqualified int)))) |}];
   infer_type_of_expr ~print_state:false
-    ~programs:[ "if true then Cons (1, Nil) else Cons (2, Nil)" ];
+    ~programs:[ "if true then Cons (1, Nil) else Cons (2, Cons (1, Nil))" ];
   [%expect
     {|
-    (mono
-     (Enum ((Unqualified list) ((a (TyVar a0))) 1)
-      ((Cons
-        ((Tuple
-          ((TyVar a0)
-           (Recursive_constructor ((Unqualified list) ((a (TyVar a0))) 0))))))
-       (Nil ())))) |}]
+    ((named_type (Unqualified list))
+     (map ((a ((named_type (Unqualified int)) (map ())))))) |}]
 
 let%expect_test "match_expr" =
   infer_type_of_expr ~print_state:false
@@ -194,29 +189,36 @@ let%expect_test "match_expr" =
       ];
   [%expect
     {|
-    (mono (Abstract ((Unqualified int) () 0)))
-    (mono (Abstract ((Unqualified string) () 0)))
+    ((named_type (Unqualified int)) (map ()))
+    ((named_type (Unqualified string)) (map ()))
     (error
-     ("failed to unify types" (first (Abstract ((Unqualified int) () 0)))
-      (second
-       (Enum ((Unqualified list) ((a (TyVar a0))) 1)
-        ((Cons
-          ((Tuple
-            ((TyVar a0)
-             (Recursive_constructor ((Unqualified list) ((a (TyVar a0))) 0))))))
-         (Nil ()))))))
-    (mono (Abstract ((Unqualified int) () 0)))
-    (mono (Abstract ((Unqualified string) () 0))) |}]
+     ("types failed to unify" (first (Unqualified int))
+      (second (Unqualified list))))
+    ((named_type (Unqualified int)) (map ()))
+    (error
+     ("types failed to unify" (first (Unqualified string))
+      (second (Unqualified int)))) |}]
+
+let%expect_test "match_expr2" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let x = Nil in let _ = match x with | Nil -> 1 | Cons (x, _) -> x in x |};
+      ];
+  [%expect
+    {|
+    ((named_type (Unqualified list))
+     (map ((a ((named_type (Unqualified int)) (map ())))))) |}]
 
 let%expect_test "lambda_expr" =
   infer_type_of_expr ~print_state:false
     ~programs:[ {| (fun x -> 1) |}; {| (fun x -> 1) 1 |} ];
   [%expect
     {|
-    (mono (Lambda (TyVar a0) (Abstract ((Unqualified int) () 0))))
-    (mono (Abstract ((Unqualified int) () 0))) |}]
+    (Lambda (TyVar a0) ((named_type (Unqualified int)) (map ())))
+    ((named_type (Unqualified int)) (map ())) |}]
 
-let%expect_test "let_expr" =
+let%expect_test "let_expr1" =
   infer_type_of_expr ~print_state:false
     ~programs:
       [
@@ -226,19 +228,35 @@ let%expect_test "let_expr" =
       ];
   [%expect
     {|
-    (mono (Abstract ((Unqualified int) () 0)))
-    (mono (Lambda (TyVar b0) (TyVar b0)))
-    (mono (Lambda (TyVar a0) (Abstract ((Unqualified int) () 0)))) |}]
+    ((named_type (Unqualified int)) (map ()))
+    (Lambda (TyVar b0) (TyVar b0))
+    (Lambda
+     ((named_type (Unqualified list))
+      (map ((a ((named_type (Unqualified int)) (map ()))))))
+     ((named_type (Unqualified int)) (map ()))) |}]
 
-let%expect_test "let_expr" =
+let%expect_test "let_expr2" =
   infer_type_of_expr ~print_state:false
     ~programs:
       [
         {|
-        let x = (fun x -> match x with | Nil -> 1 | Cons (1, Cons (2, Nil)) -> 2) in
+        let x = (fun y -> match y with | Nil -> 1 | Cons (1, Cons (2, Nil)) -> 2) in
         let y = x 1 in
         y |};
+        {| let x = (fun y -> match y with | Nil -> 1 | Cons (1, Cons (2, Nil)) -> 2) in x |};
+        {|
+        let x = (fun y -> match y with | Nil -> 1 | Cons (1, Cons (2, Nil)) -> 2) in
+        x (Cons ("hi", Nil)) |};
       ];
   [%expect
     {|
-    (mono (TyVar f0)) |}]
+    (error
+     ("types failed to unify" (first (Unqualified list))
+      (second (Unqualified int))))
+    (Lambda
+     ((named_type (Unqualified list))
+      (map ((a ((named_type (Unqualified int)) (map ()))))))
+     ((named_type (Unqualified int)) (map ())))
+    (error
+     ("types failed to unify" (first (Unqualified int))
+      (second (Unqualified string)))) |}]

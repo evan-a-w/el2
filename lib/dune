@@ -1,5 +1,5 @@
 (library
  (name shared)
- (libraries core)
- (preprocess (pps ppx_jane))
+ (libraries core ppx_show.runtime)
+ (preprocess (pps ppx_jane ppx_show))
  (inline_tests))

@@ -1,5 +1,5 @@
 (library
  (name type_system)
- (libraries core frontend shared)
- (preprocess (pps ppx_jane))
+ (libraries core frontend shared ppx_show.runtime)
+ (preprocess (pps ppx_jane ppx_show))
  (inline_tests))
