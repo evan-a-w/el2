@@ -108,6 +108,7 @@ let infer_type_of_expr ~programs ~print_state =
     in
     let%bind () = process_type_def { type_name; type_def; ast_tags } in
     let%bind expr = Parser.try_parse Parser.parse_one program |> State.return in
+
     let%bind mono = mono_of_expr expr in
     let%map mono = apply_substs mono in
     let sexp = show_mono mono in
