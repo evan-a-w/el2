@@ -802,11 +802,6 @@ let rec unify mono1 mono2 =
       (Recursive_constructor p2 | Abstract p2 | Record (p2, _) | Enum (p2, _)) )
     ->
       unify_typr_proof ~unification_error p1 p2
-  (* this should only happen with recursive calls from enum because
-     there are no toplevel recursive constructors *)
-  (* | Recursive_constructor p1, Recursive_constructor p2 *)
-  (* | Abstract p1, Abstract p2 -> *)
-  (*     unify_typr_proof ~unification_error p1 p2 *)
   | Recursive_constructor _, _ | _, Recursive_constructor _ ->
       unification_error ()
   | TyVar x, TyVar y when String.equal x y -> State.Result.return ()
@@ -865,7 +860,9 @@ let rec unify mono1 mono2 =
 
 and unify_typr_proof ~unification_error (name1, rep1, _) (name2, rep2, _) =
   let monos1 = Lowercase.Map.data rep1 in
+  let%bind.State monos1 = State.all (List.map ~f:find monos1) in
   let monos2 = Lowercase.Map.data rep2 in
+  let%bind.State monos2 = State.all (List.map ~f:find monos2) in
   match Qualified.equal Lowercase.equal name1 name2 with
   | true -> unify_lists ~unification_error monos1 monos2
   | false ->
