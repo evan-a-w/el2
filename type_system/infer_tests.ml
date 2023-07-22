@@ -239,14 +239,13 @@ let%expect_test "let_expr2" =
   infer_type_of_expr ~print_state:false
     ~programs:
       [
-        {|
-        let x = (fun y -> match y with | Nil -> 1 | Cons (1, Cons (2, Nil)) -> 2) in
-        let y = x 1 in
-        y |};
+        {| let x = (fun y -> match y with | Nil -> 1 | Cons (1, Cons (2, Nil)) -> 2) in
+           let y = x 1 in
+           y |};
         {| let x = (fun y -> match y with | Nil -> 1 | Cons (1, Cons (2, Nil)) -> 2) in x |};
-        {|
-        let x = (fun y -> match y with | Nil -> 1 | Cons (1, Cons (2, Nil)) -> 2) in
-        x (Cons ("hi", Nil)) |};
+        {| let x = (fun y -> match y with | Nil -> 1 | Cons (1, Cons (2, Nil)) -> 2) in
+           x (Cons ("hi", Nil)) |};
+        {| let x = fun y -> match y with | Nil -> Nil | Cons (x, y) -> y in x |};
       ];
   [%expect
     {|
@@ -259,4 +258,6 @@ let%expect_test "let_expr2" =
      ((named_type (Unqualified int)) (map ())))
     (error
      ("types failed to unify" (first (Unqualified int))
-      (second (Unqualified string)))) |}]
+      (second (Unqualified string))))
+    (Lambda ((named_type (Unqualified list)) (map ((a (TyVar e0)))))
+     ((named_type (Unqualified list)) (map ((a (TyVar e0)))))) |}]
