@@ -39,7 +39,13 @@ let%expect_test "type_expr single lit" =
           ((list
             ((Single_arg Covariant a) list
              (Abstract ((Unqualified list) ((a (TyVar a))) 0))))))
-         (toplevel_types ((int (Abstract ((Unqualified int) () 0)))))
+         (toplevel_types
+          ((bool (Abstract ((Unqualified bool) () 0)))
+           (char (Abstract ((Unqualified char) () 0)))
+           (float (Abstract ((Unqualified float) () 0)))
+           (int (Abstract ((Unqualified int) () 0)))
+           (string (Abstract ((Unqualified string) () 0)))
+           (unit (Abstract ((Unqualified unit) () 0)))))
          (toplevel_modules ()) (opened_modules ())))
        (current_qualification ()) (type_vars ()) (current_level 0) (symbol_n 0)))) |}]
 
@@ -68,7 +74,13 @@ let%expect_test "type_expr multi lit" =
           ((list
             ((Single_arg Covariant a) list
              (Abstract ((Unqualified list) ((a (TyVar a))) 0))))))
-         (toplevel_types ((int (Abstract ((Unqualified int) () 0)))))
+         (toplevel_types
+          ((bool (Abstract ((Unqualified bool) () 0)))
+           (char (Abstract ((Unqualified char) () 0)))
+           (float (Abstract ((Unqualified float) () 0)))
+           (int (Abstract ((Unqualified int) () 0)))
+           (string (Abstract ((Unqualified string) () 0)))
+           (unit (Abstract ((Unqualified unit) () 0)))))
          (toplevel_modules ()) (opened_modules ())))
        (current_qualification ()) (type_vars ()) (current_level 0) (symbol_n 0)))) |}]
 
@@ -92,11 +104,12 @@ let%expect_test "type_expr multi lit" =
   [%expect
     {|
       (mono
-       (Enum ((Unqualified list) ((a (TyVar int))) 1)
+       (Enum ((Unqualified list) ((a (Abstract ((Unqualified int) () 0)))) 1)
         ((Cons
           ((Tuple
-            ((TyVar int)
-             (Recursive_constructor ((Unqualified list) ((a (TyVar int))) 0))))))
+            ((Abstract ((Unqualified int) () 0))
+             (Recursive_constructor
+              ((Unqualified list) ((a (Abstract ((Unqualified int) () 0)))) 0))))))
          (Nil ())))) |}]
 
 let infer_type_of_expr ~programs ~print_state =
@@ -108,7 +121,8 @@ let infer_type_of_expr ~programs ~print_state =
     in
     let%bind () = process_type_def { type_name; type_def; ast_tags } in
     let%bind expr = Parser.try_parse Parser.parse_one program |> State.return in
-
+    (* let%bind expr = replace_user_ty_vars expr in *)
+    (* print_s [%message (expr : Ast.expr)]; *)
     let%bind mono = mono_of_expr expr in
     let%map mono = apply_substs mono in
     let sexp = show_mono mono in
@@ -299,6 +313,7 @@ let%expect_test "let_expr_tag1" =
      (Lambda (TyVar e0) (TyVar e0)))
     (Lambda ((named_type (Unqualified list)) (map ((a (TyVar e0)))))
      (Lambda (TyVar e0) (TyVar e0)))
-    (Lambda ((named_type (Unqualified list)) (map ((a (TyVar e0)))))
-     (Lambda (TyVar e0) (TyVar e0)))
+    (error
+     ("types failed to unify" (first (Unqualified list))
+      (second (Unqualified int))))
     (error "Failed to parse (b expr)") |}]

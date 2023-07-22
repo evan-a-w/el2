@@ -101,13 +101,30 @@ type module_bindings = {
 }
 [@@deriving sexp, equal, hash, compare, fields]
 
+let make_abstract s = Abstract (Qualified.Unqualified s, Lowercase.Map.empty, 0)
+let int_type = make_abstract "int"
+let float_type = make_abstract "float"
+let bool_type = make_abstract "bool"
+let unit_type = make_abstract "unit"
+let string_type = make_abstract "string"
+let char_type = make_abstract "char"
+
 let empty_module_bindngs =
   {
     toplevel_vars = Lowercase.Map.empty;
     toplevel_records = Lowercase.Set.Map.empty;
     toplevel_constructors = Uppercase.Map.empty;
     toplevel_type_constructors = Lowercase.Map.empty;
-    toplevel_types = Lowercase.Map.empty;
+    toplevel_types =
+      Lowercase.Map.of_alist_exn
+        [
+          ("int", int_type);
+          ("float", float_type);
+          ("bool", bool_type);
+          ("unit", unit_type);
+          ("string", string_type);
+          ("char", char_type);
+        ];
     toplevel_modules = Uppercase.Map.empty;
     opened_modules = [];
   }
@@ -130,12 +147,12 @@ let get_level =
   state.current_level
 
 let incr_level =
-  let%map.State state = State.get in
-  { state with current_level = state.current_level + 1 }
+  let%bind.State.Result state = State.Result.get in
+  State.Result.put { state with current_level = state.current_level + 1 }
 
 let decr_level =
-  let%map.State state = State.get in
-  { state with current_level = state.current_level - 1 }
+  let%bind.State.Result state = State.Result.get in
+  State.Result.put { state with current_level = state.current_level - 1 }
 
 let operate_on_toplevel_type_constructors arg name mono ~f =
   let open State.Result.Let_syntax in
@@ -802,6 +819,17 @@ let rec get_to_same_recursion_level ~unification_error mono1 mono2 =
 let occurs_check a mono =
   let open State.Result.Let_syntax in
   let free_vars = free_ty_vars mono in
+  (* let free_vars = *)
+  (*   match mono with *)
+  (*   | Recursive_constructor (_, map, _) *)
+  (*   | Record ((_, map, _), _) *)
+  (*   | Enum ((_, map, _), _) *)
+  (*   | Abstract (_, map, _) -> *)
+  (*       Lowercase.Map.fold map ~init:free_vars *)
+  (*         ~f:(fun ~key:_ ~data:mono free_vars -> *)
+  (*           Lowercase.Set.diff free_vars (free_ty_vars mono)) *)
+  (*   | _ -> free_vars *)
+  (* in *)
   match Lowercase.Set.mem free_vars a with
   | true ->
       State.Result.error
@@ -867,14 +895,6 @@ and unify_lists ~unification_error l1 l2 =
   in
   let f (mono1, mono2) = unify mono1 mono2 in
   State.Result.all_unit (List.map zipped ~f)
-
-let make_abstract s = Abstract (Qualified.Unqualified s, Lowercase.Map.empty, 0)
-let int_type = make_abstract "int"
-let float_type = make_abstract "float"
-let bool_type = make_abstract "bool"
-let unit_type = make_abstract "unit"
-let string_type = make_abstract "string"
-let char_type = make_abstract "char"
 
 (* TODO: modules *)
 let open_module (_qualifications : Qualified.qualifications) =
@@ -1167,3 +1187,112 @@ and mono_of_expr expr =
       let%bind var = apply_substs var in
       let%map res_type = apply_substs res_type in
       Lambda (var, res_type)
+
+let rec replace_type_expr_ty_vars (type_expr : Ast.Type_expr.t) =
+  let open State.Result.Let_syntax in
+  let new_name name =
+    let%bind.State curr_level = get_level in
+    let%bind state = State.Result.get in
+    let%bind new_name = State.map gensym ~f:Result.return in
+    let type_vars =
+      Lowercase.Map.set state.type_vars ~key:name ~data:(new_name, curr_level)
+    in
+    let%map () = State.Result.put { state with type_vars } in
+    Qualified.Unqualified new_name
+  in
+  let map_qualified qualified =
+    match qualified with
+    | Qualified.Qualified _ -> return qualified
+    | Qualified.Unqualified name -> (
+        match%bind.State lookup_type ~type_var:false qualified with
+        | Ok _ -> return qualified
+        | Error _ -> (
+            let%bind state = State.Result.get in
+            match Lowercase.Map.find state.type_vars name with
+            | Some (existing_name, level) ->
+                let%bind.State curr_level = get_level in
+                if level < curr_level then
+                  return (Qualified.Unqualified existing_name)
+                else new_name name
+            | None -> new_name name))
+  in
+  match type_expr with
+  | Ast.Type_expr.Pointer x ->
+      let%map x = replace_type_expr_ty_vars x in
+      Ast.Type_expr.Pointer x
+  | Ast.Type_expr.Tuple list ->
+      let%map list =
+        State.Result.all (List.map list ~f:replace_type_expr_ty_vars)
+      in
+      Ast.Type_expr.Tuple list
+  | Ast.Type_expr.Single s ->
+      let%map s = map_qualified s in
+      Ast.Type_expr.Single s
+  | Ast.Type_expr.Multi (a, qualified) ->
+      let%map a = replace_type_expr_ty_vars a in
+      Ast.Type_expr.Multi (a, qualified)
+
+let replace_type_expr_value_tag (ty : Ast.Value_tag.t) =
+  let open State.Result.Let_syntax in
+  let%map type_expr =
+    match ty.type_expr with
+    | None -> return None
+    | Some type_expr ->
+        let%map type_expr = replace_type_expr_ty_vars type_expr in
+        Some type_expr
+  in
+  { ty with type_expr }
+
+let rec replace_ty_vars_binding (binding : Ast.Binding.t) =
+  let open State.Result.Let_syntax in
+  match binding with
+  | Ast.Binding.Typed (binding, value_tag) ->
+      let%bind binding = replace_ty_vars_binding binding in
+      let%map value_tag = replace_type_expr_value_tag value_tag in
+      Ast.Binding.Typed (binding, value_tag)
+  | _ -> return binding
+
+let rec replace_user_ty_vars expr =
+  let open State.Result.Let_syntax in
+  match expr with
+  | Ast.Node _ -> return expr
+  | If (pred, then_, else_) ->
+      let%bind pred = replace_user_ty_vars pred in
+      let%bind () = incr_level in
+      let%bind then_ = replace_user_ty_vars then_ in
+      let%bind else_ = replace_user_ty_vars else_ in
+      let%map () = decr_level in
+      Ast.If (pred, then_, else_)
+  | App (func, arg) ->
+      let%bind func = replace_user_ty_vars func in
+      let%map arg = replace_user_ty_vars arg in
+      Ast.App (func, arg)
+  | Typed (expr, ty) ->
+      let%bind expr = replace_user_ty_vars expr in
+      let%map ty = replace_type_expr_value_tag ty in
+      Ast.Typed (expr, ty)
+  | Let_in (binding, expr1, expr2) ->
+      let%bind binding = replace_ty_vars_binding binding in
+      let%bind expr1 = replace_user_ty_vars expr1 in
+      let%bind () = incr_level in
+      let%bind expr2 = replace_user_ty_vars expr2 in
+      let%map () = decr_level in
+      Ast.Let_in (binding, expr1, expr2)
+  | Match (expr1, cases) ->
+      let%bind expr1 = replace_user_ty_vars expr1 in
+      let%bind () = incr_level in
+      let%bind cases =
+        State.Result.all
+          (List.map cases ~f:(fun (binding, expr2) ->
+               let%bind binding = replace_ty_vars_binding binding in
+               let%map expr2 = replace_user_ty_vars expr2 in
+               (binding, expr2)))
+      in
+      let%map () = decr_level in
+      Ast.Match (expr1, cases)
+  | Lambda (binding, body) ->
+      let%bind binding = replace_ty_vars_binding binding in
+      let%bind () = incr_level in
+      let%bind body = replace_user_ty_vars body in
+      let%map () = decr_level in
+      Ast.Lambda (binding, body)
