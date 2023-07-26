@@ -1024,6 +1024,26 @@ let apply_substs mono =
          let mono, _ = Mono_ufds.find state.mono_ufds (Weak mono) in
          Some mono))
 
+let lookup_in_type_proof mono ~look_for =
+  let open State.Result.Let_syntax in
+  match get_type_proof mono with
+  | None -> State.Result.error [%message "can't find type proof" (mono : mono)]
+  | Some (_, map, _) -> (
+      match Lowercase.Map.find map look_for with
+      | Some x -> return x
+      | None ->
+          State.Result.error
+            [%message
+              "failed to find in type proof"
+                (look_for : Lowercase.t)
+                (mono : mono)])
+
+let rec mono_of_poly_no_inst poly =
+  match poly with Mono mono -> mono | Forall (_, r) -> mono_of_poly_no_inst r
+
+exception Field_left_only of string
+exception Field_right_only of string
+
 let rec gen_binding_ty_vars ~initial_vars ~(binding : Ast.Binding.t) :
     (mono * Lowercase.t list) state_result_m =
   let open State.Result.Let_syntax in
@@ -1082,48 +1102,44 @@ let rec gen_binding_ty_vars ~initial_vars ~(binding : Ast.Binding.t) :
       let%map () = pop_module in
       (Tuple monos, List.concat [ vars; initial_vars ])
   | Ast.Binding.Record qualified_map ->
-      let%bind field_map, poly = lookup_record qualified_map in
-      let%bind mono_searched = inst_result poly in
       let qualifications, record = Qualified.split qualified_map in
       let%bind () = open_module qualifications in
+      let%bind field_map, poly = lookup_record qualified_map in
+      let%bind mono_searched = inst_result poly in
+      let%bind field_map =
+        try
+          return
+          @@ Lowercase.Map.merge record field_map ~f:(fun ~key -> function
+               | `Both x -> Some x
+               | `Left _ -> raise (Field_left_only key)
+               | `Right _ -> raise (Field_right_only key))
+        with
+        | Field_left_only key ->
+            State.Result.error
+              [%message
+                "Field in pattern is not present in type" (key : Lowercase.t)]
+        | Field_right_only key ->
+            State.Result.error
+              [%message "Field is not present in pattern" (key : Lowercase.t)]
+      in
       let%bind vars_list =
-        Lowercase.Map.fold record ~init:(State.Result.return [])
-          ~f:(fun ~key:field ~data:binding acc ->
+        Lowercase.Map.fold field_map ~init:(State.Result.return [])
+          ~f:(fun ~key:_ ~data:(binding, poly) acc ->
             let%bind vars_list = acc in
-            let%bind poly =
-              match Lowercase.Map.find field_map field with
-              | None ->
-                  State.Result.error
-                    [%message "Unknown field" (field : Lowercase.t)]
-              | Some poly -> State.Result.return poly
+            let mono = mono_of_poly_no_inst poly in
+            let%bind mono =
+              map_ty_vars_m mono ~f:(fun v ->
+                  lookup_in_type_proof mono_searched ~look_for:v)
             in
-            let%bind mono_record = inst_result poly in
-            let%bind mono, vars =
+            let%bind mono', vars =
               gen_binding_ty_vars ~initial_vars:[] ~binding
             in
-            let%map () = unify mono mono_record in
+            let%map () = unify mono mono' in
             vars :: vars_list)
       in
       let res_vars = List.concat (List.rev vars_list) in
       let%map () = pop_module in
       (mono_searched, List.concat [ res_vars; initial_vars ])
-
-let lookup_in_type_proof mono ~look_for =
-  let open State.Result.Let_syntax in
-  match get_type_proof mono with
-  | None -> State.Result.error [%message "can't find type proof" (mono : mono)]
-  | Some (_, map, _) -> (
-      match Lowercase.Map.find map look_for with
-      | Some x -> return x
-      | None ->
-          State.Result.error
-            [%message
-              "failed to find in type proof"
-                (look_for : Lowercase.t)
-                (mono : mono)])
-
-let rec mono_of_poly_no_inst poly =
-  match poly with Mono mono -> mono | Forall (_, r) -> mono_of_poly_no_inst r
 
 let gen_var var =
   let open State.Result.Let_syntax in
@@ -1160,17 +1176,15 @@ let rec mono_of_node node =
       let%bind mono_res = inst_result poly_res in
       let field_list = Lowercase.Map.to_alist field_map in
       (* lookup the tyvar in the map thingo in mono_res *)
-      let%bind field_monos =
-        List.map field_list ~f:(fun (_, poly) ->
+      let%bind field_mono_map =
+        List.map field_list ~f:(fun (field, poly) ->
             let mono = mono_of_poly_no_inst poly in
-            map_ty_vars_m mono ~f:(fun v ->
-                lookup_in_type_proof mono_res ~look_for:v))
-        |> State.Result.all
-      in
-      let field_mono_map =
-        List.map2_exn field_list field_monos ~f:(fun (field, _) mono ->
+            let%map mono =
+              map_ty_vars_m mono ~f:(fun v ->
+                  lookup_in_type_proof mono_res ~look_for:v)
+            in
             (field, mono))
-        |> Lowercase.Map.of_alist_exn
+        |> State.Result.all >>| Lowercase.Map.of_alist_exn
       in
       let%bind () =
         Lowercase.Map.fold record ~init:(State.Result.return ())
@@ -1276,27 +1290,40 @@ and process_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono :
       let%map () = pop_module in
       (Tuple monos, List.concat [ vars; initial_vars ])
   | Ast.Binding.Record qualified_map ->
+      let qualifications, record = Qualified.split qualified_map in
+      let%bind () = open_module qualifications in
       let%bind field_map, poly = lookup_record qualified_map in
       let%bind mono_searched = inst_result poly in
       let%bind () = unify mono_searched mono in
-      let qualifications, record = Qualified.split qualified_map in
-      (* | Record of (Lowercase.t * (mono * [ `Mutable | `Immutable ])) List.t *)
-      let%bind () = open_module qualifications in
+      let%bind field_map =
+        try
+          return
+          @@ Lowercase.Map.merge record field_map ~f:(fun ~key -> function
+               | `Both x -> Some x
+               | `Left _ -> raise (Field_left_only key)
+               | `Right _ -> raise (Field_right_only key))
+        with
+        | Field_left_only key ->
+            State.Result.error
+              [%message
+                "Field in pattern is not present in type" (key : Lowercase.t)]
+        | Field_right_only key ->
+            State.Result.error
+              [%message "Field is not present in pattern" (key : Lowercase.t)]
+      in
       let%bind vars_list =
-        Lowercase.Map.fold record ~init:(State.Result.return [])
-          ~f:(fun ~key:field ~data:binding acc ->
+        Lowercase.Map.fold field_map ~init:(State.Result.return [])
+          ~f:(fun ~key:_ ~data:(binding, poly) acc ->
             let%bind vars_list = acc in
-            let%bind poly =
-              match Lowercase.Map.find field_map field with
-              | None ->
-                  State.Result.error
-                    [%message "Unknown field" (field : Lowercase.t)]
-              | Some poly -> State.Result.return poly
+            let mono = mono_of_poly_no_inst poly in
+            let%bind mono =
+              map_ty_vars_m mono ~f:(fun v ->
+                  lookup_in_type_proof mono_searched ~look_for:v)
             in
-            let%bind mono = inst_result poly in
-            let%map _, vars =
+            let%bind mono', vars =
               process_binding ~act_on_var ~initial_vars:[] ~binding ~mono
             in
+            let%map () = unify mono' mono in
             vars :: vars_list)
       in
       let res_vars = List.concat (List.rev vars_list) in
@@ -1467,57 +1494,3 @@ let replace_type_expr_value_tag (ty : Ast.Value_tag.t) =
         Some type_expr
   in
   { ty with type_expr }
-
-(* let rec replace_ty_vars_binding (binding : Ast.Binding.t) = *)
-(*   let open State.Result.Let_syntax in *)
-(*   match binding with *)
-(*   | Ast.Binding.Typed (binding, value_tag) -> *)
-(*       let%bind binding = replace_ty_vars_binding binding in *)
-(*       let%map value_tag = replace_type_expr_value_tag value_tag in *)
-(*       Ast.Binding.Typed (binding, value_tag) *)
-(*   | _ -> return binding *)
-
-(* let rec replace_user_ty_vars expr = *)
-(*   let open State.Result.Let_syntax in *)
-(*   match expr with *)
-(*   | Ast.Node _ -> return expr *)
-(*   | If (pred, then_, else_) -> *)
-(*       let%bind pred = replace_user_ty_vars pred in *)
-(*       let%bind () = incr_level in *)
-(*       let%bind then_ = replace_user_ty_vars then_ in *)
-(*       let%bind else_ = replace_user_ty_vars else_ in *)
-(*       let%map () = decr_level in *)
-(*       Ast.If (pred, then_, else_) *)
-(*   | App (func, arg) -> *)
-(*       let%bind func = replace_user_ty_vars func in *)
-(*       let%map arg = replace_user_ty_vars arg in *)
-(*       Ast.App (func, arg) *)
-(*   | Typed (expr, ty) -> *)
-(*       let%bind expr = replace_user_ty_vars expr in *)
-(*       let%map ty = replace_type_expr_value_tag ty in *)
-(*       Ast.Typed (expr, ty) *)
-(*   | Let_in (binding, expr1, expr2) -> *)
-(*       let%bind binding = replace_ty_vars_binding binding in *)
-(*       let%bind expr1 = replace_user_ty_vars expr1 in *)
-(*       let%bind () = incr_level in *)
-(*       let%bind expr2 = replace_user_ty_vars expr2 in *)
-(*       let%map () = decr_level in *)
-(*       Ast.Let_in (binding, expr1, expr2) *)
-(*   | Match (expr1, cases) -> *)
-(*       let%bind expr1 = replace_user_ty_vars expr1 in *)
-(*       let%bind () = incr_level in *)
-(*       let%bind cases = *)
-(*         State.Result.all *)
-(*           (List.map cases ~f:(fun (binding, expr2) -> *)
-(*                let%bind binding = replace_ty_vars_binding binding in *)
-(*                let%map expr2 = replace_user_ty_vars expr2 in *)
-(*                (binding, expr2))) *)
-(*       in *)
-(*       let%map () = decr_level in *)
-(*       Ast.Match (expr1, cases) *)
-(*   | Lambda (binding, body) -> *)
-(*       let%bind binding = replace_ty_vars_binding binding in *)
-(*       let%bind () = incr_level in *)
-(*       let%bind body = replace_user_ty_vars body in *)
-(*       let%map () = decr_level in *)
-(*       Ast.Lambda (binding, body) *)

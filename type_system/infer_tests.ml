@@ -382,7 +382,7 @@ let%expect_test "last_list_record_occurs" =
            in last last |};
       ];
   [%expect
-    {| (error ("occurs check failed" (a a0) (mono (Lambda (TyVar a0) (TyVar k0))))) |}]
+    {| (error ("occurs check failed" (a a0) (mono (Lambda (TyVar a0) (TyVar g0))))) |}]
 
 let%expect_test "head nonempty list" =
   infer_type_of_expr ~print_state:false
@@ -413,20 +413,6 @@ let%expect_test "head list value" =
            head (Nonempty_cons (1, None))|};
       ];
   [%expect {| ((named_type (Unqualified int)) (map ())) |}]
-
-let%expect_test "head record value" =
-  infer_type_of_expr ~print_state:false
-    ~programs:
-      [
-        {| let head =
-             fun l -> match l with
-             | { value : x; next : None } -> x
-             | { value : x; next : Some y } -> x
-           in
-           head { value : 1; next : Some &{ value : 2; next : None } } |};
-      ];
-  [%expect {| (TyVar s0) |}]
-(* HERE *)
 
 let%expect_test "mutual recursion" =
   infer_type_of_expr ~print_state:false
@@ -480,7 +466,7 @@ let%expect_test "recursive last not pointer" =
     (error
      ("failed to unify types"
       (first
-       (Pointer (Recursive_constructor ((Unqualified node) ((a (TyVar l0))) 0))))
+       (Pointer (Recursive_constructor ((Unqualified node) ((a (TyVar h0))) 0))))
       (second
        (Record ((Unqualified node) ((a (Abstract ((Unqualified int) () 0)))) 1)
         ((value ((Abstract ((Unqualified int) () 0)) Immutable))
@@ -498,35 +484,6 @@ let%expect_test "recursive last not pointer" =
                 (Recursive_constructor
                  ((Unqualified node) ((a (Abstract ((Unqualified int) () 0)))) 0)))))))
            Mutable))))))) |}]
-
-let%expect_test "recursive last" =
-  infer_type_of_expr ~print_state:false
-    ~programs:
-      [
-        {| let rec last =
-             fun l -> match l with
-             | { value : x; next : None } -> x
-             | { value : _; next : Some &y } -> last y
-           in last |};
-      ];
-  [%expect
-    {|
-      (Lambda ((named_type (Unqualified node)) (map ((a (TyVar h0))))) (TyVar l0)) |}]
-(* FIXME *)
-
-let%expect_test "recursive last value" =
-  infer_type_of_expr ~print_state:false
-    ~programs:
-      [
-        {| let rec last =
-             fun l -> match l with
-             | { value : x; next : None } -> x
-             | { value : _; next : Some &y } -> last y in
-           last { value : 1; next : Some &{ value : 2; next : None } } |};
-      ];
-  [%expect {|
-    (TyVar t0) |}]
-(* FIXME *)
 
 let%expect_test "type annot1" =
   infer_type_of_expr ~print_state:false
@@ -546,23 +503,6 @@ let%expect_test "type annot1" =
     (error
      ("types failed to unify" (first (Unqualified int))
       (second (Unqualified string)))) |}]
-
-let%expect_test "recursive last value keeps type" =
-  infer_type_of_expr ~print_state:false
-    ~programs:
-      [
-        {| let rec last =
-             fun l -> match l with
-             | { value : x; next : None } -> x
-             | { value : _; next : Some y } -> last l
-           in
-           let (=) = fun (x : string) (y : string) -> true in
-           let x = last { value : 1; next : Some &{ value : 2; next : None } } in
-           let y = "hi" in
-           x = y |};
-      ];
-  [%expect {| ((named_type (Unqualified bool)) (map ())) |}]
-(* HERE *)
 
 let%expect_test "node value" =
   infer_type_of_expr ~print_state:false
@@ -704,3 +644,87 @@ let%expect_test "head nonempty list rec needless" =
     {|
     (Lambda ((named_type (Unqualified nonempty_list)) (map ((a (TyVar j0)))))
      (TyVar j0)) |}]
+
+let%expect_test "record create" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let singleton =
+             fun x -> { value : x; next : None }
+           in
+           singleton |};
+      ];
+  [%expect
+    {| (Lambda (TyVar d0) ((named_type (Unqualified node)) (map ((a (TyVar d0)))))) |}]
+
+let%expect_test "head record destruct" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let head =
+             fun { value : x; next : _ } -> x
+           in
+           head |};
+      ];
+  [%expect
+    {| (Lambda ((named_type (Unqualified node)) (map ((a (TyVar c0))))) (TyVar c0)) |}]
+
+let%expect_test "head record value" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let head =
+             fun l -> match l with
+             | { value : x; next : None } -> x
+             | { value : x; next : Some y } -> x
+           in
+           head { value : 1; next : Some &{ value : 2; next : None } } |};
+      ];
+  [%expect {| ((named_type (Unqualified int)) (map ())) |}]
+
+let%expect_test "recursive last" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let rec last =
+             fun l -> match l with
+             | { value : x; next : None } -> x
+             | { value : _; next : Some &y } -> last y
+           in last |};
+      ];
+  [%expect
+    {|
+      (Lambda ((named_type (Unqualified node)) (map ((a (TyVar h0))))) (TyVar h0)) |}]
+
+let%expect_test "recursive last value" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let rec last =
+             fun l -> match l with
+             | { value : x; next : None } -> x
+             | { value : _; next : Some &y } -> last y in
+           last { value : 1; next : Some &{ value : 2; next : None } } |};
+      ];
+  [%expect {|
+    ((named_type (Unqualified int)) (map ())) |}]
+
+let%expect_test "recursive last value keeps type" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let rec last =
+             fun l -> match l with
+             | { value : x; next : None } -> x
+             | { value : _; next : Some y } -> last l
+           in
+           let (=) = fun (x : string) (y : string) -> true in
+           let x = last { value : 1; next : Some &{ value : 2; next : None } } in
+           let y = "hi" in
+           x = y |};
+      ];
+  [%expect
+    {|
+    (error
+     ("types failed to unify" (first (Unqualified string))
+      (second (Unqualified int)))) |}]
