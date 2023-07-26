@@ -77,6 +77,7 @@ module Binding = struct
       | Tuple of t Tuple.t Qualified.t
       | Typed of t * Value_tag.t
       | Renamed of t * Lowercase.t
+      | Pointer of t
     [@@deriving sexp, equal, hash, compare, variants]
   end
 

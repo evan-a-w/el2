@@ -265,6 +265,7 @@ let literal_binding_p : Ast.Binding.t parser =
 let rec binding_p () : Ast.Binding.t parser =
   first
     [
+      pointer_binding_p ();
       constructor_binding_p ();
       tuple_binding_p ();
       record_binding_p ();
@@ -274,6 +275,11 @@ let rec binding_p () : Ast.Binding.t parser =
       literal_binding_p;
     ]
   |> map_error ~f:(fun _ -> [%message "Expected binding"])
+
+and pointer_binding_p () =
+  let%bind () = eat_token (Token.Symbol "&") in
+  let%map inner = binding_p () in
+  Ast.Binding.Pointer inner
 
 and renamed_binding_p () =
   let%bind () = eat_token Token.LParen in

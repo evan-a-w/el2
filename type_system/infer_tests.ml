@@ -506,31 +506,13 @@ let%expect_test "recursive last" =
         {| let rec last =
              fun l -> match l with
              | { value : x; next : None } -> x
-             | { value : _; next : Some y } -> last y
+             | { value : _; next : Some &y } -> last y
            in last |};
       ];
   [%expect
     {|
-      (error
-       ("failed to unify types"
-        (first
-         (Record ((Unqualified node) ((a (TyVar c0))) 1)
-          ((value ((TyVar c0) Immutable))
-           (next
-            ((Enum
-              ((Unqualified option)
-               ((a
-                 (Pointer
-                  (Recursive_constructor ((Unqualified node) ((a (TyVar c0))) 0)))))
-               1)
-              ((None ())
-               (Some
-                ((Pointer
-                  (Recursive_constructor ((Unqualified node) ((a (TyVar c0))) 0)))))))
-             Mutable)))))
-        (second
-         (Pointer (Recursive_constructor ((Unqualified node) ((a (TyVar h0))) 0)))))) |}]
-(* HERE *)
+      (Lambda ((named_type (Unqualified node)) (map ((a (TyVar h0))))) (TyVar l0)) |}]
+(* FIXME *)
 
 let%expect_test "recursive last value" =
   infer_type_of_expr ~print_state:false
@@ -539,31 +521,12 @@ let%expect_test "recursive last value" =
         {| let rec last =
              fun l -> match l with
              | { value : x; next : None } -> x
-             | { value : _; next : Some y } -> last y in
+             | { value : _; next : Some &y } -> last y in
            last { value : 1; next : Some &{ value : 2; next : None } } |};
       ];
-  [%expect
-    {|
-    (error
-     ("failed to unify types"
-      (first
-       (Record ((Unqualified node) ((a (TyVar c0))) 1)
-        ((value ((TyVar c0) Immutable))
-         (next
-          ((Enum
-            ((Unqualified option)
-             ((a
-               (Pointer
-                (Recursive_constructor ((Unqualified node) ((a (TyVar c0))) 0)))))
-             1)
-            ((None ())
-             (Some
-              ((Pointer
-                (Recursive_constructor ((Unqualified node) ((a (TyVar c0))) 0)))))))
-           Mutable)))))
-      (second
-       (Pointer (Recursive_constructor ((Unqualified node) ((a (TyVar h0))) 0)))))) |}]
-(* HERE *)
+  [%expect {|
+    (TyVar t0) |}]
+(* FIXME *)
 
 let%expect_test "type annot1" =
   infer_type_of_expr ~print_state:false
@@ -690,7 +653,8 @@ let%expect_test "rec tail list" =
            in
            tail |};
       ];
-  [%expect {|
+  [%expect
+    {|
     (Lambda ((named_type (Unqualified list)) (map ((a (TyVar c0)))))
      ((named_type (Unqualified option)) (map ((a (TyVar c0)))))) |}]
 
@@ -719,7 +683,8 @@ let%expect_test "rec tail list value" =
            in
            tail (Cons (1, Nil)) |};
       ];
-  [%expect {|
+  [%expect
+    {|
     ((named_type (Unqualified option))
      (map ((a ((named_type (Unqualified int)) (map ())))))) |}]
 
@@ -735,6 +700,7 @@ let%expect_test "head nonempty list rec needless" =
            in
            head |};
       ];
-  [%expect {|
+  [%expect
+    {|
     (Lambda ((named_type (Unqualified nonempty_list)) (map ((a (TyVar j0)))))
      (TyVar j0)) |}]

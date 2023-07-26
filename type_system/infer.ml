@@ -1062,6 +1062,9 @@ let rec gen_binding_ty_vars ~initial_vars ~(binding : Ast.Binding.t) :
           let%bind mono, vars = gen_binding_ty_vars ~initial_vars ~binding in
           let%map () = unify tagged_mono mono in
           (mono, vars))
+  | Ast.Binding.Pointer binding ->
+      let%map mono, vars = gen_binding_ty_vars ~initial_vars ~binding in
+      (Pointer mono, vars)
   | Ast.Binding.Renamed (binding, var) ->
       let%bind mono, vars = gen_binding_ty_vars ~initial_vars ~binding in
       let%map () = add_var var (Mono mono) in
@@ -1240,6 +1243,13 @@ and process_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono :
       in
       let%map () = act_on_var var mono in
       (mono, var :: vars)
+  | Ast.Binding.Pointer binding ->
+      let%bind ty_var = gen_ty_var in
+      let%bind () = unify (Pointer ty_var) mono in
+      let%map mono, vars =
+        process_binding ~act_on_var ~initial_vars ~binding ~mono:ty_var
+      in
+      (mono, vars)
   | Ast.Binding.Tuple qualified ->
       let qualifications, tuple = Qualified.split qualified in
       let%bind () = open_module qualifications in
