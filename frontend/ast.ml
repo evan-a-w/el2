@@ -134,11 +134,13 @@ and expr =
       expr
       * expr (* these should just be node | App but that makes it more clunky *)
   | Let_in of Binding.t * expr * expr
+  (* | Rec of (Binding.t * expr * expr) list [@sexp.list] *)
   | Match of expr * (Binding.t * expr) list
   | Typed of expr * Value_tag.t
 [@@deriving sexp, equal, hash, compare]
 
 and toplevel =
+  (* | Type_def of Type_def_lit.t type_description list [@sexp.list] *)
   | Type_def of Type_def_lit.t type_description
   | Let of let_def
   (* TODO: | Module_type of Uppercase.t * module_sig *)

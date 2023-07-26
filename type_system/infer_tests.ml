@@ -112,14 +112,25 @@ let%expect_test "type_expr multi lit" =
               ((Unqualified list) ((a (Abstract ((Unqualified int) () 0)))) 0))))))
          (Nil ())))) |}]
 
+let define_types ~type_exprs =
+  let action type_expr =
+    let%bind type_name, type_def, ast_tags =
+      Parser.try_parse (Parser.typedef_p ()) type_expr |> State.return
+    in
+    process_type_def { type_name; type_def; ast_tags }
+  in
+  State.Result.all_unit (List.map type_exprs ~f:action)
+
+let type_exprs =
+  [
+    {| type a option = None | Some a |};
+    {| type a node = { value : a; mutable next : &(a node) option } |};
+    {| type a list = Cons (a, a list) | Nil |};
+  ]
+
 let infer_type_of_expr ~programs ~print_state =
   let action program : unit state_result_m =
-    let%bind type_name, type_def, ast_tags =
-      Parser.try_parse (Parser.typedef_p ())
-        {| type a list = Cons (a, a list) | Nil |}
-      |> State.return
-    in
-    let%bind () = process_type_def { type_name; type_def; ast_tags } in
+    let%bind () = define_types ~type_exprs in
     let%bind expr = Parser.try_parse Parser.parse_one program |> State.return in
     (* let%bind expr = replace_user_ty_vars expr in *)
     (* print_s [%message (expr : Ast.expr)]; *)
@@ -317,3 +328,46 @@ let%expect_test "let_expr_tag1" =
      ("types failed to unify" (first (Unqualified list))
       (second (Unqualified int))))
     (error "Failed to parse (b expr)") |}]
+
+let%expect_test "type_def_record" =
+  let lit =
+    Ast.(
+      Type_expr.(
+        Qualified.(Multi (Single (Unqualified "int"), Unqualified "node"))))
+  in
+  let action =
+    let%bind () = define_types ~type_exprs in
+    type_of_type_expr lit
+  in
+  let res = State.Result.run action ~state:empty_state |> fst in
+  print_s [%message (res : (mono, Sexp.t) Result.t)];
+  [%expect
+    {|
+    (res
+     (Ok
+      (Record ((Unqualified node) ((a (Abstract ((Unqualified int) () 0)))) 1)
+       ((value ((Abstract ((Unqualified int) () 0)) Immutable))
+        (next
+         ((Enum
+           ((Unqualified option)
+            ((a
+              (Pointer
+               (Recursive_constructor
+                ((Unqualified node) ((a (Abstract ((Unqualified int) () 0)))) 0)))))
+            1)
+           ((None ())
+            (Some
+             ((Pointer
+               (Recursive_constructor
+                ((Unqualified node) ((a (Abstract ((Unqualified int) () 0)))) 0)))))))
+          Mutable)))))) |}]
+
+let%expect_test "last_list_record" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let last = fun f l -> match l with
+            | { value : x; next : None } -> x
+            | { value : _; next : Some y } -> f f y
+           in last last |};
+      ]
