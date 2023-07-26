@@ -370,4 +370,5 @@ let%expect_test "last_list_record" =
             | { value : x; next : None } -> x
             | { value : _; next : Some y } -> f f y
            in last last |};
-      ]
+      ];
+  [%expect {| (error ("occurs check failed" (a a0) (mono (Lambda (TyVar a0) (TyVar k0))))) |}]
