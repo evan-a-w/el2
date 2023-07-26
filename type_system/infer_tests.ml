@@ -131,6 +131,7 @@ let type_exprs =
     {| type a node = { value : a; mutable next : &(a node) option } |};
     {| type a list = Cons (a, a list) | Nil |};
     {| type a ref_list = Ref_cons (&a, a ref_list) | Ref_nil |};
+    {| type a nonempty_list = Nonempty_cons (a, a nonempty_list option) |};
   ]
 
 let infer_type_of_expr ~programs ~print_state =
@@ -148,9 +149,7 @@ let infer_type_of_expr ~programs ~print_state =
       match
         (print_state, State.Result.run (action program) ~state:empty_state)
       with
-      | true, (Ok (), state) ->
-          let mono_ufds = show_mono_ufds state.mono_ufds in
-          print_s [%message (mono_ufds : Sexp.t)]
+      | true, (Ok (), state) -> print_s [%message (state : state)]
       | true, (Error error, state) ->
           print_s [%message (error : Sexp.t) (state : state)]
       | false, (Ok (), _) -> ()
@@ -257,11 +256,16 @@ let%expect_test "let_expr1" =
         {| let x = (fun x -> 1) in x 1 |};
         {| let x = fun y -> y in x |};
         {| (fun x -> match x with | Nil -> 1 | Cons (1, Cons (2, Nil)) -> 2) |};
+        {| (fun x -> match x with | Nil -> 1 | Cons (_, Cons (y, Nil)) -> y) |};
       ];
   [%expect
     {|
     ((named_type (Unqualified int)) (map ()))
     (Lambda (TyVar b0) (TyVar b0))
+    (Lambda
+     ((named_type (Unqualified list))
+      (map ((a ((named_type (Unqualified int)) (map ()))))))
+     ((named_type (Unqualified int)) (map ())))
     (Lambda
      ((named_type (Unqualified list))
       (map ((a ((named_type (Unqualified int)) (map ()))))))
@@ -380,24 +384,55 @@ let%expect_test "last_list_record_occurs" =
   [%expect
     {| (error ("occurs check failed" (a a0) (mono (Lambda (TyVar a0) (TyVar k0))))) |}]
 
-let%expect_test "recursive last" =
+let%expect_test "head nonempty list" =
   infer_type_of_expr ~print_state:false
     ~programs:
       [
-        {| let rec last =
+        {| let id = fun x -> x in
+           let head =
              fun l -> match l with
-             | { value : x; next : None } -> x
-             | { value : _; next : Some y } -> last l
-           in last |};
+             | Nonempty_cons (x, None) -> x
+             | Nonempty_cons (x, Some (Nonempty_cons (y, _))) -> id y
+           in
+           head |};
       ];
   [%expect
-    {| (Lambda ((named_type (Unqualified node)) (map ((a (TyVar m0))))) (TyVar l0)) |}]
+    {|
+    (Lambda ((named_type (Unqualified nonempty_list)) (map ((a (TyVar j0)))))
+     (TyVar j0)) |}]
+
+let%expect_test "head list value" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let head =
+             fun l -> match l with
+             | Nonempty_cons (x, None) -> x
+             | Nonempty_cons (x, Some (Nonempty_cons (y, _))) -> y
+           in
+           head (Nonempty_cons (1, None))|};
+      ];
+  [%expect {| ((named_type (Unqualified int)) (map ())) |}]
+
+let%expect_test "head record value" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let head =
+             fun l -> match l with
+             | { value : x; next : None } -> x
+             | { value : x; next : Some y } -> x
+           in
+           head { value : 1; next : Some &{ value : 2; next : None } } |};
+      ];
+  [%expect {| (TyVar s0) |}]
+(* HERE *)
 
 let%expect_test "mutual recursion" =
   infer_type_of_expr ~print_state:false
     ~programs:
       [
-        {| let rec (-) = fun a b -> 0
+        {| let rec (-) = fun (a : int) (b : int) -> 0
            and is_even = fun x ->
              match x with
              | 0 -> true
@@ -445,22 +480,57 @@ let%expect_test "recursive last not pointer" =
     (error
      ("failed to unify types"
       (first
-       (Pointer (Recursive_constructor ((Unqualified node) ((a (TyVar o0))) 0))))
+       (Pointer (Recursive_constructor ((Unqualified node) ((a (TyVar l0))) 0))))
       (second
-       (Record ((Unqualified node) ((a (TyVar q0))) 1)
-        ((value ((TyVar q0) Immutable))
+       (Record ((Unqualified node) ((a (Abstract ((Unqualified int) () 0)))) 1)
+        ((value ((Abstract ((Unqualified int) () 0)) Immutable))
          (next
           ((Enum
             ((Unqualified option)
              ((a
                (Pointer
-                (Recursive_constructor ((Unqualified node) ((a (TyVar q0))) 0)))))
+                (Recursive_constructor
+                 ((Unqualified node) ((a (Abstract ((Unqualified int) () 0)))) 0)))))
              1)
             ((None ())
              (Some
               ((Pointer
-                (Recursive_constructor ((Unqualified node) ((a (TyVar q0))) 0)))))))
+                (Recursive_constructor
+                 ((Unqualified node) ((a (Abstract ((Unqualified int) () 0)))) 0)))))))
            Mutable))))))) |}]
+
+let%expect_test "recursive last" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let rec last =
+             fun l -> match l with
+             | { value : x; next : None } -> x
+             | { value : _; next : Some y } -> last y
+           in last |};
+      ];
+  [%expect
+    {|
+      (error
+       ("failed to unify types"
+        (first
+         (Record ((Unqualified node) ((a (TyVar c0))) 1)
+          ((value ((TyVar c0) Immutable))
+           (next
+            ((Enum
+              ((Unqualified option)
+               ((a
+                 (Pointer
+                  (Recursive_constructor ((Unqualified node) ((a (TyVar c0))) 0)))))
+               1)
+              ((None ())
+               (Some
+                ((Pointer
+                  (Recursive_constructor ((Unqualified node) ((a (TyVar c0))) 0)))))))
+             Mutable)))))
+        (second
+         (Pointer (Recursive_constructor ((Unqualified node) ((a (TyVar h0))) 0)))))) |}]
+(* HERE *)
 
 let%expect_test "recursive last value" =
   infer_type_of_expr ~print_state:false
@@ -469,21 +539,84 @@ let%expect_test "recursive last value" =
         {| let rec last =
              fun l -> match l with
              | { value : x; next : None } -> x
-             | { value : _; next : Some y } -> last l in
+             | { value : _; next : Some y } -> last y in
            last { value : 1; next : Some &{ value : 2; next : None } } |};
       ];
-  [%expect {|
-    (TyVar w0) |}]
+  [%expect
+    {|
+    (error
+     ("failed to unify types"
+      (first
+       (Record ((Unqualified node) ((a (TyVar c0))) 1)
+        ((value ((TyVar c0) Immutable))
+         (next
+          ((Enum
+            ((Unqualified option)
+             ((a
+               (Pointer
+                (Recursive_constructor ((Unqualified node) ((a (TyVar c0))) 0)))))
+             1)
+            ((None ())
+             (Some
+              ((Pointer
+                (Recursive_constructor ((Unqualified node) ((a (TyVar c0))) 0)))))))
+           Mutable)))))
+      (second
+       (Pointer (Recursive_constructor ((Unqualified node) ((a (TyVar h0))) 0)))))) |}]
+(* HERE *)
+
+let%expect_test "type annot1" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let id = fun (y : int) (x : string) -> x in id |};
+        {| let id = fun (y : a) (x : a) -> x in id |};
+        {| let id = fun (y : a) (x : a) -> x in
+           id 1 "hi" |};
+      ];
+  [%expect
+    {|
+    (Lambda ((named_type (Unqualified int)) (map ()))
+     (Lambda ((named_type (Unqualified string)) (map ()))
+      ((named_type (Unqualified string)) (map ()))))
+    (Lambda (TyVar c0) (Lambda (TyVar c0) (TyVar c0)))
+    (error
+     ("types failed to unify" (first (Unqualified int))
+      (second (Unqualified string)))) |}]
+
+let%expect_test "recursive last value keeps type" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let rec last =
+             fun l -> match l with
+             | { value : x; next : None } -> x
+             | { value : _; next : Some y } -> last l
+           in
+           let (=) = fun (x : string) (y : string) -> true in
+           let x = last { value : 1; next : Some &{ value : 2; next : None } } in
+           let y = "hi" in
+           x = y |};
+      ];
+  [%expect {| ((named_type (Unqualified bool)) (map ())) |}]
+(* HERE *)
 
 let%expect_test "node value" =
   infer_type_of_expr ~print_state:false
     ~programs:[ {| { value : 1; next : Some &{ value : 2; next : None } } |} ];
-  [%expect {| ((named_type (Unqualified node)) (map ((a (TyVar a0))))) |}]
+  [%expect
+    {|
+    ((named_type (Unqualified node))
+     (map ((a ((named_type (Unqualified int)) (map ())))))) |}]
 
 let%expect_test "node value fail" =
   infer_type_of_expr ~print_state:false
     ~programs:[ {| { value : 1; next : Some &{ value : "a"; next : None } } |} ];
-  [%expect {| ((named_type (Unqualified node)) (map ((a (TyVar a0))))) |}]
+  [%expect
+    {|
+    (error
+     ("types failed to unify" (first (Unqualified string))
+      (second (Unqualified int)))) |}]
 
 let%expect_test "ref cons succ" =
   infer_type_of_expr ~print_state:false
@@ -528,3 +661,80 @@ let%expect_test "ref cons fl" =
     (error
      ("types failed to unify" (first (Unqualified int))
       (second (Unqualified string)))) |}]
+
+let%expect_test "rec tail nonempty list" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let rec tail =
+             fun l -> match l with
+             | Nonempty_cons (x, None) -> x
+             | Nonempty_cons (_, Some y) -> tail y
+           in
+           tail |};
+      ];
+  [%expect
+    {|
+    (Lambda ((named_type (Unqualified nonempty_list)) (map ((a (TyVar g0)))))
+     (TyVar g0)) |}]
+
+let%expect_test "rec tail list" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let rec tail =
+             fun l -> match l with
+             | Nil -> None
+             | Cons (x, Nil) -> Some x
+             | Cons (_, y) -> tail y
+           in
+           tail |};
+      ];
+  [%expect {|
+    (Lambda ((named_type (Unqualified list)) (map ((a (TyVar c0)))))
+     ((named_type (Unqualified option)) (map ((a (TyVar c0)))))) |}]
+
+let%expect_test "rec tail nonempty list" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let rec tail =
+             fun l -> match l with
+             | Nonempty_cons (x, None) -> x
+             | Nonempty_cons (_, Some y) -> tail y
+           in
+           tail (Nonempty_cons (1, None)) |};
+      ];
+  [%expect {| ((named_type (Unqualified int)) (map ())) |}]
+
+let%expect_test "rec tail list value" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let rec tail =
+             fun l -> match l with
+             | Nil -> None
+             | Cons (x, Nil) -> Some x
+             | Cons (_, y) -> tail y
+           in
+           tail (Cons (1, Nil)) |};
+      ];
+  [%expect {|
+    ((named_type (Unqualified option))
+     (map ((a ((named_type (Unqualified int)) (map ())))))) |}]
+
+let%expect_test "head nonempty list rec needless" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let id = fun x -> x in
+           let rec head =
+             fun l -> match l with
+             | Nonempty_cons (x, None) -> x
+             | Nonempty_cons (x, Some (Nonempty_cons (y, _))) -> id y
+           in
+           head |};
+      ];
+  [%expect {|
+    (Lambda ((named_type (Unqualified nonempty_list)) (map ((a (TyVar j0)))))
+     (TyVar j0)) |}]

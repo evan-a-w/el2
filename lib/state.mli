@@ -46,6 +46,7 @@ module Result : sig
   val get : ('state, 'stop, 'state) t
   val put : 'state -> (unit, 'stop, 'state) t
   val first : ('a, 'error, 'state) t list -> ('a, 'error list, 'state) t
+  val t_of_state : ('state -> 'a * 'state) -> ('a, 'error, 'state) t
   val ( >>= ) : ('a, 'd, 'e) t -> ('a -> ('b, 'd, 'e) t) -> ('b, 'd, 'e) t
   val ( >>| ) : ('a, 'd, 'e) t -> ('a -> 'b) -> ('b, 'd, 'e) t
   val ( <|> ) : ('a, 'd, 'e) t -> ('a, 'd, 'e) t -> ('a, 'd, 'e) t

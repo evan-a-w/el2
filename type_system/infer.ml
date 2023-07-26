@@ -403,6 +403,61 @@ let rec map_ty_vars ~f (mono : mono) =
 and map_type_proof ~f (name, map, num_unfold) =
   (name, Lowercase.Map.map map ~f:(map_ty_vars ~f), num_unfold)
 
+let rec map_ty_vars_m ~f (mono : mono) =
+  let open State.Result.Let_syntax in
+  match mono with
+  | TyVar m -> f m
+  | Weak _ -> return mono
+  | Lambda (a, b) ->
+      let%bind a = map_ty_vars_m ~f a in
+      let%map b = map_ty_vars_m ~f b in
+      Lambda (a, b)
+  | Tuple l ->
+      let%map l = State.Result.all (List.map l ~f:(map_ty_vars_m ~f)) in
+      Tuple l
+  | Record (type_proof, l) ->
+      let%bind type_proof = map_type_proof_m ~f type_proof in
+      let%map l =
+        State.Result.all
+          (List.map l ~f:(fun (x, (y, mut)) ->
+               let%map y = map_ty_vars_m ~f y in
+               (x, (y, mut))))
+      in
+      Record (type_proof, l)
+  | Enum (type_proof, l) ->
+      let%bind type_proof = map_type_proof_m ~f type_proof in
+      let%map l =
+        State.Result.all
+          (List.map l ~f:(fun (x, y) ->
+               let%map y =
+                 match y with
+                 | Some x -> map_ty_vars_m ~f x >>| Option.some
+                 | None -> return None
+               in
+               (x, y)))
+      in
+      Enum (type_proof, l)
+  | Pointer x ->
+      let%map x = map_ty_vars_m ~f x in
+      Pointer x
+  | Recursive_constructor type_proof ->
+      let%map type_proof = map_type_proof_m ~f type_proof in
+      Recursive_constructor type_proof
+  | Abstract type_proof ->
+      let%map type_proof = map_type_proof_m ~f type_proof in
+      Abstract type_proof
+
+and map_type_proof_m ~f (name, map, num_unfold) =
+  let open State.Result.Let_syntax in
+  let%map map =
+    Lowercase.Map.fold map ~init:(return Lowercase.Map.empty)
+      ~f:(fun ~key ~data acc ->
+        let%bind acc = acc in
+        let%map data = map_ty_vars_m ~f data in
+        Lowercase.Map.set acc ~key ~data)
+  in
+  (name, map, num_unfold)
+
 let rec map_weak_vars ~f (mono : mono) =
   match mono with
   | Weak m -> Option.value (f m) ~default:mono
@@ -852,8 +907,6 @@ let rec unify mono1 mono2 =
       (Recursive_constructor p2 | Abstract p2 | Record (p2, _) | Enum (p2, _)) )
     ->
       unify_typr_proof ~unification_error p1 p2
-  | Recursive_constructor _, _ | _, Recursive_constructor _ ->
-      unification_error ()
   | TyVar x, TyVar y when String.equal x y -> State.Result.return ()
   | TyVar x, _ ->
       let%bind () = occurs_check x mono2 in
@@ -1052,6 +1105,31 @@ let rec gen_binding_ty_vars ~initial_vars ~(binding : Ast.Binding.t) :
       let%map () = pop_module in
       (mono_searched, List.concat [ res_vars; initial_vars ])
 
+let lookup_in_type_proof mono ~look_for =
+  let open State.Result.Let_syntax in
+  match get_type_proof mono with
+  | None -> State.Result.error [%message "can't find type proof" (mono : mono)]
+  | Some (_, map, _) -> (
+      match Lowercase.Map.find map look_for with
+      | Some x -> return x
+      | None ->
+          State.Result.error
+            [%message
+              "failed to find in type proof"
+                (look_for : Lowercase.t)
+                (mono : mono)])
+
+let rec mono_of_poly_no_inst poly =
+  match poly with Mono mono -> mono | Forall (_, r) -> mono_of_poly_no_inst r
+
+let gen_var var =
+  let open State.Result.Let_syntax in
+  let%bind value = lookup_var (Qualified.Unqualified var) in
+  let%bind () = pop_var var in
+  let%bind mono = inst_result value in
+  let%bind poly = State.Result.t_of_state (gen mono) in
+  add_var var poly
+
 let rec mono_of_node node =
   let open State.Result.Let_syntax in
   match node with
@@ -1078,16 +1156,20 @@ let rec mono_of_node node =
       in
       let%bind mono_res = inst_result poly_res in
       let field_list = Lowercase.Map.to_alist field_map in
-      let field_polys = List.map field_list ~f:snd in
+      (* lookup the tyvar in the map thingo in mono_res *)
       let%bind field_monos =
-        State.map (inst_many field_polys) ~f:Result.return
+        List.map field_list ~f:(fun (_, poly) ->
+            let mono = mono_of_poly_no_inst poly in
+            map_ty_vars_m mono ~f:(fun v ->
+                lookup_in_type_proof mono_res ~look_for:v))
+        |> State.Result.all
       in
       let field_mono_map =
         List.map2_exn field_list field_monos ~f:(fun (field, _) mono ->
             (field, mono))
         |> Lowercase.Map.of_alist_exn
       in
-      let%map () =
+      let%bind () =
         Lowercase.Map.fold record ~init:(State.Result.return ())
           ~f:(fun ~key:field ~data:expr acc ->
             let%bind () = acc in
@@ -1098,7 +1180,7 @@ let rec mono_of_node node =
                   [%message "Unknown field" (field : Lowercase.t)]
             | Some field_mono -> unify field_mono mono)
       in
-      mono_res
+      apply_substs mono_res
 
 and add_var_mono ~generalize ~value_restriction var mono =
   let open State.Result.Let_syntax in
@@ -1262,28 +1344,34 @@ and mono_of_expr expr =
   | Let_in (Ast.Rec l, expr2) ->
       let%bind bindings =
         State.Result.all
-          (List.map l ~f:(fun (binding, _) ->
-               gen_binding_ty_vars ~initial_vars:[] ~binding >>| snd))
+          (List.map l ~f:(fun (binding, expr) ->
+               let%map _, b = gen_binding_ty_vars ~initial_vars:[] ~binding in
+               (b, value_restriction expr)))
       in
-      let act_on_var expr var mono =
-        let value_restriction = value_restriction expr in
+      let act_on_var var mono =
         let%bind current = lookup_var (Qualified.Unqualified var) in
-        let%bind mono' = inst_result current in
+        let mono' = mono_of_poly_no_inst current in
         let%bind () = unify mono mono' in
-        let%bind poly = poly_of_mono mono ~value_restriction ~generalize:true in
-        add_var var poly
+        add_var var (Mono mono)
       in
       let%bind vars_list =
         State.Result.all
           (List.map l ~f:(fun (binding, expr) ->
-               let act_on_var = act_on_var expr in
                let%bind mono = mono_of_expr expr in
                let%map _, vars =
                  process_binding ~act_on_var ~initial_vars:[] ~binding ~mono
                in
                vars))
       in
+      let%bind () =
+        List.map bindings ~f:(fun (inner, v) ->
+            match v with
+            | false -> return ()
+            | true -> State.Result.all_unit (List.map inner ~f:gen_var))
+        |> State.Result.all_unit
+      in
       let%bind res = mono_of_expr expr2 in
+      let bindings = List.unzip bindings |> fst in
       let%bind () =
         State.Result.all_unit
           (List.map

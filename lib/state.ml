@@ -28,6 +28,7 @@ module Result = struct
   let run (t : (_, _, _) t) ~state = t state
   let get state = (Ok state, state)
   let put state _ = (Ok (), state)
+  let t_of_state = map ~f:(fun x -> Ok x)
 
   let map_error t ~f state =
     match t state with
