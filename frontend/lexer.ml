@@ -22,6 +22,8 @@ let keywords =
     "module";
     "sig";
     "mutable";
+    "rec";
+    "and";
   ]
 
 let is_digit = function '0' .. '9' -> true | _ -> false

@@ -381,18 +381,32 @@ and parse_lambda () : Ast.expr parser =
       let lambda = List.fold xs ~init ~f:(fun acc x -> Ast.Lambda (x, acc)) in
       return lambda
 
-and parse_let () : (Ast.Binding.t * Ast.expr) parser =
-  let%bind () = eat_token (Token.Keyword "let") in
+and parse_let_each () =
   let%bind binding = binding_p () in
   let%bind () = eat_token (Token.Symbol "=") in
-  let%bind expr = parse_expr () in
-  return (binding, expr)
+  let%map expr = parse_expr () in
+  (binding, expr)
+
+and parse_let_def () =
+  let%bind () = eat_token (Token.Keyword "let") in
+  let%bind rec_flag = success (eat_token (Token.Keyword "rec")) in
+  let%bind binding, expr = parse_let_each () in
+  match rec_flag with
+  | false -> return (Ast.Nonrec (binding, expr))
+  | true ->
+      let sep = eat_token (Token.Keyword "and") in
+      let%bind rest =
+        match%bind optional sep with
+        | None -> return []
+        | Some _ -> many_sep1 (parse_let_each ()) ~sep
+      in
+      return (Ast.Rec ((binding, expr) :: rest))
 
 and parse_let_in () : Ast.expr parser =
-  let%bind var, expr = parse_let () in
+  let%bind let_def = parse_let_def () in
   let%bind () = eat_token (Token.Keyword "in") in
   let%bind body = parse_expr () in
-  return (Ast.Let_in (var, expr, body))
+  return (Ast.Let_in (let_def, body))
 
 and parse_if () : Ast.expr parser =
   let%bind () = eat_token (Token.Keyword "if") in
@@ -481,9 +495,6 @@ and parse_pratt ?(min_bp = 0) () : Ast.expr parser =
           inner (Ast.App (Ast.App (single_name_t operator, lhs), rhs))
   in
   inner lhs
-
-and let_def_p () : Ast.let_def parser =
-  parse_let () >>| fun (binding, expr) -> Ast.{ binding; expr }
 
 and struct_p () : Ast.toplevel list parser =
   let%bind () = eat_token (Token.Keyword "struct") in
@@ -638,7 +649,7 @@ and module_def_toplevel_p () : Ast.toplevel parser =
   return (Ast.Module_def { module_description; module_def })
 
 and toplevel_p () : Ast.toplevel parser =
-  let let_toplevel_p = let_def_p () >>| fun x -> Ast.Let x in
+  let let_toplevel_p = parse_let_def () >>| fun x -> Ast.Let x in
   let_toplevel_p <|> typedef_toplevel_p () <|> module_def_toplevel_p ()
 
 and parse_t () : Ast.t parser = many (toplevel_p ())

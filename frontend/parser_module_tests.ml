@@ -28,8 +28,8 @@ let%expect_test "test_simple_module" =
         (module_description ((module_name X) (functor_args ()) (module_sig ())))
         (module_def
          (Struct
-          ((Let ((binding (Name x)) (expr (Node (Literal (Int 1))))))
-           (Let ((binding (Name y)) (expr (Node (Literal (Int 2))))))
+          ((Let (Nonrec ((Name x) (Node (Literal (Int 1))))))
+           (Let (Nonrec ((Name y) (Node (Literal (Int 2))))))
            (Type_def
             ((type_name (Mono t))
              (type_def
@@ -39,8 +39,7 @@ let%expect_test "test_simple_module" =
             (module_description
              ((module_name Y) (functor_args ()) (module_sig ())))
             (module_def
-             (Struct
-              ((Let ((binding (Name y)) (expr (Node (Literal (Int 2))))))))))))))))) |}]
+             (Struct ((Let (Nonrec ((Name y) (Node (Literal (Int 2))))))))))))))))) |}]
 
 let%expect_test "test_simple_module_with_sig" =
   let program =
@@ -89,8 +88,8 @@ let%expect_test "test_simple_module_with_sig" =
                   ((type_expr (Single (Unqualified int))) (ast_tags ()))))))))))))
         (module_def
          (Struct
-          ((Let ((binding (Name x)) (expr (Node (Literal (Int 1))))))
-           (Let ((binding (Name y)) (expr (Node (Literal (Int 2))))))
+          ((Let (Nonrec ((Name x) (Node (Literal (Int 1))))))
+           (Let (Nonrec ((Name y) (Node (Literal (Int 2))))))
            (Type_def
             ((type_name (Mono t))
              (type_def
@@ -100,8 +99,7 @@ let%expect_test "test_simple_module_with_sig" =
             (module_description
              ((module_name Y) (functor_args ()) (module_sig ())))
             (module_def
-             (Struct
-              ((Let ((binding (Name y)) (expr (Node (Literal (Int 2))))))))))))))))) |}]
+             (Struct ((Let (Nonrec ((Name y) (Node (Literal (Int 2))))))))))))))))) |}]
 
 let%expect_test "test_functor" =
   let program =
@@ -156,10 +154,8 @@ let%expect_test "test_functor" =
                   ((type_expr (Single (Unqualified int))) (ast_tags ()))))))))))))
         (module_def
          (Struct
-          ((Let
-            ((binding (Name x))
-             (expr (Node (Var (Qualified Arg (Unqualified x)))))))
-           (Let ((binding (Name y)) (expr (Node (Literal (Int 2))))))
+          ((Let (Nonrec ((Name x) (Node (Var (Qualified Arg (Unqualified x)))))))
+           (Let (Nonrec ((Name y) (Node (Literal (Int 2))))))
            (Type_def
             ((type_name (Mono t))
              (type_def
@@ -169,8 +165,7 @@ let%expect_test "test_functor" =
             (module_description
              ((module_name Y) (functor_args ()) (module_sig ())))
             (module_def
-             (Struct
-              ((Let ((binding (Name y)) (expr (Node (Literal (Int 2))))))))))))))))) |}]
+             (Struct ((Let (Nonrec ((Name y) (Node (Literal (Int 2))))))))))))))))) |}]
 
 let%expect_test "test_named_module_functor_app" =
   let program =

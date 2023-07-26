@@ -106,6 +106,8 @@ and 'module_sig module_description = {
 }
 [@@deriving sexp, equal, hash, compare]
 
+type rec_flag = bool [@@deriving sexp, equal, hash, compare]
+
 (* node has no spaces, t does *)
 type node =
   | Var of Lowercase.t Qualified.t
@@ -116,7 +118,9 @@ type node =
   | Wrapped of expr Qualified.t
 [@@deriving sexp, equal, hash, compare]
 
-and let_def = { binding : Binding.t; expr : expr }
+and let_each = Binding.t * expr [@@deriving sexp, equal, hash, compare]
+
+and let_def = Rec of let_each list | Nonrec of let_each
 [@@deriving sexp, equal, hash, compare]
 
 and module_def =
@@ -133,8 +137,7 @@ and expr =
   | App of
       expr
       * expr (* these should just be node | App but that makes it more clunky *)
-  | Let_in of Binding.t * expr * expr
-  (* | Rec of (Binding.t * expr * expr) list [@sexp.list] *)
+  | Let_in of let_def * expr
   | Match of expr * (Binding.t * expr) list
   | Typed of expr * Value_tag.t
 [@@deriving sexp, equal, hash, compare]

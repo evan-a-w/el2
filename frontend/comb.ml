@@ -115,4 +115,12 @@ module Make (Token : S) = struct
   let satisfies f =
     let%bind token = next in
     if f token then return token else error [%message "Unexpected token"]
+
+  let success p =
+    let%bind state = get in
+    match%bind.State p with
+    | Ok _ -> return true
+    | Error _ ->
+        let%bind () = put state in
+        return false
 end
