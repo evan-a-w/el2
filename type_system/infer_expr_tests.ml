@@ -9,14 +9,19 @@ let state_with_some_stuff =
   let m =
     let%bind () = State.put empty_state in
     let%bind () =
-      add_type "int" (Abstract (Unqualified "int", Lowercase.Map.empty, 0))
+      add_type "int" (make_abstract "int")
       >>| Result.map_error ~f:Sexp.to_string_hum
       >>| Result.ok_or_failwith
     in
     let arg = Single_arg (Variance.Covariant, "a") in
     let mono =
       Abstract
-        (Unqualified "list", Lowercase.Map.of_alist_exn [ ("a", TyVar "a") ], 0)
+        {
+          type_name = Unqualified "list";
+          ordering = Some [ "a" ];
+          tyvar_map = Lowercase.Map.of_alist_exn [ ("a", TyVar "a") ];
+          level = 0;
+        }
     in
     add_type_constructor arg "list" mono
   in
@@ -30,7 +35,10 @@ let%expect_test "type_expr single lit" =
   print_s [%message (res : (mono, Sexp.t) Result.t) (state : state)];
   [%expect
     {|
-    ((res (Ok (Abstract ((Unqualified int) () 0))))
+    ((res
+      (Ok
+       (Abstract
+        ((type_name (Unqualified int)) (ordering ()) (tyvar_map ()) (level 0)))))
      (state
       ((mono_ufds ())
        (current_module_binding
@@ -40,14 +48,34 @@ let%expect_test "type_expr single lit" =
          (toplevel_type_constructors
           ((list
             ((Single_arg Covariant a) list
-             (Abstract ((Unqualified list) ((a (TyVar a))) 0))))))
+             (Abstract
+              ((type_name (Unqualified list)) (ordering ((a)))
+               (tyvar_map ((a (TyVar a)))) (level 0)))))))
          (toplevel_types
-          ((bool (Abstract ((Unqualified bool) () 0)))
-           (char (Abstract ((Unqualified char) () 0)))
-           (float (Abstract ((Unqualified float) () 0)))
-           (int (Abstract ((Unqualified int) () 0)))
-           (string (Abstract ((Unqualified string) () 0)))
-           (unit (Abstract ((Unqualified unit) () 0)))))
+          ((bool
+            (Abstract
+             ((type_name (Unqualified bool)) (ordering ()) (tyvar_map ())
+              (level 0))))
+           (char
+            (Abstract
+             ((type_name (Unqualified char)) (ordering ()) (tyvar_map ())
+              (level 0))))
+           (float
+            (Abstract
+             ((type_name (Unqualified float)) (ordering ()) (tyvar_map ())
+              (level 0))))
+           (int
+            (Abstract
+             ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
+              (level 0))))
+           (string
+            (Abstract
+             ((type_name (Unqualified string)) (ordering ()) (tyvar_map ())
+              (level 0))))
+           (unit
+            (Abstract
+             ((type_name (Unqualified unit)) (ordering ()) (tyvar_map ())
+              (level 0))))))
          (toplevel_modules ()) (opened_modules ())))
        (current_qualification ()) (symbol_n 0)))) |}]
 
@@ -67,7 +95,13 @@ let%expect_test "type_expr multi lit" =
     ((res
       (Ok
        (Abstract
-        ((Unqualified list) ((a (Abstract ((Unqualified int) () 0)))) 0))))
+        ((type_name (Unqualified list)) (ordering ((a)))
+         (tyvar_map
+          ((a
+            (Abstract
+             ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
+              (level 0))))))
+         (level 0)))))
      (state
       ((mono_ufds ())
        (current_module_binding
@@ -77,14 +111,34 @@ let%expect_test "type_expr multi lit" =
          (toplevel_type_constructors
           ((list
             ((Single_arg Covariant a) list
-             (Abstract ((Unqualified list) ((a (TyVar a))) 0))))))
+             (Abstract
+              ((type_name (Unqualified list)) (ordering ((a)))
+               (tyvar_map ((a (TyVar a)))) (level 0)))))))
          (toplevel_types
-          ((bool (Abstract ((Unqualified bool) () 0)))
-           (char (Abstract ((Unqualified char) () 0)))
-           (float (Abstract ((Unqualified float) () 0)))
-           (int (Abstract ((Unqualified int) () 0)))
-           (string (Abstract ((Unqualified string) () 0)))
-           (unit (Abstract ((Unqualified unit) () 0)))))
+          ((bool
+            (Abstract
+             ((type_name (Unqualified bool)) (ordering ()) (tyvar_map ())
+              (level 0))))
+           (char
+            (Abstract
+             ((type_name (Unqualified char)) (ordering ()) (tyvar_map ())
+              (level 0))))
+           (float
+            (Abstract
+             ((type_name (Unqualified float)) (ordering ()) (tyvar_map ())
+              (level 0))))
+           (int
+            (Abstract
+             ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
+              (level 0))))
+           (string
+            (Abstract
+             ((type_name (Unqualified string)) (ordering ()) (tyvar_map ())
+              (level 0))))
+           (unit
+            (Abstract
+             ((type_name (Unqualified unit)) (ordering ()) (tyvar_map ())
+              (level 0))))))
          (toplevel_modules ()) (opened_modules ())))
        (current_qualification ()) (symbol_n 0)))) |}]
 
@@ -108,12 +162,26 @@ let%expect_test "type_expr multi lit" =
   [%expect
     {|
       (mono
-       (Enum ((Unqualified list) ((a (Abstract ((Unqualified int) () 0)))) 1)
+       (Enum
+        ((type_name (Unqualified list)) (ordering ((a)))
+         (tyvar_map
+          ((a
+            (Abstract
+             ((type_name (Unqualified int)) (ordering ()) (tyvar_map ()) (level 0))))))
+         (level 1))
         ((Cons
           ((Tuple
-            ((Abstract ((Unqualified int) () 0))
+            ((Abstract
+              ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
+               (level 0)))
              (Recursive_constructor
-              ((Unqualified list) ((a (Abstract ((Unqualified int) () 0)))) 0))))))
+              ((type_name (Unqualified list)) (ordering ((a)))
+               (tyvar_map
+                ((a
+                  (Abstract
+                   ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
+                    (level 0))))))
+               (level 0)))))))
          (Nil ())))) |}]
 
 let define_types ~type_exprs =
@@ -141,9 +209,9 @@ let infer_type_of_expr ~programs ~print_state =
     (* let%bind expr = replace_user_ty_vars expr in *)
     (* print_s [%message (expr : Ast.expr)]; *)
     let%bind mono = mono_of_expr expr in
-    let%map mono = apply_substs mono in
-    let sexp = show_mono mono in
-    print_s sexp
+    let%bind mono = apply_substs mono in
+    let%map s = show_mono mono in
+    print_endline s
   in
   List.iter programs ~f:(fun program ->
       match
@@ -168,18 +236,11 @@ let%expect_test "simple" =
       ];
   [%expect
     {|
-    ((named_type (Unqualified list))
-     (map ((a ((named_type (Unqualified int)) (map ()))))))
-    (Lambda
-     (Tuple
-      ((TyVar a0) ((named_type (Unqualified list)) (map ((a (TyVar a0)))))))
-     ((named_type (Unqualified list)) (map ((a (TyVar a0))))))
-    ((named_type (Unqualified list)) (map ((a (TyVar a0)))))
-    (Tuple
-     (((named_type (Unqualified int)) (map ()))
-      ((named_type (Unqualified list)) (map ((a (TyVar a0)))))))
-    ((named_type (Unqualified list))
-     (map ((a ((named_type (Unqualified int)) (map ()))))))
+    int list
+    (a0, a0 list) -> a0 list
+    a0 list
+    (int, a0 list)
+    int list
     (error
      ("types failed to unify" (first (Unqualified int))
       (second (Unqualified string)))) |}]
@@ -187,7 +248,7 @@ let%expect_test "simple" =
 let%expect_test "if_expr" =
   infer_type_of_expr ~print_state:false ~programs:[ "if true then 1 else 0" ];
   [%expect {|
-    ((named_type (Unqualified int)) (map ())) |}];
+    int |}];
   infer_type_of_expr ~print_state:false ~programs:[ "if 1 then 1 else 0" ];
   [%expect
     {|
@@ -205,8 +266,7 @@ let%expect_test "if_expr" =
     ~programs:[ "if true then Cons (1, Nil) else Cons (2, Cons (1, Nil))" ];
   [%expect
     {|
-    ((named_type (Unqualified list))
-     (map ((a ((named_type (Unqualified int)) (map ())))))) |}]
+    int list |}]
 
 let%expect_test "match_expr" =
   infer_type_of_expr ~print_state:false
@@ -220,12 +280,12 @@ let%expect_test "match_expr" =
       ];
   [%expect
     {|
-    ((named_type (Unqualified int)) (map ()))
-    ((named_type (Unqualified string)) (map ()))
+    int
+    string
     (error
      ("types failed to unify" (first (Unqualified int))
       (second (Unqualified list))))
-    ((named_type (Unqualified int)) (map ()))
+    int
     (error
      ("types failed to unify" (first (Unqualified string))
       (second (Unqualified int)))) |}]
@@ -238,16 +298,15 @@ let%expect_test "match_expr2" =
       ];
   [%expect
     {|
-    ((named_type (Unqualified list))
-     (map ((a ((named_type (Unqualified int)) (map ())))))) |}]
+    int list |}]
 
 let%expect_test "lambda_expr" =
   infer_type_of_expr ~print_state:false
     ~programs:[ {| (fun x -> 1) |}; {| (fun x -> 1) 1 |} ];
   [%expect
     {|
-    (Lambda (TyVar a0) ((named_type (Unqualified int)) (map ())))
-    ((named_type (Unqualified int)) (map ())) |}]
+    a0 -> int
+    int |}]
 
 let%expect_test "let_expr1" =
   infer_type_of_expr ~print_state:false
@@ -260,16 +319,10 @@ let%expect_test "let_expr1" =
       ];
   [%expect
     {|
-    ((named_type (Unqualified int)) (map ()))
-    (Lambda (TyVar b0) (TyVar b0))
-    (Lambda
-     ((named_type (Unqualified list))
-      (map ((a ((named_type (Unqualified int)) (map ()))))))
-     ((named_type (Unqualified int)) (map ())))
-    (Lambda
-     ((named_type (Unqualified list))
-      (map ((a ((named_type (Unqualified int)) (map ()))))))
-     ((named_type (Unqualified int)) (map ()))) |}]
+    int
+    b0 -> b0
+    int list -> int
+    int list -> int |}]
 
 let%expect_test "let_expr2" =
   infer_type_of_expr ~print_state:false
@@ -288,20 +341,16 @@ let%expect_test "let_expr2" =
     (error
      ("types failed to unify" (first (Unqualified list))
       (second (Unqualified int))))
-    (Lambda
-     ((named_type (Unqualified list))
-      (map ((a ((named_type (Unqualified int)) (map ()))))))
-     ((named_type (Unqualified int)) (map ())))
+    int list -> int
     (error
      ("types failed to unify" (first (Unqualified int))
       (second (Unqualified string))))
-    (Lambda ((named_type (Unqualified list)) (map ((a (TyVar e0)))))
-     ((named_type (Unqualified list)) (map ((a (TyVar e0)))))) |}]
+    e0 list -> e0 list |}]
 
 let%expect_test "let_expr3" =
   infer_type_of_expr ~print_state:false
     ~programs:[ {| let x = fun x -> (fun x -> x) (fun x -> x) x in x |} ];
-  [%expect {| (Lambda (TyVar f0) (TyVar f0)) |}]
+  [%expect {| f0 -> f0 |}]
 
 let%expect_test "let_expr_tag1" =
   infer_type_of_expr ~print_state:false
@@ -330,10 +379,8 @@ let%expect_test "let_expr_tag1" =
       ];
   [%expect
     {|
-    (Lambda ((named_type (Unqualified list)) (map ((a (TyVar e0)))))
-     (Lambda (TyVar e0) (TyVar e0)))
-    (Lambda ((named_type (Unqualified list)) (map ((a (TyVar e0)))))
-     (Lambda (TyVar e0) (TyVar e0)))
+    e0 list -> e0 -> e0
+    e0 list -> e0 -> e0
     (error
      ("types failed to unify" (first (Unqualified list))
       (second (Unqualified int))))
@@ -355,21 +402,44 @@ let%expect_test "type_def_record" =
     {|
     (res
      (Ok
-      (Record ((Unqualified node) ((a (Abstract ((Unqualified int) () 0)))) 1)
-       ((value ((Abstract ((Unqualified int) () 0)) Immutable))
+      (Record
+       ((type_name (Unqualified node)) (ordering ((a)))
+        (tyvar_map
+         ((a
+           (Abstract
+            ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
+             (level 0))))))
+        (level 1))
+       ((value
+         ((Abstract
+           ((type_name (Unqualified int)) (ordering ()) (tyvar_map ()) (level 0)))
+          Immutable))
         (next
          ((Enum
-           ((Unqualified option)
-            ((a
-              (Pointer
-               (Recursive_constructor
-                ((Unqualified node) ((a (Abstract ((Unqualified int) () 0)))) 0)))))
-            1)
+           ((type_name (Unqualified option)) (ordering ((a)))
+            (tyvar_map
+             ((a
+               (Pointer
+                (Recursive_constructor
+                 ((type_name (Unqualified node)) (ordering ((a)))
+                  (tyvar_map
+                   ((a
+                     (Abstract
+                      ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
+                       (level 0))))))
+                  (level 0)))))))
+            (level 1))
            ((None ())
             (Some
              ((Pointer
                (Recursive_constructor
-                ((Unqualified node) ((a (Abstract ((Unqualified int) () 0)))) 0)))))))
+                ((type_name (Unqualified node)) (ordering ((a)))
+                 (tyvar_map
+                  ((a
+                    (Abstract
+                     ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
+                      (level 0))))))
+                 (level 0))))))))
           Mutable)))))) |}]
 
 let%expect_test "last_list_record_occurs" =
@@ -398,8 +468,7 @@ let%expect_test "head nonempty list" =
       ];
   [%expect
     {|
-    (Lambda ((named_type (Unqualified nonempty_list)) (map ((a (TyVar j0)))))
-     (TyVar j0)) |}]
+    j0 nonempty_list -> j0 |}]
 
 let%expect_test "head list value" =
   infer_type_of_expr ~print_state:false
@@ -412,7 +481,7 @@ let%expect_test "head list value" =
            in
            head (Nonempty_cons (1, None))|};
       ];
-  [%expect {| ((named_type (Unqualified int)) (map ())) |}]
+  [%expect {| int |}]
 
 let%expect_test "mutual recursion" =
   infer_type_of_expr ~print_state:false
@@ -429,8 +498,7 @@ let%expect_test "mutual recursion" =
       ];
   [%expect
     {|
-    (Lambda ((named_type (Unqualified int)) (map ()))
-     ((named_type (Unqualified bool)) (map ()))) |}]
+    int -> bool |}]
 
 let%expect_test "mutual recursion fail" =
   infer_type_of_expr ~print_state:false
@@ -466,23 +534,50 @@ let%expect_test "recursive last not pointer" =
     (error
      ("failed to unify types"
       (first
-       (Pointer (Recursive_constructor ((Unqualified node) ((a (TyVar i0))) 0))))
+       (Pointer
+        (Recursive_constructor
+         ((type_name (Unqualified node)) (ordering ((a)))
+          (tyvar_map ((a (TyVar i0)))) (level 0)))))
       (second
-       (Record ((Unqualified node) ((a (Abstract ((Unqualified int) () 0)))) 1)
-        ((value ((Abstract ((Unqualified int) () 0)) Immutable))
+       (Record
+        ((type_name (Unqualified node)) (ordering ())
+         (tyvar_map
+          ((a
+            (Abstract
+             ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
+              (level 0))))))
+         (level 1))
+        ((value
+          ((Abstract
+            ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
+             (level 0)))
+           Immutable))
          (next
           ((Enum
-            ((Unqualified option)
-             ((a
-               (Pointer
-                (Recursive_constructor
-                 ((Unqualified node) ((a (Abstract ((Unqualified int) () 0)))) 0)))))
-             1)
+            ((type_name (Unqualified option)) (ordering ((a)))
+             (tyvar_map
+              ((a
+                (Pointer
+                 (Recursive_constructor
+                  ((type_name (Unqualified node)) (ordering ((a)))
+                   (tyvar_map
+                    ((a
+                      (Abstract
+                       ((type_name (Unqualified int)) (ordering ())
+                        (tyvar_map ()) (level 0))))))
+                   (level 0)))))))
+             (level 1))
             ((None ())
              (Some
               ((Pointer
                 (Recursive_constructor
-                 ((Unqualified node) ((a (Abstract ((Unqualified int) () 0)))) 0)))))))
+                 ((type_name (Unqualified node)) (ordering ((a)))
+                  (tyvar_map
+                   ((a
+                     (Abstract
+                      ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
+                       (level 0))))))
+                  (level 0))))))))
            Mutable))))))) |}]
 
 let%expect_test "type annot1" =
@@ -496,10 +591,8 @@ let%expect_test "type annot1" =
       ];
   [%expect
     {|
-    (Lambda ((named_type (Unqualified int)) (map ()))
-     (Lambda ((named_type (Unqualified string)) (map ()))
-      ((named_type (Unqualified string)) (map ()))))
-    (Lambda (TyVar c0) (Lambda (TyVar c0) (TyVar c0)))
+    int -> string -> string
+    c0 -> c0 -> c0
     (error
      ("types failed to unify" (first (Unqualified int))
       (second (Unqualified string)))) |}]
@@ -509,8 +602,7 @@ let%expect_test "node value" =
     ~programs:[ {| { value : 1; next : Some &{ value : 2; next : None } } |} ];
   [%expect
     {|
-    ((named_type (Unqualified node))
-     (map ((a ((named_type (Unqualified int)) (map ())))))) |}]
+    int node |}]
 
 let%expect_test "node value fail" =
   infer_type_of_expr ~print_state:false
@@ -531,15 +623,9 @@ let%expect_test "ref cons succ" =
       ];
   [%expect
     {|
-    ((named_type (Unqualified ref_list))
-     (map ((a ((named_type (Unqualified int)) (map ()))))))
-    ((named_type (Unqualified ref_list))
-     (map ((a ((named_type (Unqualified int)) (map ()))))))
-    (Lambda
-     (Tuple
-      ((Pointer (TyVar a0))
-       ((named_type (Unqualified ref_list)) (map ((a (TyVar a0)))))))
-     ((named_type (Unqualified ref_list)) (map ((a (TyVar a0)))))) |}]
+    int ref_list
+    int ref_list
+    (&a0, a0 ref_list) -> a0 ref_list |}]
 
 let%expect_test "ref cons fl" =
   infer_type_of_expr ~print_state:false
@@ -554,13 +640,17 @@ let%expect_test "ref cons fl" =
     {|
     (error
      ("failed to unify types" (first (Pointer (TyVar a0)))
-      (second (Abstract ((Unqualified int) () 0)))))
+      (second
+       (Abstract
+        ((type_name (Unqualified int)) (ordering ()) (tyvar_map ()) (level 0))))))
     (error
      ("types failed to unify" (first (Unqualified ref_list))
       (second (Unqualified list))))
     (error
      ("failed to unify types" (first (Pointer (TyVar a0)))
-      (second (Abstract ((Unqualified int) () 0)))))
+      (second
+       (Abstract
+        ((type_name (Unqualified int)) (ordering ()) (tyvar_map ()) (level 0))))))
     (error
      ("types failed to unify" (first (Unqualified int))
       (second (Unqualified string)))) |}]
@@ -578,8 +668,7 @@ let%expect_test "rec tail nonempty list" =
       ];
   [%expect
     {|
-    (Lambda ((named_type (Unqualified nonempty_list)) (map ((a (TyVar h0)))))
-     (TyVar h0)) |}]
+    h0 nonempty_list -> h0 |}]
 
 let%expect_test "rec tail list" =
   infer_type_of_expr ~print_state:false
@@ -595,8 +684,7 @@ let%expect_test "rec tail list" =
       ];
   [%expect
     {|
-    (Lambda ((named_type (Unqualified list)) (map ((a (TyVar k0)))))
-     ((named_type (Unqualified option)) (map ((a (TyVar k0)))))) |}]
+    k0 list -> k0 option |}]
 
 let%expect_test "rec tail nonempty list" =
   infer_type_of_expr ~print_state:false
@@ -609,7 +697,7 @@ let%expect_test "rec tail nonempty list" =
            in
            tail (Nonempty_cons (1, None)) |};
       ];
-  [%expect {| ((named_type (Unqualified int)) (map ())) |}]
+  [%expect {| int |}]
 
 let%expect_test "rec tail list value" =
   infer_type_of_expr ~print_state:false
@@ -625,8 +713,7 @@ let%expect_test "rec tail list value" =
       ];
   [%expect
     {|
-    ((named_type (Unqualified option))
-     (map ((a ((named_type (Unqualified int)) (map ())))))) |}]
+    int option |}]
 
 let%expect_test "head nonempty list rec needless" =
   infer_type_of_expr ~print_state:false
@@ -642,8 +729,7 @@ let%expect_test "head nonempty list rec needless" =
       ];
   [%expect
     {|
-    (Lambda ((named_type (Unqualified nonempty_list)) (map ((a (TyVar k0)))))
-     (TyVar k0)) |}]
+    k0 nonempty_list -> k0 |}]
 
 let%expect_test "record create" =
   infer_type_of_expr ~print_state:false
@@ -655,7 +741,7 @@ let%expect_test "record create" =
            singleton |};
       ];
   [%expect
-    {| (Lambda (TyVar d0) ((named_type (Unqualified node)) (map ((a (TyVar d0)))))) |}]
+    {| d0 -> d0 node |}]
 
 let%expect_test "head record destruct" =
   infer_type_of_expr ~print_state:false
@@ -667,7 +753,7 @@ let%expect_test "head record destruct" =
            head |};
       ];
   [%expect
-    {| (Lambda ((named_type (Unqualified node)) (map ((a (TyVar c0))))) (TyVar c0)) |}]
+    {| c0 node -> c0 |}]
 
 let%expect_test "head record value" =
   infer_type_of_expr ~print_state:false
@@ -680,7 +766,7 @@ let%expect_test "head record value" =
            in
            head { value : 1; next : Some &{ value : 2; next : None } } |};
       ];
-  [%expect {| ((named_type (Unqualified int)) (map ())) |}]
+  [%expect {| int |}]
 
 let%expect_test "recursive last" =
   infer_type_of_expr ~print_state:false
@@ -694,7 +780,7 @@ let%expect_test "recursive last" =
       ];
   [%expect
     {|
-      (Lambda ((named_type (Unqualified node)) (map ((a (TyVar i0))))) (TyVar i0)) |}]
+      i0 node -> i0 |}]
 
 let%expect_test "recursive last value" =
   infer_type_of_expr ~print_state:false
@@ -707,7 +793,7 @@ let%expect_test "recursive last value" =
            last { value : 1; next : Some &{ value : 2; next : None } } |};
       ];
   [%expect {|
-    ((named_type (Unqualified int)) (map ())) |}]
+    int |}]
 
 let%expect_test "recursive last value keeps type" =
   infer_type_of_expr ~print_state:false
@@ -745,11 +831,7 @@ let%expect_test "recursive last generalizes" =
       ];
   [%expect
     {|
-    (Tuple
-     (((named_type (Unqualified option))
-       (map ((a ((named_type (Unqualified int)) (map ()))))))
-      ((named_type (Unqualified option))
-       (map ((a ((named_type (Unqualified string)) (map ())))))))) |}]
+    (int option, string option) |}]
 
 let%expect_test "head generalizes" =
   infer_type_of_expr ~print_state:false
@@ -764,9 +846,6 @@ let%expect_test "head generalizes" =
            let second = head (Cons ("hi", Nil)) in
            (first, second) |};
       ];
-  [%expect {|
-    (Tuple
-     (((named_type (Unqualified option))
-       (map ((a ((named_type (Unqualified int)) (map ()))))))
-      ((named_type (Unqualified option))
-       (map ((a ((named_type (Unqualified string)) (map ())))))))) |}]
+  [%expect
+    {|
+    (int option, string option) |}]

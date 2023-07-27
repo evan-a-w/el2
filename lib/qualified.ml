@@ -41,3 +41,11 @@ let rec split t =
   | Unqualified a -> ([], a)
 
 let qualifications_of_t t : qualifications = split t |> fst
+
+let show show_a t =
+  let rec loop t =
+    match t with
+    | Qualified (qualification, t) -> qualification ^ "." ^ loop t
+    | Unqualified a -> show_a a
+  in
+  loop t
