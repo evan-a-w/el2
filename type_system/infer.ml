@@ -1350,6 +1350,51 @@ and mono_of_binding ~(binding : Ast.Binding.t) ~expr1 ~expr2 ~generalize =
   (* print_s [%message (binding : Ast.Binding.t) ~mono1:(show_mono mono1 : Sexp.t)]; *)
   mono_of_binding_typed ~binding ~mono1 ~expr2 ~generalize ~value_restriction
 
+and add_nonrec_bindings ~binding ~expr =
+  let open State.Result.Let_syntax in
+  let value_restriction = value_restriction expr in
+  let%bind mono = mono_of_expr expr in
+  let%bind mono = apply_substs mono in
+  let act_on_var = add_var_mono ~generalize:true ~value_restriction in
+  let%bind mono', vars =
+    process_binding ~act_on_var ~initial_vars:[] ~binding ~mono
+  in
+  let%map () = unify mono mono' in
+  vars
+
+and add_rec_bindings l =
+  let open State.Result.Let_syntax in
+  let%bind bindings =
+    State.Result.all
+      (List.map l ~f:(fun (binding, expr) ->
+           let%map _, b = gen_binding_ty_vars ~initial_vars:[] ~binding in
+           (b, value_restriction expr)))
+  in
+  let act_on_var var mono =
+    let%bind current = lookup_var (Qualified.Unqualified var) in
+    let mono' = mono_of_poly_no_inst current in
+    let%bind () = unify mono mono' in
+    add_var var (Mono mono)
+  in
+  let%bind vars_list =
+    State.Result.all
+      (List.map l ~f:(fun (binding, expr) ->
+           let%bind mono = mono_of_expr expr in
+           let%map _, vars =
+             process_binding ~act_on_var ~initial_vars:[] ~binding ~mono
+           in
+           vars))
+  in
+  let%map () =
+    List.map bindings ~f:(fun (inner, v) ->
+        match v with
+        | false -> return ()
+        | true -> State.Result.all_unit (List.map inner ~f:gen_var))
+    |> State.Result.all_unit
+  in
+  let bindings = List.unzip bindings |> fst in
+  List.concat [ vars_list; bindings ]
+
 and mono_of_expr expr =
   let open State.Result.Let_syntax in
   match expr with
@@ -1376,44 +1421,16 @@ and mono_of_expr expr =
           let%bind () = unify mono ty_mono in
           apply_substs mono)
   | Let_in (Ast.Nonrec (binding, expr1), expr2) ->
-      let%bind res = mono_of_binding ~binding ~expr1 ~expr2 ~generalize:true in
+      let%bind vars = add_nonrec_bindings ~binding ~expr:expr1 in
+      let%bind res = mono_of_expr expr2 in
+      let%bind () = State.Result.all_unit (List.map vars ~f:pop_var) in
       apply_substs res
   | Let_in (Ast.Rec l, expr2) ->
-      let%bind bindings =
-        State.Result.all
-          (List.map l ~f:(fun (binding, expr) ->
-               let%map _, b = gen_binding_ty_vars ~initial_vars:[] ~binding in
-               (b, value_restriction expr)))
-      in
-      let act_on_var var mono =
-        let%bind current = lookup_var (Qualified.Unqualified var) in
-        let mono' = mono_of_poly_no_inst current in
-        let%bind () = unify mono mono' in
-        add_var var (Mono mono)
-      in
-      let%bind vars_list =
-        State.Result.all
-          (List.map l ~f:(fun (binding, expr) ->
-               let%bind mono = mono_of_expr expr in
-               let%map _, vars =
-                 process_binding ~act_on_var ~initial_vars:[] ~binding ~mono
-               in
-               vars))
-      in
-      let%bind () =
-        List.map bindings ~f:(fun (inner, v) ->
-            match v with
-            | false -> return ()
-            | true -> State.Result.all_unit (List.map inner ~f:gen_var))
-        |> State.Result.all_unit
-      in
+      let%bind vars = add_rec_bindings l in
       let%bind res = mono_of_expr expr2 in
-      let bindings = List.unzip bindings |> fst in
       let%bind () =
         State.Result.all_unit
-          (List.map
-             (List.concat [ vars_list; bindings ])
-             ~f:(fun vars ->
+          (List.map vars ~f:(fun vars ->
                State.Result.all_unit (List.map (List.rev vars) ~f:pop_var)))
       in
 
@@ -1439,58 +1456,3 @@ and mono_of_expr expr =
       let%bind var = apply_substs var in
       let%map res_type = apply_substs res_type in
       Lambda (var, res_type)
-
-let rec replace_type_expr_ty_vars (type_expr : Ast.Type_expr.t) =
-  let open State.Result.Let_syntax in
-  let new_name name =
-    let%bind.State curr_level = get_level in
-    let%bind state = State.Result.get in
-    let%bind new_name = State.map gensym ~f:Result.return in
-    let type_vars =
-      Lowercase.Map.set state.type_vars ~key:name ~data:(new_name, curr_level)
-    in
-    let%map () = State.Result.put { state with type_vars } in
-    Qualified.Unqualified new_name
-  in
-  let map_qualified qualified =
-    match qualified with
-    | Qualified.Qualified _ -> return qualified
-    | Qualified.Unqualified name -> (
-        match%bind.State lookup_type ~type_var:false qualified with
-        | Ok _ -> return qualified
-        | Error _ -> (
-            let%bind state = State.Result.get in
-            match Lowercase.Map.find state.type_vars name with
-            | Some (existing_name, level) ->
-                let%bind.State curr_level = get_level in
-                if level < curr_level then
-                  return (Qualified.Unqualified existing_name)
-                else new_name name
-            | None -> new_name name))
-  in
-  match type_expr with
-  | Ast.Type_expr.Pointer x ->
-      let%map x = replace_type_expr_ty_vars x in
-      Ast.Type_expr.Pointer x
-  | Ast.Type_expr.Tuple list ->
-      let%map list =
-        State.Result.all (List.map list ~f:replace_type_expr_ty_vars)
-      in
-      Ast.Type_expr.Tuple list
-  | Ast.Type_expr.Single s ->
-      let%map s = map_qualified s in
-      Ast.Type_expr.Single s
-  | Ast.Type_expr.Multi (a, qualified) ->
-      let%map a = replace_type_expr_ty_vars a in
-      Ast.Type_expr.Multi (a, qualified)
-
-let replace_type_expr_value_tag (ty : Ast.Value_tag.t) =
-  let open State.Result.Let_syntax in
-  let%map type_expr =
-    match ty.type_expr with
-    | None -> return None
-    | Some type_expr ->
-        let%map type_expr = replace_type_expr_ty_vars type_expr in
-        Some type_expr
-  in
-  { ty with type_expr }
