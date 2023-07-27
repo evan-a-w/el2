@@ -88,7 +88,7 @@ let unit_type = make_abstract "unit"
 let string_type = make_abstract "string"
 let char_type = make_abstract "char"
 
-let empty_module_bindngs =
+let base_module_bindings =
   {
     toplevel_vars =
       (let init = Lowercase.Map.empty in
@@ -109,6 +109,17 @@ let empty_module_bindngs =
         ];
     toplevel_modules = Uppercase.Map.empty;
     opened_modules = [];
+  }
+
+let empty_module_bindings =
+  {
+    toplevel_vars = Lowercase.Map.empty;
+    toplevel_records = Lowercase.Set.Map.empty;
+    toplevel_constructors = Uppercase.Map.empty;
+    toplevel_type_constructors = Lowercase.Map.empty;
+    toplevel_types = Lowercase.Map.empty;
+    toplevel_modules = Uppercase.Map.empty;
+    opened_modules = [ base_module_bindings ];
   }
 
 type state = {
@@ -167,7 +178,7 @@ let set_type_constructor arg name mono =
 let empty_state =
   {
     mono_ufds = Mono_ufds.empty;
-    current_module_binding = empty_module_bindngs;
+    current_module_binding = empty_module_bindings;
     current_qualification = [];
     symbol_n = 0;
     (* type_vars = Lowercase.Map.empty; *)
@@ -285,20 +296,28 @@ let rec search_modules :
     qualifications:Qualified.qualifications ->
     search_for:(module_bindings -> a option) ->
     a option =
- fun module_bindings ~qualifications ~(search_for : module_bindings -> a option) ->
-  match qualifications with
-  | [] -> search_for module_bindings
-  | name :: qualifications -> (
-      let open Option.Let_syntax in
-      let first =
-        Uppercase.Map.find module_bindings.toplevel_modules name
-        >>= search_modules ~qualifications ~search_for
-      in
-      match first with
-      | Some _ -> first
-      | None ->
-          List.find_map module_bindings.opened_modules
-            ~f:(search_modules ~qualifications ~search_for))
+  let find_in_opened_modules module_bindings ~qualifications ~search_for =
+    List.find_map module_bindings.opened_modules
+      ~f:(search_modules ~qualifications ~search_for)
+  in
+  fun module_bindings ~qualifications
+      ~(search_for : module_bindings -> a option) ->
+    match qualifications with
+    | [] -> (
+        match search_for module_bindings with
+        | Some x -> Some x
+        | None ->
+            find_in_opened_modules module_bindings ~qualifications ~search_for)
+    | name :: qualifications -> (
+        let open Option.Let_syntax in
+        let first =
+          Uppercase.Map.find module_bindings.toplevel_modules name
+          >>= search_modules ~qualifications ~search_for
+        in
+        match first with
+        | Some _ -> first
+        | None ->
+            find_in_opened_modules module_bindings ~qualifications ~search_for)
 
 let find_module_binding qualifications =
   let%bind.State state = State.get in
@@ -411,6 +430,15 @@ let rec split_poly = function
   | Forall (a, b) ->
       let set, m = split_poly b in
       (Lowercase.Set.add set a, m)
+
+let split_poly_to_list poly =
+  let rec inner = function
+    | Mono m -> ([], m)
+    | Forall (a, b) ->
+        let l, m = inner b in
+        (a :: l, m)
+  in
+  inner poly |> Tuple2.map_fst ~f:List.rev
 
 let show_mono_ufds (mono_ufds : Mono_ufds.t) =
   let open State.Result.Let_syntax in
@@ -1564,3 +1592,40 @@ let process_toplevel_list (l : Ast.t) =
   let%bind () = State.Result.all_unit (List.map l ~f:process_toplevel) in
   let%map state = State.Result.get in
   state.current_module_binding
+
+let show_module_bindings
+    {
+      toplevel_vars;
+      toplevel_records = _;
+      toplevel_constructors = _;
+      toplevel_types;
+      toplevel_modules = _;
+      _;
+    } =
+  let open State.Result.Let_syntax in
+  let%bind type_strings =
+    Lowercase.Map.to_alist toplevel_types
+    |> List.map ~f:(fun (_, mono) ->
+           let%map mono_s = show_mono mono in
+           "type " ^ mono_s)
+    |> State.Result.all
+  in
+  let%map var_strings =
+    Lowercase.Map.to_alist toplevel_vars
+    |> List.map ~f:(fun (v, poly_list) ->
+           let%bind poly =
+             match poly_list with
+             | x :: _ -> return x
+             | _ -> State.Result.error [%message "Empty poly list"]
+           in
+           let qualifications, mono = split_poly_to_list poly in
+           let prefix =
+             match qualifications with
+             | [] -> ""
+             | _ -> String.concat ~sep:". " qualifications ^ ". "
+           in
+           let%map mono_s = show_mono mono in
+           "let " ^ v ^ " : " ^ prefix ^ mono_s)
+    |> State.Result.all
+  in
+  List.concat [ type_strings; var_strings ] |> String.concat ~sep:"\n\n"

@@ -42,9 +42,7 @@ let%expect_test "type_expr single lit" =
      (state
       ((mono_ufds ())
        (current_module_binding
-        ((toplevel_vars
-          ((& ((Forall a (Mono (Lambda (TyVar a) (Pointer (TyVar a)))))))))
-         (toplevel_records ()) (toplevel_constructors ())
+        ((toplevel_vars ()) (toplevel_records ()) (toplevel_constructors ())
          (toplevel_type_constructors
           ((list
             ((Single_arg Covariant a) list
@@ -52,31 +50,42 @@ let%expect_test "type_expr single lit" =
               ((type_name (Unqualified list)) (ordering ((a)))
                (tyvar_map ((a (TyVar a)))) (level 0)))))))
          (toplevel_types
-          ((bool
-            (Abstract
-             ((type_name (Unqualified bool)) (ordering ()) (tyvar_map ())
-              (level 0))))
-           (char
-            (Abstract
-             ((type_name (Unqualified char)) (ordering ()) (tyvar_map ())
-              (level 0))))
-           (float
-            (Abstract
-             ((type_name (Unqualified float)) (ordering ()) (tyvar_map ())
-              (level 0))))
-           (int
+          ((int
             (Abstract
              ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
-              (level 0))))
-           (string
-            (Abstract
-             ((type_name (Unqualified string)) (ordering ()) (tyvar_map ())
-              (level 0))))
-           (unit
-            (Abstract
-             ((type_name (Unqualified unit)) (ordering ()) (tyvar_map ())
               (level 0))))))
-         (toplevel_modules ()) (opened_modules ())))
+         (toplevel_modules ())
+         (opened_modules
+          (((toplevel_vars
+             ((& ((Forall a (Mono (Lambda (TyVar a) (Pointer (TyVar a)))))))))
+            (toplevel_records ()) (toplevel_constructors ())
+            (toplevel_type_constructors ())
+            (toplevel_types
+             ((bool
+               (Abstract
+                ((type_name (Unqualified bool)) (ordering ()) (tyvar_map ())
+                 (level 0))))
+              (char
+               (Abstract
+                ((type_name (Unqualified char)) (ordering ()) (tyvar_map ())
+                 (level 0))))
+              (float
+               (Abstract
+                ((type_name (Unqualified float)) (ordering ()) (tyvar_map ())
+                 (level 0))))
+              (int
+               (Abstract
+                ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
+                 (level 0))))
+              (string
+               (Abstract
+                ((type_name (Unqualified string)) (ordering ()) (tyvar_map ())
+                 (level 0))))
+              (unit
+               (Abstract
+                ((type_name (Unqualified unit)) (ordering ()) (tyvar_map ())
+                 (level 0))))))
+            (toplevel_modules ()) (opened_modules ()))))))
        (current_qualification ()) (symbol_n 0)))) |}]
 
 let%expect_test "type_expr multi lit" =
@@ -105,9 +114,7 @@ let%expect_test "type_expr multi lit" =
      (state
       ((mono_ufds ())
        (current_module_binding
-        ((toplevel_vars
-          ((& ((Forall a (Mono (Lambda (TyVar a) (Pointer (TyVar a)))))))))
-         (toplevel_records ()) (toplevel_constructors ())
+        ((toplevel_vars ()) (toplevel_records ()) (toplevel_constructors ())
          (toplevel_type_constructors
           ((list
             ((Single_arg Covariant a) list
@@ -115,31 +122,42 @@ let%expect_test "type_expr multi lit" =
               ((type_name (Unqualified list)) (ordering ((a)))
                (tyvar_map ((a (TyVar a)))) (level 0)))))))
          (toplevel_types
-          ((bool
-            (Abstract
-             ((type_name (Unqualified bool)) (ordering ()) (tyvar_map ())
-              (level 0))))
-           (char
-            (Abstract
-             ((type_name (Unqualified char)) (ordering ()) (tyvar_map ())
-              (level 0))))
-           (float
-            (Abstract
-             ((type_name (Unqualified float)) (ordering ()) (tyvar_map ())
-              (level 0))))
-           (int
+          ((int
             (Abstract
              ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
-              (level 0))))
-           (string
-            (Abstract
-             ((type_name (Unqualified string)) (ordering ()) (tyvar_map ())
-              (level 0))))
-           (unit
-            (Abstract
-             ((type_name (Unqualified unit)) (ordering ()) (tyvar_map ())
               (level 0))))))
-         (toplevel_modules ()) (opened_modules ())))
+         (toplevel_modules ())
+         (opened_modules
+          (((toplevel_vars
+             ((& ((Forall a (Mono (Lambda (TyVar a) (Pointer (TyVar a)))))))))
+            (toplevel_records ()) (toplevel_constructors ())
+            (toplevel_type_constructors ())
+            (toplevel_types
+             ((bool
+               (Abstract
+                ((type_name (Unqualified bool)) (ordering ()) (tyvar_map ())
+                 (level 0))))
+              (char
+               (Abstract
+                ((type_name (Unqualified char)) (ordering ()) (tyvar_map ())
+                 (level 0))))
+              (float
+               (Abstract
+                ((type_name (Unqualified float)) (ordering ()) (tyvar_map ())
+                 (level 0))))
+              (int
+               (Abstract
+                ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
+                 (level 0))))
+              (string
+               (Abstract
+                ((type_name (Unqualified string)) (ordering ()) (tyvar_map ())
+                 (level 0))))
+              (unit
+               (Abstract
+                ((type_name (Unqualified unit)) (ordering ()) (tyvar_map ())
+                 (level 0))))))
+            (toplevel_modules ()) (opened_modules ()))))))
        (current_qualification ()) (symbol_n 0)))) |}]
 
 let%expect_test "type_expr multi lit" =
