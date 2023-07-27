@@ -136,8 +136,8 @@ type state = {
   mono_ufds : Mono_ufds.t;
   current_module_binding : module_bindings;
   current_qualification : Uppercase.t list;
-  type_vars : (Lowercase.t * level) Lowercase.Map.t;
-  current_level : level;
+  (* type_vars : (Lowercase.t * level) Lowercase.Map.t; *)
+  (* current_level : level; *)
   symbol_n : int;
 }
 [@@deriving sexp, equal, compare, fields]
@@ -145,17 +145,17 @@ type state = {
 type 'a state_m = ('a, state) State.t [@@deriving sexp]
 type 'a state_result_m = ('a, Sexp.t, state) State.Result.t [@@deriving sexp]
 
-let get_level =
-  let%map.State state = State.get in
-  state.current_level
+(* let get_level = *)
+(*   let%map.State state = State.get in *)
+(*   state.current_level *)
 
-let incr_level =
-  let%bind.State.Result state = State.Result.get in
-  State.Result.put { state with current_level = state.current_level + 1 }
+(* let incr_level = *)
+(*   let%bind.State.Result state = State.Result.get in *)
+(*   State.Result.put { state with current_level = state.current_level + 1 } *)
 
-let decr_level =
-  let%bind.State.Result state = State.Result.get in
-  State.Result.put { state with current_level = state.current_level - 1 }
+(* let decr_level = *)
+(*   let%bind.State.Result state = State.Result.get in *)
+(*   State.Result.put { state with current_level = state.current_level - 1 } *)
 
 let operate_on_toplevel_type_constructors arg name mono ~f =
   let open State.Result.Let_syntax in
@@ -191,8 +191,8 @@ let empty_state =
     current_module_binding = empty_module_bindngs;
     current_qualification = [];
     symbol_n = 0;
-    type_vars = Lowercase.Map.empty;
-    current_level = 0;
+    (* type_vars = Lowercase.Map.empty; *)
+    (* current_level = 0; *)
   }
 
 let gensym : string state_m =
@@ -510,6 +510,11 @@ let free_weak_vars mono =
 
 let replace_ty_vars ~replacement_map =
   map_ty_vars ~f:(Lowercase.Map.find replacement_map)
+
+let no_free_vars poly =
+  let set, mono = split_poly poly in
+  let set' = free_ty_vars mono in
+  Lowercase.Set.equal set set'
 
 let gen_replacement_map vars =
   let open State.Result.Let_syntax in
@@ -1146,6 +1151,7 @@ let gen_var var =
   let%bind value = lookup_var (Qualified.Unqualified var) in
   let%bind () = pop_var var in
   let%bind mono = inst_result value in
+  let%bind mono = apply_substs mono in
   let%bind poly = State.Result.t_of_state (gen mono) in
   add_var var poly
 
@@ -1388,8 +1394,8 @@ and add_rec_bindings l =
   let%map () =
     List.map bindings ~f:(fun (inner, v) ->
         match v with
-        | false -> return ()
-        | true -> State.Result.all_unit (List.map inner ~f:gen_var))
+        | false -> State.Result.all_unit (List.map inner ~f:gen_var)
+        | true -> return ())
     |> State.Result.all_unit
   in
   let bindings = List.unzip bindings |> fst in
@@ -1456,3 +1462,29 @@ and mono_of_expr expr =
       let%bind var = apply_substs var in
       let%map res_type = apply_substs res_type in
       Lambda (var, res_type)
+
+let process_let_def (let_def : Ast.let_def) =
+  let open State.Result.Let_syntax in
+  let%bind () =
+    match let_def with
+    | Ast.Rec l ->
+        let%map _ = add_rec_bindings l in
+        ()
+    | Ast.Nonrec (binding, expr) ->
+        let%map _ = add_nonrec_bindings ~binding ~expr in
+        ()
+  in
+  let%bind state = State.Result.get in
+  State.Result.put { state with mono_ufds = Mono_ufds.empty }
+
+let process_toplevel (toplevel : Ast.toplevel) =
+  match toplevel with
+  | Ast.Type_def type_def -> process_type_def type_def
+  | Ast.Let let_def -> process_let_def let_def
+  | Ast.Module_def _ -> failwith "TODO"
+
+let process_toplevel_list (l : Ast.t) =
+  let open State.Result.Let_syntax in
+  let%bind () = State.Result.all_unit (List.map l ~f:process_toplevel) in
+  let%map state = State.Result.get in
+  state.current_module_binding
