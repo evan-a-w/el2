@@ -106,8 +106,10 @@ let type_binding_p () : Ast.Type_binding.t parser =
 
 let single_type_expr_p = qualified_p (identifier_p ()) >>| Ast.Type_expr.single
 
-let rec type_expr_p () : Ast.Type_expr.t parser =
+let rec type_expr_no_arrow_p () : Ast.Type_expr.t parser =
   multi_type_expr_p () <|> type_expr_no_spaces_p ()
+
+and type_expr_p () = arrow_type_expr_p () <|> type_expr_no_arrow_p ()
 
 and multi_type_expr_p () : Ast.Type_expr.t parser =
   let%bind first = type_expr_no_spaces_p () in
@@ -117,6 +119,12 @@ and multi_type_expr_p () : Ast.Type_expr.t parser =
 and type_expr_no_spaces_p () =
   tuple_type_expr_p () <|> paren_type_expr_p () <|> single_type_expr_p
   <|> pointer_type_expr_p ()
+
+and arrow_type_expr_p () =
+  let%bind first = type_expr_no_arrow_p () in
+  let%bind () = eat_token Token.Arrow in
+  let%map second = type_expr_p () in
+  Ast.Type_expr.Arrow (first, second)
 
 and paren_type_expr_p () =
   let%bind () = eat_token Token.LParen in

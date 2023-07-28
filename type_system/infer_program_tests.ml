@@ -12,6 +12,10 @@ type (a, b) result = Ok a | Error b
 
 type a option = Some a | None
 
+type a f = (a -> a)
+
+type alias = int
+
 let rec last = fun x ->
   match x with
   | Cons (x, Nil) -> Some x
@@ -43,14 +47,18 @@ let%expect_test "program a" =
   run program_a;
   [%expect
     {|
+    type alias
+
+    type a -> a
+
     type a list
 
     type a option
 
     type (a, b) result
 
-    let last : j0. j0 list -> j0 option
+    let last : a list -> a option
 
-    let list_of_option : q0. q0 option -> q0 list
+    let list_of_option : a option -> a list
 
     let x : int |}]

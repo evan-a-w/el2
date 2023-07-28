@@ -629,6 +629,10 @@ let rec type_of_type_expr type_expr : mono state_result_m =
   | Ast.Type_expr.Tuple l ->
       let%map monos = State.Result.all (List.map l ~f:type_of_type_expr) in
       Tuple monos
+  | Arrow (first, second) ->
+      let%map first = type_of_type_expr first
+      and second = type_of_type_expr second in
+      Lambda (first, second)
   | Ast.Type_expr.Single name -> lookup_type name
   | Ast.Type_expr.Multi (first, second) ->
       let%bind constructor_arg, _, mono = lookup_type_constructor second in
@@ -892,6 +896,28 @@ let process_type_def
                 (mono : mono)
                 (lhs_ty_vars : Lowercase.Set.t)
                 (rhs_ty_vars : Lowercase.Set.t)])
+
+let normalize (poly : poly) =
+  let count = ref 0 in
+  let get_var () =
+    let i = !count mod 26 in
+    let n = !count / 26 in
+    incr count;
+    let suff = if n = 0 then "" else Int.to_string n in
+    let c = Char.of_int_exn (i + 97) in
+    [%string "%{c#Char}%{suff}"]
+  in
+  let rec inner ~replacement_map poly =
+    match poly with
+    | Mono x -> Mono (replace_ty_vars ~replacement_map x)
+    | Forall (a, poly) ->
+        let rep = get_var () in
+        let replacement_map =
+          Lowercase.Map.set replacement_map ~key:a ~data:(TyVar rep)
+        in
+        Forall (rep, inner ~replacement_map poly)
+  in
+  inner ~replacement_map:Lowercase.Map.empty poly
 
 let inst (poly : poly) : mono state_m =
   let open State.Let_syntax in
@@ -1593,6 +1619,43 @@ let process_toplevel_list (l : Ast.t) =
   let%map state = State.Result.get in
   state.current_module_binding
 
+let rec replace_type_name ~type_name (mono : mono) =
+  match mono with
+  | TyVar _ | Weak _ -> mono
+  | Lambda (a, b) ->
+      Lambda (replace_type_name ~type_name a, replace_type_name ~type_name b)
+  | Tuple l -> Tuple (List.map l ~f:(replace_type_name ~type_name))
+  | Record (type_proof, l) ->
+      Record
+        ( replace_type_name_proof ~type_name type_proof,
+          List.Assoc.map l ~f:(Tuple2.map_fst ~f:(replace_type_name ~type_name))
+        )
+  | Enum (type_proof, l) ->
+      let l =
+        List.Assoc.map l ~f:(Option.map ~f:(replace_type_name ~type_name))
+      in
+      Enum (replace_type_name_proof ~type_name type_proof, l)
+  | Pointer x -> Pointer (replace_type_name ~type_name x)
+  | Recursive_constructor type_proof ->
+      Recursive_constructor (replace_type_name_proof ~type_name type_proof)
+  | Abstract type_proof ->
+      Abstract (replace_type_name_proof ~type_name type_proof)
+
+and replace_type_name_proof ~type_name type_proof =
+  { type_proof with type_name = Qualified.Unqualified type_name }
+
+let rec show_mono_def (mono : mono) =
+  let open State.Result.Let_syntax in
+  match mono with
+  | Recursive_constructor { type_name; _ } ->
+      let%bind mono = lookup_type ~type_var:false type_name in
+      show_mono_def mono
+  | Abstract _ -> return None
+  | Weak s -> return @@ Some [%string "weak %{s}"]
+  | TyVar s -> return @@ Some s
+  | Lambda _ | Tuple _ | Pointer _ -> show_mono mono >>| Option.some
+  | Record (_, _) | Enum (_, _) -> failwith "TODO"
+
 let show_module_bindings
     {
       toplevel_vars;
@@ -1605,8 +1668,8 @@ let show_module_bindings
   let open State.Result.Let_syntax in
   let%bind type_strings =
     Lowercase.Map.to_alist toplevel_types
-    |> List.map ~f:(fun (_, mono) ->
-           let%map mono_s = show_mono mono in
+    |> List.map ~f:(fun (type_name, mono) ->
+           let%map mono_s = replace_type_name ~type_name mono |> show_mono in
            "type " ^ mono_s)
     |> State.Result.all
   in
@@ -1618,14 +1681,16 @@ let show_module_bindings
              | x :: _ -> return x
              | _ -> State.Result.error [%message "Empty poly list"]
            in
-           let qualifications, mono = split_poly_to_list poly in
-           let prefix =
-             match qualifications with
-             | [] -> ""
-             | _ -> String.concat ~sep:". " qualifications ^ ". "
-           in
+           let poly = normalize poly in
+           let _, mono = split_poly_to_list poly in
+           (* let prefix = *)
+           (*   match qualifications with *)
+           (*   | [] -> "" *)
+           (*   | _ -> String.concat ~sep:". " qualifications ^ ". " *)
+           (* in *)
            let%map mono_s = show_mono mono in
-           "let " ^ v ^ " : " ^ prefix ^ mono_s)
+           [%string "let %{v} : %{mono_s}"])
+       (* [%string "let %{v} : %{prefix}%{mono_s}"]) *)
     |> State.Result.all
   in
   List.concat [ type_strings; var_strings ] |> String.concat ~sep:"\n\n"

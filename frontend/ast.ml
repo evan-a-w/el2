@@ -10,6 +10,7 @@ module Type_expr = struct
   type t =
     | Pointer of t
     | Single of Lowercase.t Qualified.t
+    | Arrow of t * t
     | Tuple of t Tuple.t
     | Multi of t * Lowercase.t Qualified.t
   [@@deriving sexp, variants, compare, hash, equal]
