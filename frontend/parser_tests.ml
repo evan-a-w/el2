@@ -748,6 +748,8 @@ let%expect_test "test_type_define" =
 
          type t = a list
 
+         type t = T.list
+
          type record = { a : int; mutable b : (string, int) } @[cringe: false]
        |}
   in
@@ -770,6 +772,10 @@ let%expect_test "test_type_define" =
          ((type_name (Mono t))
           (type_def
            (Type_expr (Multi (Single (Unqualified a)) (Unqualified list))))
+          (ast_tags ())))
+        (Type_def
+         ((type_name (Mono t))
+          (type_def (Type_expr (Single (Qualified T (Unqualified list)))))
           (ast_tags ())))
         (Type_def
          ((type_name (Mono record))
@@ -1035,7 +1041,8 @@ let%expect_test "rec two" =
        in last_node |}
   in
   test_parse_one ~program;
-  [%expect {|
+  [%expect
+    {|
     ((ast
       (Ok
        (Let_in

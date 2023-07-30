@@ -5,6 +5,7 @@ val get : 'a -> 'a * 'a
 val put : 'state -> (unit, 'state) t
 val ( >>= ) : ('a, 'e) t -> ('a -> ('b, 'e) t) -> ('b, 'e) t
 val ( >>| ) : ('a, 'e) t -> ('a -> 'b) -> ('b, 'e) t
+val modify : ('state -> 'state) -> (unit, 'state) t
 
 module Let_syntax : sig
   val return : 'a -> ('a, 'b) t
@@ -50,6 +51,7 @@ module Result : sig
   val ( >>= ) : ('a, 'd, 'e) t -> ('a -> ('b, 'd, 'e) t) -> ('b, 'd, 'e) t
   val ( >>| ) : ('a, 'd, 'e) t -> ('a -> 'b) -> ('b, 'd, 'e) t
   val ( <|> ) : ('a, 'd, 'e) t -> ('a, 'd, 'e) t -> ('a, 'd, 'e) t
+  val modify : ('state -> 'state) -> (unit, 'stop, 'state) t
 
   module Let_syntax : sig
     val return : 'a -> ('a, 'b, 'c) t

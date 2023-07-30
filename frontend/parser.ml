@@ -644,7 +644,7 @@ and typedef_p () =
   let%bind name = type_binding_p () in
   let%bind () = eat_token (Token.Symbol "=") in
   let%bind expr =
-    record_type_def_lit_p () <|> enum_type_def_lit_p () <|> type_expr_lit_p
+    type_expr_lit_p <|> record_type_def_lit_p () <|> enum_type_def_lit_p ()
   in
   let%map ast_tags =
     optional ast_tags_p >>| Option.value ~default:Ast.Ast_tags.empty

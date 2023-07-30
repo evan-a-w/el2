@@ -11,6 +11,8 @@ let bind x ~f state =
   let x, state' = x state in
   f x state'
 
+let modify f state = ((), f state)
+
 include Monad.Make2 (struct
   type nonrec ('a, 'state) t = ('a, 'state) t
 
@@ -29,6 +31,7 @@ module Result = struct
   let get state = (Ok state, state)
   let put state _ = (Ok (), state)
   let t_of_state = map ~f:(fun x -> Ok x)
+  let modify f state = (Ok (), f state)
 
   let map_error t ~f state =
     match t state with
