@@ -936,9 +936,10 @@ let inst (poly : poly) : mono state_m =
 let inst_result x = State.map (inst x) ~f:Result.return
 
 let unification_error mono1 mono2 =
+  let%bind.State.Result a = show_mono mono1 in
+  let%bind.State.Result b = show_mono mono2 in
   State.Result.error
-    [%message
-      "failed to unify types" ~first:(mono1 : mono) ~second:(mono2 : mono)]
+    [%message "failed to unify types" ~_:(a : string) ~_:(b : string)]
 
 let split_poly_list l =
   let set, monos =
@@ -1010,17 +1011,6 @@ let rec get_to_same_recursion_level ~unification_error mono1 mono2 =
 let occurs_check a mono =
   let open State.Result.Let_syntax in
   let free_vars = free_ty_vars mono in
-  (* let free_vars = *)
-  (*   match mono with *)
-  (*   | Recursive_constructor (_, map, _) *)
-  (*   | Record ((_, map, _), _) *)
-  (*   | Enum ((_, map, _), _) *)
-  (*   | Abstract (_, map, _) -> *)
-  (*       Lowercase.Map.fold map ~init:free_vars *)
-  (*         ~f:(fun ~key:_ ~data:mono free_vars -> *)
-  (*           Lowercase.Set.diff free_vars (free_ty_vars mono)) *)
-  (*   | _ -> free_vars *)
-  (* in *)
   match Lowercase.Set.mem free_vars a with
   | true ->
       State.Result.error
@@ -1032,14 +1022,11 @@ let rec unify mono1 mono2 =
   let%bind.State mono1 = find mono1 in
   let%bind.State mono2 = find mono2 in
   let unification_error () = unification_error mono1 mono2 in
-  (* let%bind mono1, mono2 = *)
-  (*   get_to_same_recursion_level ~unification_error mono1 mono2 *)
-  (* in *)
   match (mono1, mono2) with
   | ( (Recursive_constructor p1 | Abstract p1 | Record (p1, _) | Enum (p1, _)),
       (Recursive_constructor p2 | Abstract p2 | Record (p2, _) | Enum (p2, _)) )
     ->
-      unify_typr_proof ~unification_error p1 p2
+      unify_type_proof ~unification_error p1 p2
   | TyVar x, TyVar y when String.equal x y -> State.Result.return ()
   | TyVar x, _ ->
       let%bind () = occurs_check x mono2 in
@@ -1061,9 +1048,9 @@ let rec unify mono1 mono2 =
   | Tuple l1, Tuple l2 -> unify_lists ~unification_error l1 l2
   | _ -> unification_error ()
 
-and unify_typr_proof ~unification_error
-    { type_name = name1; tyvar_map = rep1; _ }
-    { type_name = name2; tyvar_map = rep2; _ } =
+and unify_type_proof ~unification_error
+    ({ type_name = name1; tyvar_map = rep1; _ } as a)
+    ({ type_name = name2; tyvar_map = rep2; _ } as b) =
   let monos1 = Lowercase.Map.data rep1 in
   let%bind.State monos1 = State.all (List.map ~f:find monos1) in
   let monos2 = Lowercase.Map.data rep2 in
@@ -1071,11 +1058,10 @@ and unify_typr_proof ~unification_error
   match Qualified.equal Lowercase.equal name1 name2 with
   | true -> unify_lists ~unification_error monos1 monos2
   | false ->
+      let%bind.State.Result a = show_type_proof a in
+      let%bind.State.Result b = show_type_proof b in
       State.Result.error
-        [%message
-          "types failed to unify"
-            ~first:(name1 : Lowercase.t Qualified.t)
-            ~second:(name2 : Lowercase.t Qualified.t)]
+        [%message "types failed to unify" ~_:(a : string) ~_:(b : string)]
 
 and unify_lists ~unification_error l1 l2 =
   let open State.Result.Let_syntax in

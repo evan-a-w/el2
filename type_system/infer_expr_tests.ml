@@ -259,9 +259,7 @@ let%expect_test "simple" =
     a0 list
     (int, a0 list)
     int list
-    (error
-     ("types failed to unify" (first (Unqualified int))
-      (second (Unqualified string)))) |}]
+    (error ("types failed to unify" int string)) |}]
 
 let%expect_test "if_expr" =
   infer_type_of_expr ~print_state:false ~programs:[ "if true then 1 else 0" ];
@@ -270,16 +268,12 @@ let%expect_test "if_expr" =
   infer_type_of_expr ~print_state:false ~programs:[ "if 1 then 1 else 0" ];
   [%expect
     {|
-    (error
-     ("types failed to unify" (first (Unqualified int))
-      (second (Unqualified bool)))) |}];
+    (error ("types failed to unify" int bool)) |}];
   infer_type_of_expr ~print_state:false
     ~programs:[ "if true then \"hi\" else 0" ];
   [%expect
     {|
-    (error
-     ("types failed to unify" (first (Unqualified string))
-      (second (Unqualified int)))) |}];
+    (error ("types failed to unify" string int)) |}];
   infer_type_of_expr ~print_state:false
     ~programs:[ "if true then Cons (1, Nil) else Cons (2, Cons (1, Nil))" ];
   [%expect
@@ -300,13 +294,9 @@ let%expect_test "match_expr" =
     {|
     int
     string
-    (error
-     ("types failed to unify" (first (Unqualified int))
-      (second (Unqualified list))))
+    (error ("types failed to unify" int "a0 list"))
     int
-    (error
-     ("types failed to unify" (first (Unqualified string))
-      (second (Unqualified int)))) |}]
+    (error ("types failed to unify" string int)) |}]
 
 let%expect_test "match_expr2" =
   infer_type_of_expr ~print_state:false
@@ -356,13 +346,9 @@ let%expect_test "let_expr2" =
       ];
   [%expect
     {|
-    (error
-     ("types failed to unify" (first (Unqualified list))
-      (second (Unqualified int))))
+    (error ("types failed to unify" "int list" int))
     int list -> int
-    (error
-     ("types failed to unify" (first (Unqualified int))
-      (second (Unqualified string))))
+    (error ("types failed to unify" int string))
     e0 list -> e0 list |}]
 
 let%expect_test "let_expr3" =
@@ -399,9 +385,7 @@ let%expect_test "let_expr_tag1" =
     {|
     e0 list -> e0 -> e0
     e0 list -> e0 -> e0
-    (error
-     ("types failed to unify" (first (Unqualified list))
-      (second (Unqualified int))))
+    (error ("types failed to unify" "c0 list" int))
     (error "Failed to parse (b expr)") |}]
 
 let%expect_test "type_def_record" =
@@ -533,9 +517,7 @@ let%expect_test "mutual recursion fail" =
       ];
   [%expect
     {|
-    (error
-     ("types failed to unify" (first (Unqualified bool))
-      (second (Unqualified int)))) |}]
+    (error ("types failed to unify" bool int)) |}]
 
 let%expect_test "recursive last not pointer" =
   infer_type_of_expr ~print_state:false
@@ -549,54 +531,7 @@ let%expect_test "recursive last not pointer" =
       ];
   [%expect
     {|
-    (error
-     ("failed to unify types"
-      (first
-       (Pointer
-        (Recursive_constructor
-         ((type_name (Unqualified node)) (ordering ((a)))
-          (tyvar_map ((a (TyVar i0)))) (level 0)))))
-      (second
-       (Record
-        ((type_name (Unqualified node)) (ordering ())
-         (tyvar_map
-          ((a
-            (Abstract
-             ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
-              (level 0))))))
-         (level 1))
-        ((value
-          ((Abstract
-            ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
-             (level 0)))
-           Immutable))
-         (next
-          ((Enum
-            ((type_name (Unqualified option)) (ordering ((a)))
-             (tyvar_map
-              ((a
-                (Pointer
-                 (Recursive_constructor
-                  ((type_name (Unqualified node)) (ordering ((a)))
-                   (tyvar_map
-                    ((a
-                      (Abstract
-                       ((type_name (Unqualified int)) (ordering ())
-                        (tyvar_map ()) (level 0))))))
-                   (level 0)))))))
-             (level 1))
-            ((None ())
-             (Some
-              ((Pointer
-                (Recursive_constructor
-                 ((type_name (Unqualified node)) (ordering ((a)))
-                  (tyvar_map
-                   ((a
-                     (Abstract
-                      ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
-                       (level 0))))))
-                  (level 0))))))))
-           Mutable))))))) |}]
+    (error ("failed to unify types" "&i0 node" "int node")) |}]
 
 let%expect_test "type annot1" =
   infer_type_of_expr ~print_state:false
@@ -611,9 +546,7 @@ let%expect_test "type annot1" =
     {|
     int -> string -> string
     c0 -> c0 -> c0
-    (error
-     ("types failed to unify" (first (Unqualified int))
-      (second (Unqualified string)))) |}]
+    (error ("types failed to unify" int string)) |}]
 
 let%expect_test "node value" =
   infer_type_of_expr ~print_state:false
@@ -627,9 +560,7 @@ let%expect_test "node value fail" =
     ~programs:[ {| { value : 1; next : Some &{ value : "a"; next : None } } |} ];
   [%expect
     {|
-    (error
-     ("types failed to unify" (first (Unqualified string))
-      (second (Unqualified int)))) |}]
+    (error ("types failed to unify" string int)) |}]
 
 let%expect_test "ref cons succ" =
   infer_type_of_expr ~print_state:false
@@ -656,22 +587,10 @@ let%expect_test "ref cons fl" =
       ];
   [%expect
     {|
-    (error
-     ("failed to unify types" (first (Pointer (TyVar a0)))
-      (second
-       (Abstract
-        ((type_name (Unqualified int)) (ordering ()) (tyvar_map ()) (level 0))))))
-    (error
-     ("types failed to unify" (first (Unqualified ref_list))
-      (second (Unqualified list))))
-    (error
-     ("failed to unify types" (first (Pointer (TyVar a0)))
-      (second
-       (Abstract
-        ((type_name (Unqualified int)) (ordering ()) (tyvar_map ()) (level 0))))))
-    (error
-     ("types failed to unify" (first (Unqualified int))
-      (second (Unqualified string)))) |}]
+    (error ("failed to unify types" &a0 int))
+    (error ("types failed to unify" "a0 ref_list" "d0 list"))
+    (error ("failed to unify types" &a0 int))
+    (error ("types failed to unify" int string)) |}]
 
 let%expect_test "rec tail nonempty list" =
   infer_type_of_expr ~print_state:false
@@ -829,9 +748,7 @@ let%expect_test "recursive last value keeps type" =
       ];
   [%expect
     {|
-    (error
-     ("types failed to unify" (first (Unqualified string))
-      (second (Unqualified int)))) |}]
+    (error ("types failed to unify" string int)) |}]
 
 let%expect_test "recursive last generalizes" =
   infer_type_of_expr ~print_state:false
