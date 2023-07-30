@@ -51,26 +51,17 @@ let%expect_test "program a" =
 
     type f = a -> a
 
-    type a list = (Enum
-     ((type_name (Unqualified list)) (ordering ((a))) (tyvar_map ((a (TyVar a))))
-      (level 1))
-     ((Cons
-       ((Tuple
-         ((TyVar a)
-          (Recursive_constructor
-           ((type_name (Unqualified list)) (ordering ((a)))
-            (tyvar_map ((a (TyVar a)))) (level 0)))))))
-      (Nil ())))
+    type a list =
+    	| Cons (a, a list)
+    	| Nil
 
-    type a option = (Enum
-     ((type_name (Unqualified option)) (ordering ((a)))
-      (tyvar_map ((a (TyVar a)))) (level 1))
-     ((Some ((TyVar a))) (None ())))
+    type a option =
+    	| Some a
+    	| None
 
-    type (a, b) result = (Enum
-     ((type_name (Unqualified result)) (ordering ((a b)))
-      (tyvar_map ((a (TyVar a)) (b (TyVar b)))) (level 1))
-     ((Ok ((TyVar a))) (Error ((TyVar b)))))
+    type (a, b) result =
+    	| Ok a
+    	| Error b
 
     let last : a list -> a option
 

@@ -1656,8 +1656,23 @@ let rec show_mono_def (mono : mono) =
   | Weak s -> return [%string "weak %{s}"]
   | TyVar s -> return s
   | Lambda _ | Tuple _ | Pointer _ -> show_mono mono
-  | Record (_, _) | Enum (_, _) ->
-      [%sexp_of: mono] mono |> Sexp.to_string_hum |> return
+  | Record (_, fields) ->
+      [%sexp
+        (fields : (Lowercase.t * (mono * [ `Mutable | `Immutable ])) List.t)]
+      |> Sexp.to_string_hum |> return
+  | Enum (_, cons) ->
+      let each (name, mono) =
+        let%map mono_s =
+          match mono with
+          | Some mono ->
+              let%map s = show_mono mono in
+              " " ^ s
+          | None -> return ""
+        in
+        [%string "\t| %{name}%{mono_s}"]
+      in
+      let%map l = State.Result.all @@ List.map cons ~f:each in
+      "\n" ^ String.concat ~sep:"\n" l
 
 let show_module_bindings
     {
