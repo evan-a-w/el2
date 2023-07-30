@@ -47,15 +47,30 @@ let%expect_test "program a" =
   run program_a;
   [%expect
     {|
-    type alias
+    type alias = int
 
-    type a -> a
+    type f = a -> a
 
-    type a list
+    type a list = (Enum
+     ((type_name (Unqualified list)) (ordering ((a))) (tyvar_map ((a (TyVar a))))
+      (level 1))
+     ((Cons
+       ((Tuple
+         ((TyVar a)
+          (Recursive_constructor
+           ((type_name (Unqualified list)) (ordering ((a)))
+            (tyvar_map ((a (TyVar a)))) (level 0)))))))
+      (Nil ())))
 
-    type a option
+    type a option = (Enum
+     ((type_name (Unqualified option)) (ordering ((a)))
+      (tyvar_map ((a (TyVar a)))) (level 1))
+     ((Some ((TyVar a))) (None ())))
 
-    type (a, b) result
+    type (a, b) result = (Enum
+     ((type_name (Unqualified result)) (ordering ((a b)))
+      (tyvar_map ((a (TyVar a)) (b (TyVar b)))) (level 1))
+     ((Ok ((TyVar a))) (Error ((TyVar b)))))
 
     let last : a list -> a option
 

@@ -1650,11 +1650,14 @@ let rec show_mono_def (mono : mono) =
   | Recursive_constructor { type_name; _ } ->
       let%bind mono = lookup_type ~type_var:false type_name in
       show_mono_def mono
-  | Abstract _ -> return None
-  | Weak s -> return @@ Some [%string "weak %{s}"]
-  | TyVar s -> return @@ Some s
-  | Lambda _ | Tuple _ | Pointer _ -> show_mono mono >>| Option.some
-  | Record (_, _) | Enum (_, _) -> failwith "TODO"
+  | Abstract { type_name; _ } ->
+      let name = Qualified.show Fn.id type_name in
+      return name
+  | Weak s -> return [%string "weak %{s}"]
+  | TyVar s -> return s
+  | Lambda _ | Tuple _ | Pointer _ -> show_mono mono
+  | Record (_, _) | Enum (_, _) ->
+      [%sexp_of: mono] mono |> Sexp.to_string_hum |> return
 
 let show_module_bindings
     {
@@ -1669,8 +1672,27 @@ let show_module_bindings
   let%bind type_strings =
     Lowercase.Map.to_alist toplevel_types
     |> List.map ~f:(fun (type_name, mono) ->
-           let%map mono_s = replace_type_name ~type_name mono |> show_mono in
-           "type " ^ mono_s)
+           let prefix_str =
+             match get_type_proof mono with
+             | Some { ordering = Some l; _ } -> (
+                 match l with
+                 | [] -> ""
+                 | [ x ] -> x ^ " "
+                 | xs -> "(" ^ String.concat ~sep:", " xs ^ ") ")
+             | Some _ | None -> ""
+           in
+           let%map rhs =
+             match mono with
+             | Abstract { type_name = type_name'; _ }
+               when Qualified.equal String.equal
+                      (Qualified.Unqualified type_name) type_name' ->
+                 return None
+             | _ -> show_mono_def mono >>| Option.some
+           in
+           match rhs with
+           | Some mono_s ->
+               [%string "type %{prefix_str}%{type_name} = %{mono_s}"]
+           | None -> [%string "type %{prefix_str}%{type_name}"])
     |> State.Result.all
   in
   let%map var_strings =
