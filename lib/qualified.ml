@@ -49,3 +49,22 @@ let show show_a t =
     | Unqualified a -> show_a a
   in
   loop t
+
+let append t uppercase =
+  let rec loop t =
+    match t with
+    | Qualified (qualification, t) -> Qualified (qualification, loop t)
+    | Unqualified _ -> Qualified (uppercase, t)
+  in
+  loop t
+
+let pop t =
+  let rec loop t =
+    match t with
+    | Qualified (q, (Unqualified _ as x)) -> (Some q, x)
+    | Qualified (qualification, t) ->
+        let q, r = loop t in
+        (q, Qualified (qualification, r))
+    | Unqualified _ -> (None, t)
+  in
+  loop t

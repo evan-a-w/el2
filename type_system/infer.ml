@@ -132,6 +132,20 @@ type state = {
 }
 [@@deriving sexp, equal, compare, fields]
 
+let add_module ~name ~module_bindings =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  let current_module_binding = state.current_module_binding in
+  let current_module_binding =
+    {
+      current_module_binding with
+      toplevel_modules =
+        Uppercase.Map.set current_module_binding.toplevel_modules ~key:name
+          ~data:module_bindings;
+    }
+  in
+  State.Result.put { state with current_module_binding }
+
 type 'a state_m = ('a, state) State.t [@@deriving sexp]
 type 'a state_result_m = ('a, Sexp.t, state) State.Result.t [@@deriving sexp]
 
@@ -1469,7 +1483,6 @@ and mono_of_binding ~(binding : Ast.Binding.t) ~expr1 ~expr2 ~generalize =
   let value_restriction = value_restriction expr1 in
   let%bind mono1 = mono_of_expr expr1 in
   let%bind mono1 = apply_substs mono1 in
-  (* print_s [%message (binding : Ast.Binding.t) ~mono1:(show_mono mono1 : Sexp.t)]; *)
   mono_of_binding_typed ~binding ~mono1 ~expr2 ~generalize ~value_restriction
 
 and add_nonrec_bindings ~binding ~expr =
@@ -1593,11 +1606,85 @@ let process_let_def (let_def : Ast.let_def) =
   let%bind state = State.Result.get in
   State.Result.put { state with mono_ufds = Mono_ufds.empty }
 
+let pop_module_bindings =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  let res = state.current_module_binding in
+  let current_module_binding = empty_module_bindings in
+  let name, current_qualification =
+    match state.current_qualification with
+    | [] -> (None, [])
+    | name :: rest -> (Some name, rest)
+  in
+  let%map () =
+    State.Result.put
+      { state with current_module_binding; current_qualification }
+  in
+  (name, res)
+
+let process_sig (_ : Ast.module_sig) = failwith "TODO"
+let process_module_def (_ : Ast.module_def) = failwith "TODO"
+
+let unify_module_bindings ~(signature : module_bindings)
+    ~definition:(_ : module_bindings) =
+  let open State.Result.Let_syntax in
+  return signature
+
+let process_module
+    ~(module_description : Ast.module_sig option Ast.module_description)
+    ~(module_def : Ast.module_def) =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  let old_module_binding = state.current_module_binding in
+  let current_module_binding =
+    {
+      empty_module_bindings with
+      opened_modules =
+        old_module_binding :: empty_module_bindings.opened_modules;
+    }
+  in
+  let current_qualification =
+    module_description.module_name :: state.current_qualification
+  in
+  let new_state =
+    { state with current_module_binding; current_qualification }
+  in
+  let%bind () = State.Result.put new_state in
+  match module_description with
+  | { module_name = _; functor_args = []; module_sig } ->
+      let%bind sig_module_bindings =
+        match module_sig with
+        | Some module_sig ->
+            let%bind () = process_sig module_sig in
+            let%map _, r = pop_module_bindings in
+            Some r
+        | None -> return None
+      in
+      let%bind () = process_module_def module_def in
+      let%bind def_module_bindings =
+        let%map _, r = pop_module_bindings in
+        r
+      in
+      let%bind module_bindings =
+        match sig_module_bindings with
+        | Some sig_module_bindings ->
+            unify_module_bindings ~signature:sig_module_bindings
+              ~definition:def_module_bindings
+        | None -> return def_module_bindings
+      in
+      let%bind () =
+        State.Result.put
+          { new_state with current_module_binding = old_module_binding }
+      in
+      add_module ~name:module_description.module_name ~module_bindings
+  | _ -> failwith "TODO"
+
 let process_toplevel (toplevel : Ast.toplevel) =
   match toplevel with
   | Ast.Type_def type_def -> process_type_def type_def
   | Ast.Let let_def -> process_let_def let_def
-  | Ast.Module_def _ -> failwith "TODO"
+  | Ast.Module_def { module_description; module_def } ->
+      process_module ~module_description ~module_def
 
 let process_toplevel_list (l : Ast.t) =
   let open State.Result.Let_syntax in
@@ -1706,14 +1793,8 @@ let show_module_bindings
            in
            let poly = normalize poly in
            let _, mono = split_poly_to_list poly in
-           (* let prefix = *)
-           (*   match qualifications with *)
-           (*   | [] -> "" *)
-           (*   | _ -> String.concat ~sep:". " qualifications ^ ". " *)
-           (* in *)
            let%map mono_s = show_mono mono in
            [%string "let %{v} : %{mono_s}"])
-       (* [%string "let %{v} : %{prefix}%{mono_s}"]) *)
     |> State.Result.all
   in
   List.concat [ type_strings; var_strings ] |> String.concat ~sep:"\n\n"
