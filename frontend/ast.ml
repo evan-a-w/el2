@@ -128,7 +128,7 @@ and let_def = Rec of let_each list | Nonrec of let_each
 and module_def =
   | Struct of toplevel list
   | Named of Uppercase.t Qualified.t
-  | Functor_app of module_def * module_def list
+  | Functor_app of Uppercase.t Qualified.t * module_def list
   | Module_typed of module_def * module_sig
 [@@deriving sexp, equal, hash, compare]
 

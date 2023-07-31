@@ -183,7 +183,7 @@ let%expect_test "test_named_module_functor_app" =
       ((Module_def
         (module_description ((module_name X) (functor_args ()) (module_sig ())))
         (module_def
-         (Functor_app (Named (Unqualified Y))
+         (Functor_app (Unqualified Y)
           ((Named (Unqualified Arg1))
            (Module_typed (Named (Unqualified Arg2))
             ((Sig_type_def

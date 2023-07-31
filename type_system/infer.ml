@@ -1693,13 +1693,10 @@ let pop_module_bindings =
   in
   (name, res)
 
-let process_sig (_ : Ast.module_sig) = failwith "TODO"
-let process_module_def (_ : Ast.module_def) = failwith "TODO"
-
-let unify_module_bindings ~(signature : module_bindings)
+let rec unify_module_bindings ~(signature : module_bindings)
     ~(definition : module_bindings) =
   let open State.Result.Let_syntax in
-  let%bind joined_map =
+  let%bind joined_vars =
     try
       return
       @@ Lowercase.Map.merge signature.toplevel_vars definition.toplevel_vars
@@ -1712,23 +1709,86 @@ let unify_module_bindings ~(signature : module_bindings)
         [%message "Value in signature not in definition" (key : Lowercase.t)]
   in
   let%bind () =
-    Lowercase.Map.fold joined_map ~init:(return ())
+    Lowercase.Map.fold joined_vars ~init:(return ())
       ~f:(fun ~key:_ ~data:(left, right) acc ->
         let%bind () = acc in
         let _, sig_val = List.hd_exn left |> split_poly in
         let _, def_val = List.hd_exn right |> split_poly in
         unify_less_general sig_val def_val)
   in
-  (* { *)
-  (*   toplevel_vars : poly list Lowercase.Map.t; *)
-  (*   toplevel_records : (poly Lowercase.Map.t * poly) Lowercase.Set.Map.t; *)
-  (*   toplevel_constructors : (poly option * poly) Uppercase.Map.t; *)
-  (*   toplevel_type_constructors : type_constructor Lowercase.Map.t; *)
-  (*   toplevel_types : mono Lowercase.Map.t; *)
-  (*   toplevel_modules : module_bindings Uppercase.Map.t; *)
-  (*   opened_modules : module_bindings List.t; *)
-  (* } *)
+  let%bind joined_type_constructors =
+    try
+      return
+      @@ Lowercase.Map.merge signature.toplevel_type_constructors
+           definition.toplevel_type_constructors ~f:(fun ~key -> function
+           | `Both x -> Some x
+           | `Left _ -> raise (Field_left_only key)
+           | `Right _ -> None)
+    with Field_left_only key ->
+      State.Result.error
+        [%message
+          "Type constructor in signature not in definition" (key : Lowercase.t)]
+  in
+  let%bind () =
+    Lowercase.Map.fold joined_type_constructors ~init:(return ())
+      ~f:(fun ~key:_ ~data:(left, right) acc ->
+        let%bind () = acc in
+        let arg1, mono1 = left in
+        let arg2, mono2 = right in
+        let%bind () =
+          match Option.equal equal_type_constructor_arg arg1 arg2 with
+          | true -> return ()
+          | false ->
+              State.Result.error
+                [%message
+                  "Type constructor arguments do not match"
+                    (arg1 : type_constructor_arg option)
+                    (arg2 : type_constructor_arg option)]
+        in
+        unify mono1 mono2)
+  in
+  let%bind joined_modules =
+    try
+      return
+      @@ Uppercase.Map.merge signature.toplevel_modules
+           definition.toplevel_modules ~f:(fun ~key -> function
+           | `Both x -> Some x
+           | `Left _ -> raise (Field_left_only key)
+           | `Right _ -> None)
+    with Field_left_only key ->
+      State.Result.error
+        [%message "Module in signature not in definition" (key : Uppercase.t)]
+  in
+  let%bind () =
+    Uppercase.Map.fold joined_modules ~init:(return ())
+      ~f:(fun ~key:_ ~data:(left, right) acc ->
+        let%bind () = acc in
+        unify_module_bindings ~signature:left ~definition:right >>| ignore)
+  in
   return signature
+
+let rec type_module_named (f : Uppercase.t Qualified.t) =
+  let _ = f in
+  failwith "TODO"
+
+and type_struct (_ : Ast.toplevel list) = failwith "TODO"
+
+and type_functor_app (f : Uppercase.t Qualified.t) (a : Ast.module_def list) =
+  let _ = (f, a) in
+  failwith "TODO"
+
+and type_sig (_ : Ast.module_sig) = failwith "TODO"
+
+and type_module_def (d : Ast.module_def) =
+  match d with
+  | Ast.Struct s -> type_struct s
+  | Ast.Named f -> type_module_named f
+  | Ast.Functor_app (f, a) -> type_functor_app f a
+  | Ast.Module_typed (s, si) ->
+      let open State.Result.Let_syntax in
+      let%bind signature = type_sig si in
+      let%bind definition = type_module_def s in
+      unify_module_bindings ~signature ~definition
 
 let rec process_module
     ~(module_description : Ast.module_sig option Ast.module_description)
@@ -1755,16 +1815,11 @@ let rec process_module
       let%bind sig_module_bindings =
         match module_sig with
         | Some module_sig ->
-            let%bind () = process_sig module_sig in
-            let%map _, r = pop_module_bindings in
+            let%map r = type_sig module_sig in
             Some r
         | None -> return None
       in
-      let%bind () = process_module_def module_def in
-      let%bind def_module_bindings =
-        let%map _, r = pop_module_bindings in
-        r
-      in
+      let%bind def_module_bindings = type_module_def module_def in
       let%bind module_bindings =
         match sig_module_bindings with
         | Some sig_module_bindings ->

@@ -543,7 +543,7 @@ and module_def_no_functor_p () =
   <|> module_def_typed_p ()
 
 and module_def_functor_app_p () =
-  let%bind first = module_def_no_functor_p () in
+  let%bind first = qualified_p uppercase_p in
   let%map args = many1 (module_def_typed_p () <|> module_def_in_paren_p ()) in
   Ast.Functor_app (first, args)
 
