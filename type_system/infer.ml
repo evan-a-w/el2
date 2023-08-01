@@ -10,35 +10,15 @@ end)
 
 type level = int [@@deriving sexp, equal, hash, compare]
 
-type module_bindings = { module_ : module_; opened_modules : module_ List.t }
-[@@deriving sexp, equal, hash, compare, fields]
-
-let base_module_bindings = { module_ = base_module; opened_modules = [] }
-
-let empty_module_bindings =
-  { module_ = empty_module; opened_modules = [ base_module ] }
-
 type state = {
   mono_ufds : Mono_ufds.t;
-  current_module_binding : module_bindings;
+  in_scope : in_scope;
   current_qualification : Uppercase.t list;
   (* type_vars : (Lowercase.t * level) Lowercase.Map.t; *)
   (* current_level : level; *)
   symbol_n : int;
 }
 [@@deriving sexp, equal, compare, fields]
-
-let bind_module ~name ~module_ =
-  let open State.Result.Let_syntax in
-  let%bind state = State.Result.get in
-  let current_module_binding = state.current_module_binding in
-  let current_module_binding =
-    {
-      current_module_binding with
-      module_ = add_module current_module_binding.module_ ~name ~value:module_;
-    }
-  in
-  State.Result.put { state with current_module_binding }
 
 type 'a state_m = ('a, state) State.t [@@deriving sexp]
 type 'a state_result_m = ('a, Sexp.t, state) State.Result.t [@@deriving sexp]
@@ -55,41 +35,19 @@ type 'a state_result_m = ('a, Sexp.t, state) State.Result.t [@@deriving sexp]
 (*   let%bind.State.Result state = State.Result.get in *)
 (*   State.Result.put { state with current_level = state.current_level - 1 } *)
 
-let operate_on_toplevel_type_constructors arg name mono ~f =
-  let open State.Result.Let_syntax in
-  let%bind state = State.Result.get in
-  let data = (arg, mono) in
-  let f = f ~key:name ~data in
-  let%bind module_ =
-    map_type_constructors state.current_module_binding.module_ ~f
-  in
-  let current_module_binding = { state.current_module_binding with module_ } in
-  State.Result.put { state with current_module_binding }
-
-let add_type_constructor arg name mono =
-  operate_on_toplevel_type_constructors arg name mono
-    ~f:(fun ~key ~data toplevel_type_constructors ->
-      match Lowercase.Map.add toplevel_type_constructors ~key ~data with
-      | `Ok m -> State.Result.return m
-      | `Duplicate ->
-          State.Result.error
-            [%message "Duplicate type constructor" (name : Lowercase.t)])
-
-let set_type_constructor arg name mono =
-  operate_on_toplevel_type_constructors arg name mono
-    ~f:(fun ~key ~data toplevel_type_constructors ->
-      State.Result.return
-      @@ Lowercase.Map.set toplevel_type_constructors ~key ~data)
-
 let empty_state =
   {
     mono_ufds = Mono_ufds.empty;
-    current_module_binding = empty_module_bindings;
+    in_scope = empty_in_scope;
     current_qualification = [];
     symbol_n = 0;
     (* type_vars = Lowercase.Map.empty; *)
     (* current_level = 0; *)
   }
+
+let clear_scope =
+  let%bind.State.Result state = State.Result.get in
+  State.Result.put { state with in_scope = empty_in_scope }
 
 let gensym : string state_m =
   let open State.Let_syntax in
@@ -104,18 +62,6 @@ let print_ufds_map : unit state_result_m =
   let open State.Result.Let_syntax in
   let%map state = State.Result.get in
   print_s [%message (state.mono_ufds : Mono_ufds.t)]
-
-let add_type name mono = add_type_constructor None name mono
-
-let map_module_ ~f =
-  let open State.Let_syntax in
-  let%bind state = State.get in
-  let module_ = f state.current_module_binding.module_ in
-  let current_module_binding = { state.current_module_binding with module_ } in
-  State.Result.put { state with current_module_binding }
-
-let add_var name poly = map_module_ ~f:(add_value ~name ~poly)
-let pop_var name = map_module_ ~f:(pop_value ~name)
 
 let merge_variance_one variances ~name ~variance =
   Lowercase.Map.change variances name ~f:(function
@@ -173,117 +119,6 @@ let ufds_find mono =
   let%map.State state = State.get in
   Mono_ufds.find state.mono_ufds mono
 
-let search_modules :
-    type a.
-    module_bindings ->
-    qualifications:Qualified.qualifications ->
-    search_for:(module_ -> a option) ->
-    a option =
-  let find_in_opened_modules module_bindings ~qualifications ~search_for =
-    List.find_map module_bindings.opened_modules
-      ~f:(find_in_modules ~qualifications ~search_for)
-  in
-  fun module_bindings ~qualifications ~(search_for : module_ -> a option) ->
-    match
-      find_in_modules module_bindings.module_ ~qualifications ~search_for
-    with
-    | Some _ as x -> x
-    | None -> find_in_opened_modules module_bindings ~qualifications ~search_for
-
-let find_module_binding qualifications =
-  let%bind.State state = State.get in
-  match
-    search_modules state.current_module_binding ~qualifications
-      ~search_for:Option.some
-  with
-  | Some x -> State.Result.return x
-  | None ->
-      State.Result.error
-        [%message
-          "module not found" (qualifications : Qualified.qualifications)]
-
-let lookup_type_constructor qualified_name =
-  let%bind.State.Result state = State.Result.get in
-  find_type_constructor state.current_module_binding.module_ ~qualified_name
-
-let lookup_type ?(type_var = true) qualified_name =
-  let open State.Result.Let_syntax in
-  let%bind state = State.Result.get in
-  let qualifications, type_name = Qualified.split qualified_name in
-  let type_var_fn = if type_var then Option.some else Fn.const None in
-  let type_var_type =
-    match qualifications with [] -> type_var_fn (TyVar type_name) | _ -> None
-  in
-  match
-    Option.first_some
-      (find_type state.current_module_binding.module_ ~qualified_name)
-      type_var_type
-  with
-  | Some x -> State.Result.return x
-  | None ->
-      State.Result.error
-        [%message "type not found" (qualified_name : Lowercase.t Qualified.t)]
-
-let get_type_proof mono =
-  match mono with
-  | Recursive_constructor proof
-  | Abstract proof
-  | Record (proof, _)
-  | Enum (proof, _) ->
-      Some proof
-  | _ -> None
-
-let get_ordering type_name =
-  let open State.Result.Let_syntax in
-  let%map _, t = lookup_type_constructor type_name in
-  let ordering =
-    match get_type_proof t with
-    | Some { ordering; _ } -> ordering
-    | None -> None
-  in
-  Option.value ~default:[] ordering
-
-let rec show_type_proof { type_name; ordering = _; tyvar_map; _ } =
-  let open State.Result.Let_syntax in
-  let%bind ordering = get_ordering type_name in
-  let%map type_var_map =
-    List.map
-      ~f:(fun k ->
-        match Lowercase.Map.find tyvar_map k with
-        | Some v -> show_mono v
-        | None -> return k)
-      ordering
-    |> State.Result.all
-  in
-  let prefix_string =
-    match type_var_map with
-    | [] -> ""
-    | [ x ] -> x ^ " "
-    | l -> "(" ^ String.concat ~sep:", " l ^ ") "
-  in
-  let type_string = Qualified.show Fn.id type_name in
-  prefix_string ^ type_string
-
-and show_mono mono =
-  let open State.Result.Let_syntax in
-  match mono with
-  | Weak s | TyVar s -> return s
-  | Recursive_constructor proof
-  | Abstract proof
-  | Record (proof, _)
-  | Enum (proof, _) ->
-      show_type_proof proof
-  | Lambda (a, b) ->
-      let%bind a = show_mono a in
-      let%map b = show_mono b in
-      a ^ " -> " ^ b
-  | Tuple l ->
-      let%map shown = List.map ~f:show_mono l |> State.Result.all in
-      "(" ^ String.concat ~sep:", " shown ^ ")"
-  | Pointer m ->
-      let%map m = show_mono m in
-      "&" ^ m
-
 let rec split_poly = function
   | Mono m -> (Lowercase.Set.empty, m)
   | Forall (a, b) ->
@@ -299,6 +134,30 @@ let split_poly_to_list poly =
   in
   inner poly |> Tuple2.map_fst ~f:List.rev
 
+let on_in_scope f =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  f state.in_scope
+
+let map_in_scope f =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  let%map in_scope = f state.in_scope in
+  { state with in_scope }
+
+let on_module_ f =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  f state.in_scope.module_
+
+let map_in_scope f =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  let%map module_ = f state.in_scope.module_ in
+  { state with in_scope = { state.in_scope with module_ } }
+
+let show_mono mono = on_in_scope (show_mono ~mono)
+
 let show_mono_ufds (mono_ufds : Mono_ufds.t) =
   let open State.Result.Let_syntax in
   let%map alist =
@@ -310,15 +169,6 @@ let show_mono_ufds (mono_ufds : Mono_ufds.t) =
     |> State.Result.all
   in
   [%message (alist : (string * string) list)]
-
-let lookup_var qualified_name : _ state_result_m =
-  let open State.Result.Let_syntax in
-  let%bind state = State.Result.get in
-  match find_value state.current_module_binding.module_ ~qualified_name with
-  | Some (x :: _) -> State.Result.return x
-  | None | Some [] ->
-      State.Result.error
-        [%message "var not in scope" (qualified_name : Lowercase.t Qualified.t)]
 
 let rec map_ty_vars ~f (mono : mono) =
   match mono with
@@ -486,9 +336,12 @@ let rec type_of_type_expr type_expr : mono state_result_m =
       let%map first = type_of_type_expr first
       and second = type_of_type_expr second in
       Lambda (first, second)
-  | Ast.Type_expr.Single name -> lookup_type name
-  | Ast.Type_expr.Multi (first, second) ->
-      let%bind constructor_arg, mono = lookup_type_constructor second in
+  | Ast.Type_expr.Single qualified_name ->
+      lookup_type ~qualified_name |> on_in_scope
+  | Ast.Type_expr.Multi (first, qualified_name) ->
+      let%bind constructor_arg, mono =
+        lookup_type_constructor ~qualified_name |> on_in_scope
+      in
       let%bind arg = type_of_type_expr first in
       let vars =
         match constructor_arg with
@@ -504,7 +357,7 @@ let rec type_of_type_expr type_expr : mono state_result_m =
             State.Result.error
               [%message
                 "type constructor expected more args"
-                  ~constructor:(second : string Qualified.t)
+                  ~constructor:(qualified_name : string Qualified.t)
                   ~got:(List.length arg_list : int)
                   ~expected:(List.length vars : int)]
       in
@@ -515,7 +368,7 @@ let rec type_of_type_expr type_expr : mono state_result_m =
             State.Result.error
               [%message
                 "duplicate arg in type constructor"
-                  ~constructor:(second : string Qualified.t)
+                  ~constructor:(qualified_name : string Qualified.t)
                   (x : Lowercase.t)]
       in
       replace_ty_vars ~replacement_map mono
@@ -524,70 +377,6 @@ let gen (mono : mono) : poly state_m =
   free_ty_vars mono
   |> Lowercase.Set.fold ~init:(Mono mono) ~f:(fun acc var -> Forall (var, acc))
   |> State.return
-
-let tingo ~f ~error =
-  let open State.Result.Let_syntax in
-  let%bind state = State.Result.get in
-  let%bind module_ = f state.current_module_binding.module_ in
-  match f state.current_module_binding.module_ with
-  | `Ok module_ ->
-      State.Result.put
-        {
-          state with
-          current_module_binding = { state.current_module_binding with module_ };
-        }
-  | `Duplicate -> error ()
-
-let add_constructor name type_constructor_arg mono =
-  let error () =
-    State.Result.error
-      [%message "duplicate constructor" ~constructor:(name : Uppercase.t)]
-  in
-  tingo
-    ~f:(fun module_ ->
-      add_constructor module_ ~name ~type_constructor_arg ~mono)
-    ~error
-
-let add_record field_map poly : _ state_result_m =
-  let error () =
-    State.Result.error
-      [%message "duplicate record" (field_map : poly Lowercase.Map.t)]
-  in
-  tingo ~f:(fun module_ -> add_record module_ ~field_map ~poly) ~error
-
-let lookup_record qualified_map =
-  let open State.Result.Let_syntax in
-  let%bind state = State.Result.get in
-  let qualifications, map = Qualified.split qualified_map in
-  let fields =
-    Lowercase.Map.fold map ~init:Lowercase.Set.empty ~f:(fun ~key ~data:_ acc ->
-        Lowercase.Set.add acc key)
-  in
-  let res =
-    search_modules state.current_module_binding ~qualifications
-      ~search_for:(fun module_bindings ->
-        Lowercase.Set.Map.find module_bindings.toplevel_records fields)
-  in
-  match res with
-  | Some x -> State.Result.return x
-  | None ->
-      State.Result.error
-        [%message "record not in scope" (fields : Lowercase.Set.t)]
-
-let lookup_constructor qualified_constructor =
-  let open State.Result.Let_syntax in
-  let%bind state = State.Result.get in
-  let qualifications, name = Qualified.split qualified_constructor in
-  let res =
-    search_modules state.current_module_binding ~qualifications
-      ~search_for:(fun module_bindings ->
-        Uppercase.Map.find module_bindings.toplevel_constructors name)
-  in
-  match res with
-  | Some x -> State.Result.return x
-  | None ->
-      State.Result.error
-        [%message "constructor not in scope" (name : Uppercase.t)]
 
 let type_proof_of_monos ~type_name monos level =
   let free_var_set =
@@ -634,7 +423,7 @@ let type_of_type_def_lit ~type_name ~update_records_and_constructors
                 ~f:(fun acc (field, poly) ->
                   Lowercase.Map.add_exn acc ~key:field ~data:poly)
             in
-            add_record field_map poly
+            add_record ~field_map ~poly |> on_module_
       in
       mono
   | Ast.Type_def_lit.Enum l ->
