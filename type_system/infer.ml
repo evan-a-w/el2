@@ -1151,18 +1151,28 @@ let open_module (qualifications : Qualified.qualifications) =
   in
   State.Result.put { state with current_module_binding }
 
-let pop_module =
-  State.Result.modify (fun ({ current_module_binding; _ } as state) ->
-      let current_module_binding =
-        {
-          current_module_binding with
-          opened_modules =
-            (match current_module_binding.opened_modules with
-            | [] -> []
-            | _ :: xs -> xs);
-        }
-      in
-      { state with current_module_binding })
+let pop_opened_module =
+  let open State.Result.Let_syntax in
+  let%bind ({ current_module_binding; _ } as state) = State.Result.get in
+  let opened_modules =
+    match current_module_binding.opened_modules with [] -> [] | _ :: xs -> xs
+  in
+  let current_module_binding = { current_module_binding with opened_modules } in
+  State.Result.put { state with current_module_binding }
+
+let change_to_new_module =
+  let open State.Result.Let_syntax in
+  let%bind ({ current_module_binding = old_module_binding; _ } as state) =
+    State.Result.get
+  in
+  let current_module_binding =
+    {
+      empty_module_bindings with
+      opened_modules = old_module_binding :: old_module_binding.opened_modules;
+    }
+  in
+  let%map () = State.Result.put { state with current_module_binding } in
+  old_module_binding
 
 let make_free_vars_weak mono =
   let free_vars = free_ty_vars mono in
@@ -1305,7 +1315,7 @@ let rec gen_binding_ty_vars ~initial_vars ~(binding : Ast.Binding.t) :
       in
       let monos, vars_list = List.unzip processed_list in
       let vars = List.concat (List.rev vars_list) in
-      let%map () = pop_module in
+      let%map () = pop_opened_module in
       (Tuple monos, List.concat [ vars; initial_vars ])
   | Ast.Binding.Record qualified_map ->
       let qualifications, record = Qualified.split qualified_map in
@@ -1344,7 +1354,7 @@ let rec gen_binding_ty_vars ~initial_vars ~(binding : Ast.Binding.t) :
             vars :: vars_list)
       in
       let res_vars = List.concat (List.rev vars_list) in
-      let%map () = pop_module in
+      let%map () = pop_opened_module in
       (mono_searched, List.concat [ res_vars; initial_vars ])
 
 let gen_var var =
@@ -1365,13 +1375,13 @@ let rec mono_of_node node =
       let qualifications, tuple = Qualified.split qualified_tuple in
       let%bind () = open_module qualifications in
       let%bind l = State.Result.all (List.map tuple ~f:mono_of_expr) in
-      let%map () = pop_module in
+      let%map () = pop_opened_module in
       Tuple l
   | Ast.Wrapped qualified_expr ->
       let qualifications, expr = Qualified.split qualified_expr in
       let%bind () = open_module qualifications in
       let%bind res = mono_of_expr expr in
-      let%map () = pop_module in
+      let%map () = pop_opened_module in
       res
   | Ast.Constructor constructor -> type_of_constructor constructor
   | Ast.Record qualified_record ->
@@ -1494,7 +1504,7 @@ and process_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono :
       in
       let monos, vars_list = List.unzip processed_list in
       let vars = List.concat (List.rev vars_list) in
-      let%map () = pop_module in
+      let%map () = pop_opened_module in
       (Tuple monos, List.concat [ vars; initial_vars ])
   | Ast.Binding.Record qualified_map ->
       let qualifications, record = Qualified.split qualified_map in
@@ -1534,7 +1544,7 @@ and process_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono :
             vars :: vars_list)
       in
       let res_vars = List.concat (List.rev vars_list) in
-      let%map () = pop_module in
+      let%map () = pop_opened_module in
       (mono_searched, List.concat [ res_vars; initial_vars ])
 
 and mono_of_binding_typed ~(binding : Ast.Binding.t) ~mono1 ~expr2 ~generalize
@@ -1677,7 +1687,7 @@ let process_let_def (let_def : Ast.let_def) =
   let%bind state = State.Result.get in
   State.Result.put { state with mono_ufds = Mono_ufds.empty }
 
-let pop_module_bindings =
+let pop_opened_module_bindings =
   let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let res = state.current_module_binding in
