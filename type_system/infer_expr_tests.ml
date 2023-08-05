@@ -91,7 +91,7 @@ let%expect_test "type_expr single lit" =
                  ((type_name (Unqualified unit)) (ordering ()) (tyvar_map ())
                   (level 0)))))))
             (toplevel_modules ()) (opened_modules ()))))))
-       (current_qualification ()) (symbol_n 0)))) |}]
+       (module_history ((current_name Base) (previous_modules ()))) (symbol_n 0)))) |}]
 
 let%expect_test "type_expr multi lit" =
   let lit =
@@ -168,7 +168,7 @@ let%expect_test "type_expr multi lit" =
                  ((type_name (Unqualified unit)) (ordering ()) (tyvar_map ())
                   (level 0)))))))
             (toplevel_modules ()) (opened_modules ()))))))
-       (current_qualification ()) (symbol_n 0)))) |}]
+       (module_history ((current_name Base) (previous_modules ()))) (symbol_n 0)))) |}]
 
 let%expect_test "type_expr multi lit" =
   let action : unit state_result_m =

@@ -123,10 +123,16 @@ let empty_module_bindings =
     opened_modules = [ base_module_bindings ];
   }
 
+type module_history = {
+  current_name : Uppercase.t;
+  previous_modules : (Uppercase.t * module_bindings) list;
+}
+[@@deriving sexp, equal, compare, fields]
+
 type state = {
   mono_ufds : Mono_ufds.t;
   current_module_binding : module_bindings;
-  current_qualification : Uppercase.t list;
+  module_history : module_history;
   (* type_vars : (Lowercase.t * level) Lowercase.Map.t; *)
   (* current_level : level; *)
   symbol_n : int;
@@ -194,7 +200,7 @@ let empty_state =
   {
     mono_ufds = Mono_ufds.empty;
     current_module_binding = empty_module_bindings;
-    current_qualification = [];
+    module_history = { current_name = "Base"; previous_modules = [] };
     symbol_n = 0;
     (* type_vars = Lowercase.Map.empty; *)
     (* current_level = 0; *)
@@ -1160,19 +1166,65 @@ let pop_opened_module =
   let current_module_binding = { current_module_binding with opened_modules } in
   State.Result.put { state with current_module_binding }
 
-let change_to_new_module =
+let change_to_module name module_bindings =
   let open State.Result.Let_syntax in
   let%bind ({ current_module_binding = old_module_binding; _ } as state) =
     State.Result.get
   in
+  let { current_name; previous_modules } = state.module_history in
+  let module_history =
+    {
+      current_name = name;
+      previous_modules = (current_name, old_module_binding) :: previous_modules;
+    }
+  in
   let current_module_binding =
     {
-      empty_module_bindings with
+      module_bindings with
       opened_modules = old_module_binding :: old_module_binding.opened_modules;
     }
   in
-  let%map () = State.Result.put { state with current_module_binding } in
-  old_module_binding
+  State.Result.put { state with current_module_binding; module_history }
+
+let change_to_new_module name = change_to_module name empty_module_bindings
+
+let pop_module =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  let old_module_binding = state.current_module_binding in
+  let { current_name; previous_modules } = state.module_history in
+  let current_module_binding, module_history =
+    match previous_modules with
+    | [] -> (empty_module_bindings, { current_name; previous_modules = [] })
+    | (name, current_module_binding) :: xs ->
+        (current_module_binding, { current_name = name; previous_modules = xs })
+  in
+  let%map () =
+    State.Result.put { state with current_module_binding; module_history }
+  in
+  (current_name, old_module_binding)
+
+let pop_module_and_add ~module_bindings =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  let { current_name; previous_modules } = state.module_history in
+  let%bind current_module_binding, module_history =
+    match previous_modules with
+    | [] -> State.Result.error [%message "No previous modules"]
+    | (name, current_module_binding) :: xs ->
+        return
+          ( current_module_binding,
+            { current_name = name; previous_modules = xs } )
+  in
+  let%bind () =
+    State.Result.put { state with current_module_binding; module_history }
+  in
+  add_module ~name:current_name ~module_bindings
+
+let pop_module_and_add_current =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  pop_module_and_add ~module_bindings:state.current_module_binding
 
 let make_free_vars_weak mono =
   let free_vars = free_ty_vars mono in
@@ -1687,22 +1739,6 @@ let process_let_def (let_def : Ast.let_def) =
   let%bind state = State.Result.get in
   State.Result.put { state with mono_ufds = Mono_ufds.empty }
 
-let pop_opened_module_bindings =
-  let open State.Result.Let_syntax in
-  let%bind state = State.Result.get in
-  let res = state.current_module_binding in
-  let current_module_binding = empty_module_bindings in
-  let name, current_qualification =
-    match state.current_qualification with
-    | [] -> (None, [])
-    | name :: rest -> (Some name, rest)
-  in
-  let%map () =
-    State.Result.put
-      { state with current_module_binding; current_qualification }
-  in
-  (name, res)
-
 let rec unify_module_bindings ~(signature : module_bindings)
     ~(definition : module_bindings) =
   let open State.Result.Let_syntax in
@@ -1777,59 +1813,52 @@ let rec unify_module_bindings ~(signature : module_bindings)
   in
   return signature
 
-let rec type_module_named (f : Uppercase.t Qualified.t) =
+let rec process_module_named (f : Uppercase.t Qualified.t) =
   let _ = f in
   failwith "TODO"
 
-and type_struct (_ : Ast.toplevel list) = failwith "TODO"
+and process_struct (_ : Ast.toplevel list) = failwith "TODO"
 
-and type_functor_app (f : Uppercase.t Qualified.t) (a : Ast.module_def list) =
+and process_functor_app (f : Uppercase.t Qualified.t) (a : Ast.module_def list)
+    =
   let _ = (f, a) in
   failwith "TODO"
 
-and type_sig (_ : Ast.module_sig) = failwith "TODO"
+and process_sig (_ : Ast.module_sig) = failwith "TODO"
 
-and type_module_def (d : Ast.module_def) =
+and process_module_def (d : Ast.module_def) =
   match d with
-  | Ast.Struct s -> type_struct s
-  | Ast.Named f -> type_module_named f
-  | Ast.Functor_app (f, a) -> type_functor_app f a
+  | Ast.Struct s -> process_struct s
+  | Ast.Named f -> process_module_named f
+  | Ast.Functor_app (f, a) -> process_functor_app f a
   | Ast.Module_typed (s, si) ->
       let open State.Result.Let_syntax in
-      let%bind signature = type_sig si in
-      let%bind definition = type_module_def s in
-      unify_module_bindings ~signature ~definition
+      let%bind () = process_sig si in
+      let%bind name, signature = pop_module in
+      let%bind () = change_to_new_module name in
+      let%bind () = process_module_def s in
+      let%bind name, definition = pop_module in
+      let%bind _ = unify_module_bindings ~signature ~definition in
+      change_to_module name definition
 
 let rec process_module
     ~(module_description : Ast.module_sig option Ast.module_description)
     ~(module_def : Ast.module_def) =
   let open State.Result.Let_syntax in
-  let%bind state = State.Result.get in
-  let old_module_binding = state.current_module_binding in
-  let current_module_binding =
-    {
-      empty_module_bindings with
-      opened_modules =
-        old_module_binding :: empty_module_bindings.opened_modules;
-    }
-  in
-  let current_qualification =
-    module_description.module_name :: state.current_qualification
-  in
-  let new_state =
-    { state with current_module_binding; current_qualification }
-  in
-  let%bind () = State.Result.put new_state in
+  let%bind () = change_to_new_module module_description.module_name in
   match module_description with
   | { module_name = _; functor_args = []; module_sig } ->
       let%bind sig_module_bindings =
         match module_sig with
         | Some module_sig ->
-            let%map r = type_sig module_sig in
-            Some r
+            let%bind () = process_sig module_sig in
+            let%bind name, module_ = pop_module in
+            let%map () = change_to_new_module name in
+            Some module_
         | None -> return None
       in
-      let%bind def_module_bindings = type_module_def module_def in
+      let%bind () = process_module_def module_def in
+      let%bind current_name, def_module_bindings = pop_module in
       let%bind module_bindings =
         match sig_module_bindings with
         | Some sig_module_bindings ->
@@ -1837,11 +1866,7 @@ let rec process_module
               ~definition:def_module_bindings
         | None -> return def_module_bindings
       in
-      let%bind () =
-        State.Result.put
-          { new_state with current_module_binding = old_module_binding }
-      in
-      add_module ~name:module_description.module_name ~module_bindings
+      add_module ~name:current_name ~module_bindings
   | _ -> failwith "TODO"
 
 and process_toplevel (toplevel : Ast.toplevel) =
