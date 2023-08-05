@@ -167,6 +167,16 @@ module Module = struct
     | Some x -> Some x
     | None -> List.find_map opened_modules ~f
 
+  let lookup_module in_scope ~qualifications =
+    match
+      lookup_in_scope in_scope ~qualifications ~search_for:Option.return
+    with
+    | Some x -> State.Result.return x
+    | None ->
+        State.Result.error
+          [%message
+            "module not found" (qualifications : Qualified.qualifications)]
+
   let lookup_type_constructor in_scope ~qualified_name =
     let qualifications, type_name = Qualified.split qualified_name in
     match
@@ -265,7 +275,7 @@ module Module = struct
         State.Result.error
           [%message "record not in scope" (fields : Lowercase.Set.t)]
 
-  let lookup_constructor in_scope qualified_constructor =
+  let lookup_constructor in_scope ~qualified_constructor =
     let qualifications, name = Qualified.split qualified_constructor in
     let res =
       lookup_in_scope in_scope ~qualifications ~search_for:(fun module_ ->
@@ -331,4 +341,18 @@ module Module = struct
     | Pointer mono ->
         let%map m = show_mono in_scope ~mono in
         "&" ^ m
+
+  let open_module ({ module_ = _; opened_modules } as in_scope)
+      ~(qualifications : Qualified.qualifications) =
+    let%map.State.Result module_ = lookup_module in_scope ~qualifications in
+    let in_scope =
+      { in_scope with opened_modules = module_ :: opened_modules }
+    in
+    in_scope
+
+  let pop_module ({ module_ = _; opened_modules } as in_scope) =
+    {
+      in_scope with
+      opened_modules = List.tl opened_modules |> Option.value ~default:[];
+    }
 end

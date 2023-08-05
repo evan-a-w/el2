@@ -142,19 +142,19 @@ let on_in_scope f =
 let map_in_scope f =
   let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
-  let%map in_scope = f state.in_scope in
-  { state with in_scope }
+  let%bind in_scope = f state.in_scope in
+  State.Result.put { state with in_scope }
 
-let on_module_ f =
+let on_module f =
   let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   f state.in_scope.module_
 
-let map_in_scope f =
+let map_module f =
   let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
-  let%map module_ = f state.in_scope.module_ in
-  { state with in_scope = { state.in_scope with module_ } }
+  let%bind module_ = f state.in_scope.module_ in
+  State.Result.put { state with in_scope = { state.in_scope with module_ } }
 
 let show_mono mono = on_in_scope (show_mono ~mono)
 
@@ -423,7 +423,7 @@ let type_of_type_def_lit ~type_name ~update_records_and_constructors
                 ~f:(fun acc (field, poly) ->
                   Lowercase.Map.add_exn acc ~key:field ~data:poly)
             in
-            add_record ~field_map ~poly |> on_module_
+            add_record ~field_map ~poly |> map_module
       in
       mono
   | Ast.Type_def_lit.Enum l ->
@@ -443,14 +443,14 @@ let type_of_type_def_lit ~type_name ~update_records_and_constructors
       let%bind poly = State.map (gen mono) ~f:Result.return in
       let%map () =
         State.Result.all_unit
-        @@ List.map monos ~f:(fun (x, mono_option) ->
+        @@ List.map monos ~f:(fun (name, arg_mono_option) ->
                if update_records_and_constructors then
-                 let%bind poly_option =
-                   match mono_option with
+                 let%bind arg_poly_option =
+                   match arg_mono_option with
                    | Some mono -> State.map (gen mono) ~f:(fun x -> Ok (Some x))
                    | None -> return None
                  in
-                 add_constructor x poly_option poly
+                 add_constructor ~name ~arg_poly_option ~poly |> map_module
                else return ())
       in
       mono
@@ -486,15 +486,15 @@ let process_type_def
                   ~vars:(Lowercase.Set.to_list rhs_ty_vars : Lowercase.t list)
                   (type_name : Lowercase.t)]
       in
-      add_type type_name mono
+      add_type ~name:type_name ~mono |> map_module
   | Ast.Type_binding.Poly (arg, type_name) -> (
-      let constructor_arg =
+      let arg =
         match arg with
         | Ast.Type_binding.Single (v, l) -> Some (Single_arg (v, l))
         | Ast.Type_binding.Tuple l -> Some (Tuple_arg l)
       in
       let ordering =
-        Option.map constructor_arg ~f:constructor_arg_free_ty_vars
+        Option.map arg ~f:constructor_arg_free_ty_vars
         |> Option.value ~default:[]
       in
       let lhs_ty_vars =
@@ -511,7 +511,8 @@ let process_type_def
           }
       in
       let%bind () =
-        add_type_constructor constructor_arg type_name recursive_constructor
+        add_type_constructor ~arg ~name:type_name ~mono:recursive_constructor
+        |> map_module
       in
       let%bind mono =
         type_of_type_def_lit ~type_name:(Qualified.Unqualified type_name)
@@ -521,7 +522,7 @@ let process_type_def
       let rhs_ty_vars = free_ty_vars mono in
       let lhs_ty_vars = Lowercase.Map.key_set lhs_ty_vars |> Obj.magic in
       match Lowercase.Set.equal lhs_ty_vars rhs_ty_vars with
-      | true -> set_type_constructor constructor_arg type_name mono
+      | true -> set_type_constructor ~arg ~name:type_name ~mono |> map_module
       | false ->
           State.Result.error
             [%message
@@ -595,9 +596,11 @@ let inst_many poly_list =
   in
   List.map mono_list ~f:(replace_ty_vars ~replacement_map)
 
-let inst_constructor constructor =
+let inst_constructor qualified_constructor =
   let open State.Result.Let_syntax in
-  let%bind arg, poly_res = lookup_constructor constructor in
+  let%bind arg, poly_res =
+    lookup_constructor ~qualified_constructor |> on_in_scope
+  in
   match arg with
   | None ->
       let%map res = inst_result poly_res in
@@ -618,9 +621,10 @@ let type_of_constructor constructor =
   | None, mono -> mono
   | Some mono_arg, mono_res -> Lambda (mono_arg, mono_res)
 
-let unfold_once { type_name = name; tyvar_map = replacement_map; _ } mono =
+let unfold_once { type_name = qualified_name; tyvar_map = replacement_map; _ }
+    mono =
   let open State.Result.Let_syntax in
-  let%bind _, type_ = lookup_type_constructor name in
+  let%bind _, type_ = lookup_type_constructor ~qualified_name |> on_in_scope in
   let%map poly = State.map (gen type_) ~f:Result.return in
   let _, mono' = split_poly poly in
   let mono' = replace_ty_vars ~replacement_map mono' in
@@ -692,8 +696,8 @@ and unify_type_proof ~unification_error
   match Qualified.equal Lowercase.equal name1 name2 with
   | true -> unify_lists ~unification_error monos1 monos2
   | false ->
-      let%bind.State.Result a = show_type_proof a in
-      let%bind.State.Result b = show_type_proof b in
+      let%bind.State.Result a = show_type_proof ~type_proof:a |> on_in_scope in
+      let%bind.State.Result b = show_type_proof ~type_proof:b |> on_in_scope in
       State.Result.error
         [%message "types failed to unify" ~_:(a : string) ~_:(b : string)]
 
@@ -744,8 +748,8 @@ and unify_less_general_type_proof ~unification_error
   match Qualified.equal Lowercase.equal name1 name2 with
   | true -> unify_less_general_lists ~unification_error monos1 monos2
   | false ->
-      let%bind.State.Result a = show_type_proof a in
-      let%bind.State.Result b = show_type_proof b in
+      let%bind.State.Result a = show_type_proof ~type_proof:a |> on_in_scope in
+      let%bind.State.Result b = show_type_proof ~type_proof:b |> on_in_scope in
       State.Result.error
         [%message
           "types failed to unify_less_general" ~_:(a : string) ~_:(b : string)]
@@ -759,31 +763,6 @@ and unify_less_general_lists ~unification_error l1 l2 =
   in
   let f (mono1, mono2) = unify_less_general mono1 mono2 in
   State.Result.all_unit (List.map zipped ~f)
-
-let open_module (qualifications : Qualified.qualifications) =
-  let open State.Result.Let_syntax in
-  let%bind ({ current_module_binding; _ } as state) = State.Result.get in
-  let%bind module_bindings = find_module_binding qualifications in
-  let current_module_binding =
-    {
-      current_module_binding with
-      opened_modules = module_bindings :: current_module_binding.opened_modules;
-    }
-  in
-  State.Result.put { state with current_module_binding }
-
-let pop_module =
-  State.Result.modify (fun ({ current_module_binding; _ } as state) ->
-      let current_module_binding =
-        {
-          current_module_binding with
-          opened_modules =
-            (match current_module_binding.opened_modules with
-            | [] -> []
-            | _ :: xs -> xs);
-        }
-      in
-      { state with current_module_binding })
 
 let make_free_vars_weak mono =
   let free_vars = free_ty_vars mono in
@@ -870,6 +849,15 @@ let rec mono_of_poly_no_inst poly =
 
 exception Field_left_only of string
 exception Field_right_only of string
+
+let add_var name poly =
+  let f module_ = State.Result.return @@ add_value ~name ~poly module_ in
+  map_module f
+
+let open_module qualifications = map_in_scope (open_module ~qualifications)
+
+let pop_module =
+  map_in_scope (fun in_scope -> State.Result.return @@ pop_module in_scope)
 
 let rec gen_binding_ty_vars ~initial_vars ~(binding : Ast.Binding.t) :
     (mono * Lowercase.t list) state_result_m =
