@@ -68,3 +68,11 @@ let pop t =
     | Unqualified _ -> (None, t)
   in
   loop t
+
+let full_qualifications (t : Uppercase.t t) =
+  let rec loop t =
+    match t with
+    | Qualified (q, t) -> q :: loop t
+    | Unqualified name -> [ name ]
+  in
+  loop t

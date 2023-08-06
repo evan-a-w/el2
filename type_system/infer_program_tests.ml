@@ -79,4 +79,16 @@ end
 
 type t = X.t |}
 
-let%expect_test "program b" = run program_b
+let%expect_test "program b" = run program_b;
+  [%expect {|
+    type a list =
+    	| Cons (a, a list)
+    	| Nil
+
+    type t =
+    	| Pee
+
+    module X = struct
+        type t =
+        	| Pee
+    end |}]

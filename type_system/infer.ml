@@ -196,6 +196,9 @@ let set_type_constructor arg name mono =
       State.Result.return
       @@ Lowercase.Map.set toplevel_type_constructors ~key ~data)
 
+let set_current_module_binding current_module_binding =
+  State.Result.modify (fun state -> { state with current_module_binding })
+
 let empty_state =
   {
     mono_ufds = Mono_ufds.empty;
@@ -1813,11 +1816,14 @@ let rec unify_module_bindings ~(signature : module_bindings)
   in
   return signature
 
-let rec process_module_named (f : Uppercase.t Qualified.t) =
-  let _ = f in
-  failwith "TODO"
+let rec process_module_named (name : Uppercase.t Qualified.t) =
+  let open State.Result.Let_syntax in
+  let qualifications = Qualified.full_qualifications name in
+  let%bind other = find_module_binding qualifications in
+  set_current_module_binding other
 
-and process_struct (_ : Ast.toplevel list) = failwith "TODO"
+and process_struct (toplevels : Ast.toplevel list) =
+  State.Result.all_unit @@ List.map ~f:process_toplevel toplevels
 
 and process_functor_app (f : Uppercase.t Qualified.t) (a : Ast.module_def list)
     =
@@ -1838,10 +1844,10 @@ and process_module_def (d : Ast.module_def) =
       let%bind () = change_to_new_module name in
       let%bind () = process_module_def s in
       let%bind name, definition = pop_module in
-      let%bind _ = unify_module_bindings ~signature ~definition in
-      change_to_module name definition
+      let%bind module_ = unify_module_bindings ~signature ~definition in
+      change_to_module name module_
 
-let rec process_module
+and process_module
     ~(module_description : Ast.module_sig option Ast.module_description)
     ~(module_def : Ast.module_def) =
   let open State.Result.Let_syntax in
@@ -1937,14 +1943,8 @@ let rec show_mono_def (mono : mono) =
       let%map l = State.Result.all @@ List.map cons ~f:each in
       "\n" ^ String.concat ~sep:"\n" l
 
-let show_module_bindings
-    {
-      toplevel_vars;
-      toplevel_records = _;
-      toplevel_type_constructors;
-      toplevel_modules = _;
-      _;
-    } =
+let rec show_module_bindings
+    { toplevel_vars; toplevel_type_constructors; toplevel_modules; _ } =
   let open State.Result.Let_syntax in
   let%bind type_strings =
     Lowercase.Map.to_alist toplevel_type_constructors
@@ -1968,7 +1968,7 @@ let show_module_bindings
            | None -> [%string "type %{prefix_str}%{type_name}"])
     |> State.Result.all
   in
-  let%map var_strings =
+  let%bind var_strings =
     Lowercase.Map.to_alist toplevel_vars
     |> List.map ~f:(fun (v, poly_list) ->
            let%bind poly =
@@ -1982,4 +1982,17 @@ let show_module_bindings
            [%string "let %{v} : %{mono_s}"])
     |> State.Result.all
   in
-  List.concat [ type_strings; var_strings ] |> String.concat ~sep:"\n\n"
+  let%map module_bindings =
+    Uppercase.Map.to_alist toplevel_modules
+    |> List.map ~f:(fun (name, module_bindings) ->
+           let%map module_s = show_module_bindings module_bindings in
+           let module_s =
+             String.split module_s ~on:'\n'
+             |> List.map ~f:(fun s -> "    " ^ s)
+             |> String.concat ~sep:"\n"
+           in
+           [%string "module %{name} = struct\n%{module_s}\nend"])
+    |> State.Result.all
+  in
+  List.concat [ type_strings; var_strings; module_bindings ]
+  |> String.concat ~sep:"\n\n"
