@@ -1,5 +1,6 @@
 open! Core
 open! Infer
+open! Ty
 open! Shared
 open! Frontend
 open! State.Result.Let_syntax
