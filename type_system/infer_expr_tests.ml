@@ -201,45 +201,14 @@ let%expect_test "type_def_record" =
     {|
     (res
      (Ok
-      (Record
-       ((type_name (Unqualified node)) (ordering ((a)))
+      (Named
+       ((type_name node) (absolute_type_name (Unqualified node)) (ordering ((a)))
         (tyvar_map
          ((a
-           (Abstract
-            ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
-             (level 0))))))
-        (level 1))
-       ((value
-         ((Abstract
-           ((type_name (Unqualified int)) (ordering ()) (tyvar_map ()) (level 0)))
-          Immutable))
-        (next
-         ((Enum
-           ((type_name (Unqualified option)) (ordering ((a)))
-            (tyvar_map
-             ((a
-               (Pointer
-                (Recursive_constructor
-                 ((type_name (Unqualified node)) (ordering ((a)))
-                  (tyvar_map
-                   ((a
-                     (Abstract
-                      ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
-                       (level 0))))))
-                  (level 0)))))))
-            (level 1))
-           ((None ())
-            (Some
-             ((Pointer
-               (Recursive_constructor
-                ((type_name (Unqualified node)) (ordering ((a)))
-                 (tyvar_map
-                  ((a
-                    (Abstract
-                     ((type_name (Unqualified int)) (ordering ()) (tyvar_map ())
-                      (level 0))))))
-                 (level 0))))))))
-          Mutable)))))) |}]
+           (Named
+            ((type_name int) (absolute_type_name (Unqualified int)) (ordering ())
+             (tyvar_map ()) (type_id 0))))))
+        (type_id 7))))) |}]
 
 let%expect_test "last_list_record_occurs" =
   infer_type_of_expr ~print_state:false

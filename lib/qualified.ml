@@ -45,8 +45,11 @@ let qualifications_of_t t : qualifications = split t |> fst
 let show show_a t =
   let rec loop t =
     match t with
-    | Qualified (qualification, t) -> qualification ^ "." ^ loop t
     | Unqualified a -> show_a a
+    | Qualified (qualification, t) -> (
+        match qualification with
+        | "" -> loop t
+        | _ -> qualification ^ "." ^ loop t)
   in
   loop t
 

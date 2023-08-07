@@ -30,12 +30,15 @@ type type_constructor =
 (* Variances of record fields is covariant if not mutable, invariant if mutable *)
 (* Variances of Enum is the combination of all underlying types *)
 and type_proof = {
-  type_name : Lowercase.t Qualified.t;
+  type_name : Lowercase.t;
+  absolute_type_name : Lowercase.t Qualified.t;
   ordering : Lowercase.t list option;
   tyvar_map : mono Lowercase.Map.t;
-  type_id : int;
+  type_id : type_id;
 }
 [@@deriving sexp, equal, hash, compare]
+
+and type_id = int [@@deriving sexp, equal, hash, compare]
 
 and mono =
   (* name and type args *)
@@ -72,7 +75,7 @@ type module_bindings = {
   toplevel_vars : poly list Lowercase.Map.t;
   toplevel_records : (poly Lowercase.Map.t * type_proof) Lowercase.Set.Map.t;
   toplevel_constructors : (poly option * type_proof) Uppercase.Map.t;
-  toplevel_type_constructors : type_constructor Lowercase.Map.t;
+  toplevel_type_constructors : type_id Lowercase.Map.t;
   toplevel_modules : module_bindings Uppercase.Map.t;
   opened_modules : module_bindings List.t;
 }
@@ -80,7 +83,8 @@ type module_bindings = {
 
 let make_type_proof type_id s =
   {
-    type_name = Qualified.Unqualified s;
+    type_name = s;
+    absolute_type_name = Qualified.Unqualified s;
     ordering = None;
     tyvar_map = Lowercase.Map.empty;
     type_id;
@@ -94,6 +98,17 @@ let string_type = make_type_proof 4 "string"
 let char_type = make_type_proof 5 "char"
 let num_base_types = 6
 
+let base_type_map =
+  Int.Map.of_alist_exn
+    [
+      (0, (None, Abstract, int_type));
+      (1, (None, Abstract, float_type));
+      (2, (None, Abstract, bool_type));
+      (3, (None, Abstract, unit_type));
+      (4, (None, Abstract, string_type));
+      (5, (None, Abstract, char_type));
+    ]
+
 let base_module_bindings =
   {
     toplevel_vars =
@@ -105,12 +120,12 @@ let base_module_bindings =
     toplevel_type_constructors =
       Lowercase.Map.of_alist_exn
         [
-          ("int", (None, Abstract, int_type));
-          ("float", (None, Abstract, float_type));
-          ("bool", (None, Abstract, bool_type));
-          ("unit", (None, Abstract, unit_type));
-          ("string", (None, Abstract, string_type));
-          ("char", (None, Abstract, char_type));
+          ("int", 0);
+          ("float", 1);
+          ("bool", 2);
+          ("unit", 3);
+          ("string", 4);
+          ("char", 5);
         ];
     toplevel_modules = Uppercase.Map.empty;
     opened_modules = [];
