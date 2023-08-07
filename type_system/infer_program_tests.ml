@@ -85,8 +85,7 @@ let%expect_test "program b" = run program_b;
     	| Cons (a, a list)
     	| Nil
 
-    type t =
-    	| Pee
+    type t = X.t
 
     module X = struct
         type t =

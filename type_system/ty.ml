@@ -15,7 +15,7 @@ let show_type_constructor_arg = function
   | Tuple_arg l -> "(" ^ String.concat ~sep:", " (List.map l ~f:snd) ^ ")"
 
 type type_constructor =
-  type_constructor_arg option * mono
+  type_constructor_arg option * user_type * type_proof
   (* replace bound variables in type_constructor_arg with new TyVars when using this mono *)
 [@@deriving sexp, equal, hash, compare]
 
@@ -30,26 +30,38 @@ type type_constructor =
 (* Variances of record fields is covariant if not mutable, invariant if mutable *)
 (* Variances of Enum is the combination of all underlying types *)
 and type_proof = {
-  type_name : Lowercase.t Qualified.t;
+  type_name : Lowercase.t;
+  absolute_type_name : Lowercase.t Qualified.t;
   ordering : Lowercase.t list option;
   tyvar_map : mono Lowercase.Map.t;
-  level : int;
+  type_id : type_id;
 }
 [@@deriving sexp, equal, hash, compare]
 
+and type_id = int [@@deriving sexp, equal, hash, compare]
+
 and mono =
   (* name and type args *)
-  | Recursive_constructor of type_proof
-  | Abstract of type_proof
   | Weak of Lowercase.t
   (* keep track of the path and arg for equality *)
   | TyVar of Lowercase.t
   | Lambda of mono * mono
   | Tuple of mono list
-  | Record of
-      type_proof * (Lowercase.t * (mono * [ `Mutable | `Immutable ])) List.t
-  | Enum of type_proof * (Uppercase.t * mono option) List.t
   | Pointer of mono
+  | Named of type_proof
+[@@deriving sexp, equal, hash, compare]
+
+and record_type = (Lowercase.t * (mono * [ `Mutable | `Immutable ])) list
+[@@deriving sexp, equal, hash, compare]
+
+and enum_type = (Lowercase.t * mono option) list
+[@@deriving sexp, equal, hash, compare]
+
+and user_type =
+  | Abstract
+  | Record of record_type
+  | Enum of enum_type
+  | User_mono of mono
 [@@deriving sexp, equal, hash, compare]
 
 type poly = Mono of mono | Forall of Lowercase.t * poly
@@ -59,33 +71,43 @@ module Module_path = Qualified.Make (struct
   type arg = Uppercase.t [@@deriving sexp, compare, equal, hash]
 end)
 
-type level = int [@@deriving sexp, equal, hash, compare]
-
 type module_bindings = {
   toplevel_vars : poly list Lowercase.Map.t;
-  toplevel_records : (poly Lowercase.Map.t * poly) Lowercase.Set.Map.t;
-  toplevel_constructors : (poly option * poly) Uppercase.Map.t;
-  toplevel_type_constructors : type_constructor Lowercase.Map.t;
+  toplevel_records : (poly Lowercase.Map.t * type_proof) Lowercase.Set.Map.t;
+  toplevel_constructors : (poly option * type_proof) Uppercase.Map.t;
+  toplevel_type_constructors : type_id Lowercase.Map.t;
   toplevel_modules : module_bindings Uppercase.Map.t;
   opened_modules : module_bindings List.t;
 }
 [@@deriving sexp, equal, hash, compare, fields]
 
-let make_abstract s =
-  Abstract
-    {
-      type_name = Qualified.Unqualified s;
-      level = 0;
-      ordering = None;
-      tyvar_map = Lowercase.Map.empty;
-    }
+let make_type_proof type_id s =
+  {
+    type_name = s;
+    absolute_type_name = Qualified.Unqualified s;
+    ordering = None;
+    tyvar_map = Lowercase.Map.empty;
+    type_id;
+  }
 
-let int_type = make_abstract "int"
-let float_type = make_abstract "float"
-let bool_type = make_abstract "bool"
-let unit_type = make_abstract "unit"
-let string_type = make_abstract "string"
-let char_type = make_abstract "char"
+let int_type = make_type_proof 0 "int"
+let float_type = make_type_proof 1 "float"
+let bool_type = make_type_proof 2 "bool"
+let unit_type = make_type_proof 3 "unit"
+let string_type = make_type_proof 4 "string"
+let char_type = make_type_proof 5 "char"
+let num_base_types = 6
+
+let base_type_map =
+  Int.Map.of_alist_exn
+    [
+      (0, (None, Abstract, int_type));
+      (1, (None, Abstract, float_type));
+      (2, (None, Abstract, bool_type));
+      (3, (None, Abstract, unit_type));
+      (4, (None, Abstract, string_type));
+      (5, (None, Abstract, char_type));
+    ]
 
 let base_module_bindings =
   {
@@ -98,12 +120,12 @@ let base_module_bindings =
     toplevel_type_constructors =
       Lowercase.Map.of_alist_exn
         [
-          ("int", (None, int_type));
-          ("float", (None, float_type));
-          ("bool", (None, bool_type));
-          ("unit", (None, unit_type));
-          ("string", (None, string_type));
-          ("char", (None, char_type));
+          ("int", 0);
+          ("float", 1);
+          ("bool", 2);
+          ("unit", 3);
+          ("string", 4);
+          ("char", 5);
         ];
     toplevel_modules = Uppercase.Map.empty;
     opened_modules = [];
