@@ -67,9 +67,13 @@ let bool_p =
 
 let char_p = char '\'' *> any_char <* char '\'' >>| Token.char
 let arrow_p = string "->" *> return Token.Arrow
-let ident_op_chars = "!#$%^&*-+:<>?/=~"
+let ident_op_chars = "!#%^&*-+:<>?/=~"
 let ident_extras = "?'"
 let is_operator = String.for_all ~f:(String.mem ident_op_chars)
+
+let is_operator_extended = function
+  | "." | "$" | "@" -> true
+  | x -> is_operator x
 
 let op_symbol_p =
   let matches = String.mem ident_op_chars in
@@ -102,8 +106,10 @@ let lbrace_p = char '{' *> return Token.LBrace
 let colon_p = char ':' *> return Token.Colon
 let semicolon_p = char ';' *> return Token.Semicolon
 let backslash_p = char '\\' *> return Token.Backslash
-let at_p = char '@' *> return Token.At
-let dot_p = char '.' *> return Token.Dot
+let at_p = char '@' *> return (Token.Symbol "@")
+let dollar_p = char '$' *> return (Token.Symbol "$")
+let hash_p = char '#' *> return Token.Hash
+let dot_p = char '.' *> return (Token.Symbol ".")
 
 let whitespace_p =
   skip_while (function ' ' | '\n' | '\t' -> true | _ -> false)
@@ -111,10 +117,10 @@ let whitespace_p =
 let parser =
   let%bind () = whitespace_p in
   let%bind token =
-    colon_p <|> float_p <|> int_p <|> string_p <|> bool_p <|> arrow_p
+    colon_p <|> float_p <|> int_p <|> hash_p <|> string_p <|> bool_p <|> arrow_p
     <|> op_symbol_p <|> ident_symbol_p <|> pipe_p <|> comma_p <|> lparen_p
-    <|> rparen_p <|> lbrack_p <|> rbrack_p <|> at_p <|> dot_p <|> semicolon_p
-    <|> lbrace_p <|> rbrace_p <|> backslash_p <|> char_p
+    <|> rparen_p <|> lbrack_p <|> rbrack_p <|> at_p <|> dollar_p <|> dot_p
+    <|> semicolon_p <|> lbrace_p <|> rbrace_p <|> backslash_p <|> char_p
   in
   let%bind () = whitespace_p in
   return token

@@ -42,9 +42,8 @@ module Trie = struct
     let dec =
       match operator_type with Operator_type.Unary -> 1 | Binary -> 2
     in
-    let res = t.bp_counter in
     t.bp_counter <- t.bp_counter - dec;
-    res
+    t.bp_counter
 
   let _insert t ~operator_type ~associativity ~match_type ~operator
       ~binding_power =
@@ -100,13 +99,14 @@ module Trie = struct
         | Some child -> search_node child ~chars)
 end
 
-let function_bp = ref 0
+let function_bp = ref (1, 0)
 
 let bp_map =
   let trie = Trie.empty () in
   let data =
     [|
-      (`Unary, Match_type.Full, [| "!"; "~"; "&" |]);
+      (`Left, Match_type.Full, [| "." |]);
+      (`Unary, Full, [| "!"; "~"; "&"; "@"; "$" |]);
       (`Left, Prefix, [| "#" |]);
       (`Unary, Full, [| "-"; "-." |]);
       (`Right, Prefix, [| "**" |]);
@@ -128,7 +128,7 @@ let bp_map =
       let binding_power = Trie.get_bp trie ~operator_type in
       Array.iter operators ~f:(fun operator ->
           (match operator with
-          | "#" -> function_bp := Trie.get_bp trie ~operator_type:Binary
+          | "#" -> function_bp := (binding_power + 1, binding_power)
           | _ -> ());
           match associativity with
           | `Unary ->

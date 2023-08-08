@@ -558,7 +558,7 @@ let%expect_test "simple_apply3" =
      (tokens ())) |}]
 
 let%expect_test "test_tag_p" =
-  let program = {| @[type : int, mode : local, deriving : string int] |} in
+  let program = {| #[type : int, mode : local, deriving : string int] |} in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run tag_list_p ~tokens in
   print_s [%message (ast : (Ast.Value_tag.t, Sexp.t) Result.t)];
@@ -570,7 +570,7 @@ let%expect_test "test_tag_p" =
        (ast_tags ((deriving ((Symbol string) (Symbol int)))))))) |}]
 
 let%expect_test "test_tags" =
-  let program = {| (f @[type : int, mode : local, name : "x"]) |} in
+  let program = {| (f #[type : int, mode : local, name : "x"]) |} in
   test_parse_one ~program;
   [%expect
     {|
@@ -585,7 +585,7 @@ let%expect_test "test_tags" =
      (tokens ())) |}]
 
 let%expect_test "test_tags_both" =
-  let program = {| (f : string @[type : int, mode : local, name : "x"]) |} in
+  let program = {| (f : string #[type : int, mode : local, name : "x"]) |} in
   test_parse_one ~program;
   [%expect
     {|
@@ -601,7 +601,7 @@ let%expect_test "test_tags_both" =
 
 let%expect_test "test_qualified_expr" =
   let program =
-    {| Ast.B.(f : string @[type : int, mode : local, name : "x"]) |}
+    {| Ast.B.(f : string #[type : int, mode : local, name : "x"]) |}
   in
   test_parse_one ~program;
   [%expect
@@ -744,13 +744,13 @@ let%expect_test "test_pattern_binding" =
 let%expect_test "test_type_define" =
   let program =
     {|
-         type (+a, -b) c = A a | B (b, c) @[cool]
+         type (+a, -b) c = A a | B (b, c) #[cool]
 
          type t = a list
 
          type t = T.list
 
-         type record = { a : int; mutable b : (string, int) } @[cringe: false]
+         type record = { a : int; mutable b : (string, int) } #[cringe: false]
        |}
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
@@ -818,23 +818,23 @@ let%expect_test "test_type_expr_no_paren" =
      (tokens ())) |}]
 
 let%expect_test "type_expr_pointer" =
-  print_type_expr ~program:"&int";
+  print_type_expr ~program:"@int";
   [%expect {| (ast (Ok (Pointer (Single (Unqualified int))))) |}]
 
 let%expect_test "type_expr_pointer_multi" =
-  print_type_expr ~program:"&int a";
+  print_type_expr ~program:"@int a";
   [%expect
     {|
     (ast (Ok (Multi (Pointer (Single (Unqualified int))) (Unqualified a)))) |}]
 
 let%expect_test "type_expr_pointer_paren" =
-  print_type_expr ~program:"&(int a)";
+  print_type_expr ~program:"@(int a)";
   [%expect
     {|
     (ast (Ok (Pointer (Multi (Single (Unqualified int)) (Unqualified a))))) |}]
 
 let%expect_test "type_expr_multi_pointer" =
-  print_type_expr ~program:"& & &int";
+  print_type_expr ~program:"@@@int";
   [%expect
     {| (ast (Ok (Pointer (Pointer (Pointer (Single (Unqualified int))))))) |}]
 
@@ -854,7 +854,7 @@ let%expect_test "test_infix_spaces" =
        (tokens ())) |}]
 
 let%expect_test "test_double_tag" =
-  let program = {| 4 : int @[mode: local] |} in
+  let program = {| 4 : int #[mode: local] |} in
   test_parse_one ~program;
   [%expect
     {|
@@ -866,7 +866,7 @@ let%expect_test "test_double_tag" =
      (tokens ())) |}]
 
 let%expect_test "test_tuple" =
-  let program = {| (1, if p = 2 then 3 else 4 : int @[mode: local]) |} in
+  let program = {| (1, if p = 2 then 3 else 4 : int #[mode: local]) |} in
   test_parse_one ~program;
   [%expect
     {|
@@ -887,7 +887,7 @@ let%expect_test "test_tuple" =
 
 let%expect_test "test_record" =
   let program =
-    {| { x : 1; y: if p = 2 then 3 else 4 : int @[mode: local]} |}
+    {x| { x : 1; y: if p = 2 then 3 else 4 : int #[mode: local] } |x}
   in
   test_parse_one ~program;
   [%expect
@@ -910,7 +910,7 @@ let%expect_test "test_record" =
 
 let%expect_test "test_constructor_with_infix" =
   let program =
-    {| Cons 1 + 2 + { x : 1; y: if p = 2 then 3 else 4 : int @[mode: local]} |}
+    {x| Cons 1 + 2 + { x : 1; y: if p = 2 then 3 else 4 : int #[mode: local] } |x}
   in
   test_parse_one ~program;
   [%expect
@@ -939,7 +939,7 @@ let%expect_test "test_constructor_with_infix" =
    (tokens ())) |}]
 
 let%expect_test "test_exp_binding" =
-  let program = {| 1 + &2 * 3**2 * (4 + 5) |} in
+  let program = {| 1 + @2 * 3**2 * (4 + 5) |} in
   test_parse_one ~program;
   [%expect
     {|
@@ -948,9 +948,7 @@ let%expect_test "test_exp_binding" =
      (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 1))))
       (App
        (App (Node (Var (Unqualified *)))
-        (App
-         (App (Node (Var (Unqualified *)))
-          (App (Node (Var (Unqualified &))) (Node (Literal (Int 2)))))
+        (App (App (Node (Var (Unqualified *))) (Ref (Node (Literal (Int 2)))))
          (App (App (Node (Var (Unqualified **))) (Node (Literal (Int 3))))
           (Node (Literal (Int 2))))))
        (Node
@@ -961,7 +959,7 @@ let%expect_test "test_exp_binding" =
    (tokens ())) |}]
 
 let%expect_test "test_type_define_enum" =
-  let program = {| type a list = Cons (a, &(a list)) | Nil |} in
+  let program = {| type a list = Cons (a, @(a list)) | Nil |} in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, tokens = run parse_t ~tokens in
   let tokens = Sequence.to_list tokens in
@@ -1101,4 +1099,85 @@ let%expect_test "rec toplevel" =
             (Lambda (Name x)
              (App (App (Node (Var (Unqualified +))) (Node (Var (Unqualified x))))
               (Node (Literal (Int 1))))))))))))
+     (tokens ())) |}]
+
+let%expect_test "test_field_access" =
+  let program = {|
+     x.field
+     |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast (Ok (Field_access (Node (Var (Unqualified x))) (Unqualified field))))
+     (tokens ())) |}]
+
+let%expect_test "test_field_access2" =
+  let program = {|
+     let _ = @x.field in let _ = $x.field in ()
+     |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       (Let_in
+        (Nonrec
+         ((Name _)
+          (Field_access (Ref (Node (Var (Unqualified x)))) (Unqualified field))))
+        (Let_in
+         (Nonrec
+          ((Name _)
+           (Field_access (Deref (Node (Var (Unqualified x))))
+            (Unqualified field))))
+         (Node (Literal Unit))))))
+     (tokens ())) |}]
+
+let%expect_test "test_field_access3" =
+  let program = {|
+  x.first.second.third.fourth  
+     |} in
+
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       (Field_access
+        (Field_access
+         (Field_access
+          (Field_access (Node (Var (Unqualified x))) (Unqualified first))
+          (Unqualified second))
+         (Unqualified third))
+        (Unqualified fourth))))
+     (tokens ())) |}]
+
+let%expect_test "test_field_set" =
+  let program = {|
+     @x.field <- 1
+     |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       (Field_set
+        ((Ref (Node (Var (Unqualified x)))) (Unqualified field)
+         (Node (Literal (Int 1)))))))
+     (tokens ())) |}]
+
+let%expect_test "test_field_set2" =
+  let program = {|
+     x.Cringe1.first.second.Cringe.third <- 1
+     |} in
+  test_parse_one ~program;
+  [%expect
+    {|
+    ((ast
+      (Ok
+       (Field_set
+        ((Field_access
+          (Field_access (Node (Var (Unqualified x)))
+           (Qualified Cringe1 (Unqualified first)))
+          (Unqualified second))
+         (Qualified Cringe (Unqualified third)) (Node (Literal (Int 1)))))))
      (tokens ())) |}]

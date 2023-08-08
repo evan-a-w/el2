@@ -170,7 +170,7 @@ let%expect_test "test_functor" =
 let%expect_test "test_named_module_functor_app" =
   let program =
     {|
-      module X = Y (Arg1) (Arg2 : sig type t @[deriving: sexp] let x : int end)
+      module X = Y (Arg1) (Arg2 : sig type t #[deriving: sexp] let x : int end)
    |}
   in
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in

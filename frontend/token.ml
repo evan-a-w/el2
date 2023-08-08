@@ -16,10 +16,13 @@ type t =
   | LBrace
   | RBrace
   | Colon
-  | At
   | Semicolon
-  | Dot
   | Backslash
   | Symbol of string
   | Keyword of string
+  | Hash
 [@@deriving sexp, compare, variants, equal, hash]
+
+let at = Symbol "@"
+let dollar = Symbol "$"
+let dot = Symbol "."

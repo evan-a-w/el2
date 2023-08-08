@@ -140,6 +140,10 @@ and expr =
       expr
       * expr (* these should just be node | App but that makes it more clunky *)
   | Let_in of let_def * expr
+  | Ref of expr
+  | Deref of expr
+  | Field_access of expr * Lowercase.t Qualified.t
+  | Field_set of (expr * Lowercase.t Qualified.t * expr)
   | Match of expr * (Binding.t * expr) list
   | Typed of expr * Value_tag.t
 [@@deriving sexp, equal, hash, compare]
