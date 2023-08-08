@@ -47,7 +47,7 @@ and mono =
   | TyVar of Lowercase.t
   | Lambda of mono * mono
   | Tuple of mono list
-  | Pointer of mono
+  | Reference of mono
   | Named of type_proof
 [@@deriving sexp, equal, hash, compare]
 
@@ -111,7 +111,7 @@ let base_module_bindings =
     toplevel_vars =
       (let init = Lowercase.Map.empty in
        Lowercase.Map.add_multi init ~key:"&"
-         ~data:(Forall ("a", Mono (Lambda (TyVar "a", Pointer (TyVar "a"))))));
+         ~data:(Forall ("a", Mono (Lambda (TyVar "a", Reference (TyVar "a"))))));
     toplevel_records = Lowercase.Set.Map.empty;
     toplevel_constructors = Uppercase.Map.empty;
     toplevel_type_constructors =

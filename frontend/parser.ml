@@ -520,16 +520,6 @@ and parse_pratt ?(min_bp = 0) () : Ast.expr parser =
           | _ -> inner (Ast.App (Ast.App (single_name_t operator, lhs), rhs)))
   in
   inner lhs
-(* let%map res = inner lhs in *)
-(* let rec fixify ast = *)
-(*   match ast with *)
-(*   | Ast.App *)
-(*       ( Ast.App (Ast.Node (Ast.Var (Qualified.Unqualified ".")), x), *)
-(*         Ast.Node (Ast.Var s) ) -> *)
-(*       Ast.Field_access (fixify x, s) *)
-(*   | _ -> res *)
-(* in *)
-(* fixify res *)
 
 and struct_p () : Ast.toplevel list parser =
   let%bind () = eat_token (Token.Keyword "struct") in

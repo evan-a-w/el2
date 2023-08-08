@@ -176,7 +176,7 @@ let merge_variance_map_list =
 (*   | Tuple l -> *)
 (*       List.fold l ~init:Lowercase.Map.empty ~f:(fun acc mono -> *)
 (*           merge_variance_maps acc (calculate_variance mono)) *)
-(*   | Pointer mono -> calculate_variance mono *)
+(*   | Reference mono -> calculate_variance mono *)
 (*   | Lambda (l, r) -> *)
 (*       let left = *)
 (*         match l with *)
@@ -357,7 +357,7 @@ and show_mono mono =
   | Tuple l ->
       let%map shown = List.map ~f:show_mono l |> State.Result.all in
       "(" ^ String.concat ~sep:", " shown ^ ")"
-  | Pointer m ->
+  | Reference m ->
       let%map m = show_mono m in
       "&" ^ m
 
@@ -442,7 +442,7 @@ let rec map_ty_vars ~f (mono : mono) =
   | Lambda (a, b) -> Lambda (map_ty_vars ~f a, map_ty_vars ~f b)
   | Tuple l -> Tuple (List.map l ~f:(map_ty_vars ~f))
   | Named type_proof -> Named (map_type_proof ~f type_proof)
-  | Pointer x -> Pointer (map_ty_vars ~f x)
+  | Reference x -> Reference (map_ty_vars ~f x)
 
 and map_type_proof ~f ({ tyvar_map; _ } as type_proof) =
   {
@@ -464,9 +464,9 @@ let rec map_ty_vars_m ~f (mono : mono) =
   | Tuple l ->
       let%map l = State.Result.all (List.map l ~f:(map_ty_vars_m ~f)) in
       Tuple l
-  | Pointer x ->
+  | Reference x ->
       let%map x = map_ty_vars_m ~f x in
-      Pointer x
+      Reference x
   | Named type_proof ->
       let%map type_proof = map_type_proof_m ~f type_proof in
       Named type_proof
@@ -490,7 +490,7 @@ let rec map_weak_vars ~f (mono : mono) =
   | TyVar _ -> mono
   | Lambda (a, b) -> Lambda (map_weak_vars ~f a, map_weak_vars ~f b)
   | Tuple l -> Tuple (List.map l ~f:(map_weak_vars ~f))
-  | Pointer x -> Pointer (map_weak_vars ~f x)
+  | Reference x -> Reference (map_weak_vars ~f x)
   | Named type_proof -> Named (map_weak_type_proof ~f type_proof)
 
 and map_weak_type_proof ~f ({ tyvar_map; _ } as type_proof) =
@@ -559,7 +559,7 @@ let rec type_of_type_expr type_expr : mono state_result_m =
   match type_expr with
   | Ast.Type_expr.Pointer type_expr ->
       let%map mono = type_of_type_expr type_expr in
-      Pointer mono
+      Reference mono
   | Ast.Type_expr.Tuple l ->
       let%map monos = State.Result.all (List.map l ~f:type_of_type_expr) in
       Tuple monos
@@ -1000,7 +1000,7 @@ let rec unify mono1 mono2 =
   | _, Weak x ->
       let%bind () = occurs_check x mono1 in
       State.map (union mono1 mono2) ~f:Result.return
-  | Pointer x, Pointer y -> unify x y
+  | Reference x, Reference y -> unify x y
   | Lambda (x1, x2), Lambda (y1, y2) ->
       let%bind () = unify x1 y1 in
       unify x2 y2
@@ -1055,7 +1055,7 @@ let rec unify_less_general mono1 mono2 =
   | _, Weak x ->
       let%bind () = occurs_check x mono1 in
       State.map (union mono1 mono2) ~f:Result.return
-  | Pointer x, Pointer y -> unify_less_general x y
+  | Reference x, Reference y -> unify_less_general x y
   | Lambda (x1, x2), Lambda (y1, y2) ->
       let%bind () = unify_less_general x1 y1 in
       unify_less_general x2 y2
@@ -1193,6 +1193,7 @@ let rec value_restriction expr =
       List.exists ~f:value_restriction (c :: List.map l ~f:snd)
   | Ast.Match (_, _) -> true
   | Ast.Typed (e, _) -> value_restriction e
+  | _ -> true
 
 and value_restriction_node node =
   match node with
@@ -1300,7 +1301,7 @@ let rec gen_binding_ty_vars ~initial_vars ~(binding : Ast.Binding.t) :
           (mono, vars))
   | Ast.Binding.Pointer binding ->
       let%map mono, vars = gen_binding_ty_vars ~initial_vars ~binding in
-      (Pointer mono, vars)
+      (Reference mono, vars)
   | Ast.Binding.Renamed (binding, var) ->
       let%bind mono, vars = gen_binding_ty_vars ~initial_vars ~binding in
       let%map () = add_var var (Mono mono) in
@@ -1478,7 +1479,7 @@ and process_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono :
       (mono, var :: vars)
   | Ast.Binding.Pointer binding ->
       let%bind ty_var = gen_ty_var in
-      let%bind () = unify (Pointer ty_var) mono in
+      let%bind () = unify (Reference ty_var) mono in
       let%map mono, vars =
         process_binding ~act_on_var ~initial_vars ~binding ~mono:ty_var
       in
@@ -1618,6 +1619,10 @@ and mono_of_expr expr =
   let open State.Result.Let_syntax in
   match expr with
   | Ast.Node node -> mono_of_node node
+  | Ref expr ->
+      let%bind mono = mono_of_expr expr in
+      let%map mono = apply_substs mono in
+      Reference mono
   | If (pred, then_, else_) ->
       let%bind pred_mono = mono_of_expr pred in
       let%bind then_mono = mono_of_expr then_ in
@@ -1867,7 +1872,7 @@ let rec replace_type_name ~type_name (mono : mono) =
   | Lambda (a, b) ->
       Lambda (replace_type_name ~type_name a, replace_type_name ~type_name b)
   | Tuple l -> Tuple (List.map l ~f:(replace_type_name ~type_name))
-  | Pointer x -> Pointer (replace_type_name ~type_name x)
+  | Reference x -> Reference (replace_type_name ~type_name x)
   | Named type_proof -> Named (replace_type_name_proof ~type_name type_proof)
 
 and replace_type_name_proof ~type_name type_proof =
@@ -1885,7 +1890,7 @@ let rec show_mono_def (mono : mono) =
           | None -> show_mono mono))
   | Weak s -> return [%string "weak %{s}"]
   | TyVar s -> return s
-  | Lambda _ | Tuple _ | Pointer _ -> show_mono mono
+  | Lambda _ | Tuple _ | Reference _ -> show_mono mono
 
 and show_user_type (user_type : user_type) =
   let open State.Result.Let_syntax in
