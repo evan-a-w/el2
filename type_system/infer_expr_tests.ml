@@ -207,8 +207,8 @@ let%expect_test "type_def_record" =
          ((a
            (Named
             ((type_name int) (absolute_type_name (Unqualified int)) (ordering ())
-             (tyvar_map ()) (type_id 0))))))
-        (type_id 7))))) |}]
+             (tyvar_map ()) (type_id 173207638))))))
+        (type_id 156654405))))) |}]
 
 let%expect_test "last_list_record_occurs" =
   infer_type_of_expr ~print_state:false

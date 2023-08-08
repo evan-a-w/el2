@@ -6,12 +6,11 @@ type 'a t = Qualified of Uppercase.t * 'a t | Unqualified of 'a
 type qualifications = Uppercase.t List.t [@@deriving compare, equal, hash, sexp]
 
 module Make (Arg : sig
-  type arg [@@deriving sexp, compare, equal, hash]
+  type t [@@deriving sexp, compare, equal, hash]
 end) =
 struct
   module T = struct
-    type t = Qualified of Uppercase.t * t | Unqualified of Arg.arg
-    [@@deriving sexp, compare, equal, hash]
+    type nonrec t = Arg.t t [@@deriving sexp, compare, equal, hash]
   end
 
   module Map = struct

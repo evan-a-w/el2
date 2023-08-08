@@ -67,9 +67,7 @@ and user_type =
 type poly = Mono of mono | Forall of Lowercase.t * poly
 [@@deriving sexp, equal, hash, compare, variants]
 
-module Module_path = Qualified.Make (struct
-  type arg = Uppercase.t [@@deriving sexp, compare, equal, hash]
-end)
+module Module_path = Qualified.Make (Uppercase)
 
 type module_bindings = {
   toplevel_vars : poly list Lowercase.Map.t;
@@ -81,33 +79,32 @@ type module_bindings = {
 }
 [@@deriving sexp, equal, hash, compare, fields]
 
-let make_type_proof type_id s =
+module Absolute_name = Qualified.Make (Lowercase)
+
+let type_id_of_absolute_name = Absolute_name.hash
+
+let make_type_proof (s : Lowercase.t) =
+  let absolute_type_name = Qualified.Unqualified s in
   {
     type_name = s;
-    absolute_type_name = Qualified.Unqualified s;
+    absolute_type_name;
     ordering = None;
     tyvar_map = Lowercase.Map.empty;
-    type_id;
+    type_id = type_id_of_absolute_name absolute_type_name;
   }
 
-let int_type = make_type_proof 0 "int"
-let float_type = make_type_proof 1 "float"
-let bool_type = make_type_proof 2 "bool"
-let unit_type = make_type_proof 3 "unit"
-let string_type = make_type_proof 4 "string"
-let char_type = make_type_proof 5 "char"
-let num_base_types = 6
+let int_type = make_type_proof "int"
+let float_type = make_type_proof "float"
+let bool_type = make_type_proof "bool"
+let unit_type = make_type_proof "unit"
+let string_type = make_type_proof "string"
+let char_type = make_type_proof "char"
 
 let base_type_map =
-  Int.Map.of_alist_exn
-    [
-      (0, (None, Abstract, int_type));
-      (1, (None, Abstract, float_type));
-      (2, (None, Abstract, bool_type));
-      (3, (None, Abstract, unit_type));
-      (4, (None, Abstract, string_type));
-      (5, (None, Abstract, char_type));
-    ]
+  List.map
+    [ int_type; float_type; bool_type; unit_type; string_type; char_type ]
+    ~f:(fun t -> (t.type_id, (None, Abstract, t)))
+  |> Int.Map.of_alist_exn
 
 let base_module_bindings =
   {
@@ -118,15 +115,10 @@ let base_module_bindings =
     toplevel_records = Lowercase.Set.Map.empty;
     toplevel_constructors = Uppercase.Map.empty;
     toplevel_type_constructors =
-      Lowercase.Map.of_alist_exn
-        [
-          ("int", 0);
-          ("float", 1);
-          ("bool", 2);
-          ("unit", 3);
-          ("string", 4);
-          ("char", 5);
-        ];
+      List.map
+        [ int_type; float_type; bool_type; unit_type; string_type; char_type ]
+        ~f:(fun t -> (t.type_name, t.type_id))
+      |> Lowercase.Map.of_alist_exn;
     toplevel_modules = Uppercase.Map.empty;
     opened_modules = [];
   }

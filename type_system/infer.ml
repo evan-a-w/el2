@@ -20,7 +20,6 @@ type state = {
   (* type_vars : (Lowercase.t * level) Lowercase.Map.t; *)
   (* current_level : level; *)
   symbol_n : int;
-  next_type_id : int;
   type_map : type_constructor Int.Map.t;
 }
 [@@deriving sexp, equal, compare, fields]
@@ -110,7 +109,6 @@ let empty_state =
     current_module_binding = empty_module_bindings;
     module_history = { current_name = ""; previous_modules = [] };
     symbol_n = 0;
-    next_type_id = num_base_types;
     type_map = base_type_map;
   }
 
@@ -122,13 +120,6 @@ let gensym : string state_m =
   let letter = Char.of_int_exn (Char.to_int 'a' + (s mod 26)) in
   let s = String.make 1 letter ^ Int.to_string (s / 26) in
   return s
-
-let next_type_id : int state_result_m =
-  let open State.Result.Let_syntax in
-  let%bind state = State.Result.get in
-  let x = state.next_type_id in
-  let%map () = State.Result.put { state with next_type_id = x + 1 } in
-  x
 
 let print_ufds_map : unit state_result_m =
   let open State.Result.Let_syntax in
@@ -800,9 +791,11 @@ let process_type_def
     ({ type_name; type_def; ast_tags = _ } :
       Ast.Type_def_lit.t Ast.type_description) =
   let open State.Result.Let_syntax in
-  let%bind type_id = next_type_id in
+  let%bind state = State.Result.get in
   match type_name with
   | Ast.Type_binding.Mono type_name -> (
+      let absolute_type_name = absolute_type_name ~state ~type_name in
+      let type_id = type_id_of_absolute_name absolute_type_name in
       let%bind type_proof, user_type =
         type_of_type_def_lit ~type_name ~type_id ~ordering:None type_def
       in
@@ -819,6 +812,8 @@ let process_type_def
                     : Lowercase.t list)
                 (type_name : Lowercase.t)])
   | Ast.Type_binding.Poly (arg, type_name) -> (
+      let absolute_type_name = absolute_type_name ~state ~type_name in
+      let type_id = type_id_of_absolute_name absolute_type_name in
       let constructor_arg =
         match arg with
         | Ast.Type_binding.Single (v, l) -> Some (Single_arg (v, l))
@@ -829,8 +824,6 @@ let process_type_def
         List.fold ordering ~init:Lowercase.Map.empty ~f:(fun acc key ->
             Lowercase.Map.add_exn acc ~key ~data:(TyVar key))
       in
-      let%bind state = State.Result.get in
-      let absolute_type_name = absolute_type_name ~state ~type_name in
       let type_proof =
         {
           type_name;
