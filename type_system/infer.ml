@@ -1623,6 +1623,11 @@ and mono_of_expr expr =
       let%bind mono = mono_of_expr expr in
       let%map mono = apply_substs mono in
       Reference mono
+  | Deref expr ->
+      let%bind tyvar = gen_ty_var in
+      let%bind mono = mono_of_expr expr in
+      let%bind () = unify mono (Reference tyvar) in
+      Reference mono
   | If (pred, then_, else_) ->
       let%bind pred_mono = mono_of_expr pred in
       let%bind then_mono = mono_of_expr then_ in
