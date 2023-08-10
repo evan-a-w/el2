@@ -359,7 +359,7 @@ and show_mono mono =
       "(" ^ String.concat ~sep:", " shown ^ ")"
   | Reference m ->
       let%map m = show_mono m in
-      "&" ^ m
+      "@" ^ m
 
 let rec split_poly = function
   | Mono m -> (Lowercase.Set.empty, m)
@@ -626,16 +626,38 @@ let add_constructor name arg result =
       State.Result.error
         [%message "duplicate constructor" ~constructor:(name : Uppercase.t)]
 
-let add_record field_map poly : _ state_result_m =
+let add_field field poly =
   let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
-  let field_set =
-    Lowercase.Map.fold field_map ~init:Lowercase.Set.empty
-      ~f:(fun ~key ~data:_ acc -> Lowercase.Set.add acc key)
+  match
+    Lowercase.Map.add state.current_module_binding.toplevel_fields ~key:field
+      ~data:poly
+  with
+  | `Ok toplevel_fields ->
+      State.Result.put
+        {
+          state with
+          current_module_binding =
+            { state.current_module_binding with toplevel_fields };
+        }
+  | `Duplicate ->
+      State.Result.error
+        [%message "duplicate field" ~field:(field : Lowercase.t)]
+
+let add_record field_map type_proof : _ state_result_m =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  let%bind field_set =
+    Lowercase.Map.fold field_map ~init:(return Lowercase.Set.empty)
+      ~f:(fun ~key ~data:(poly, mut) acc ->
+        let%bind acc = acc in
+        let%map () = add_field key (type_proof, mut, poly) in
+        Lowercase.Set.add acc key)
   in
+  let field_map = Lowercase.Map.map field_map ~f:fst in
   match
     Lowercase.Set.Map.add state.current_module_binding.toplevel_records
-      ~key:field_set ~data:(field_map, poly)
+      ~key:field_set ~data:(field_map, type_proof)
   with
   | `Ok toplevel_records ->
       State.Result.put
@@ -681,6 +703,20 @@ let lookup_constructor qualified_constructor =
   | None ->
       State.Result.error
         [%message "constructor not in scope" (name : Uppercase.t)]
+
+let lookup_field qualified_name =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  let qualifications, name = Qualified.split qualified_name in
+  let res =
+    search_modules state.current_module_binding ~qualifications
+      ~search_for:(fun module_bindings ->
+        Lowercase.Map.find module_bindings.toplevel_fields name)
+  in
+  match res with
+  | Some x -> State.Result.return x
+  | None ->
+      State.Result.error [%message "field not in scope" (name : Lowercase.t)]
 
 let type_proof_of_monos ~type_name ~absolute_type_name ~ordering monos type_id =
   let free_var_set =
@@ -743,13 +779,14 @@ let type_of_type_def_lit ~(type_name : string) ~type_id ~ordering
       let user_type = Record record_type in
       let%bind polys =
         State.Result.all
-          (List.map record_type ~f:(fun (field, (mono, _)) ->
+          (List.map record_type ~f:(fun (field, (mono, mut)) ->
                let%map.State poly = gen mono in
-               Ok (field, poly)))
+               Ok (field, poly, mut)))
       in
       let field_map =
-        List.fold polys ~init:Lowercase.Map.empty ~f:(fun acc (field, poly) ->
-            Lowercase.Map.add_exn acc ~key:field ~data:poly)
+        List.fold polys ~init:Lowercase.Map.empty
+          ~f:(fun acc (field, poly, mut) ->
+            Lowercase.Map.add_exn acc ~key:field ~data:(poly, mut))
       in
       let%map () = add_record field_map type_proof in
       (type_proof, user_type)
@@ -900,8 +937,14 @@ let inst_type_proof type_proof =
     Lowercase.Map.fold type_proof.tyvar_map ~init:(return Lowercase.Map.empty)
       ~f:(fun ~key ~data:_ acc ->
         let%bind acc = acc in
-        let%map sym = State.map gensym ~f:Result.return in
-        Lowercase.Map.set acc ~key ~data:(TyVar sym))
+        let%map sym =
+          match Lowercase.Map.find acc key with
+          | Some x -> return x
+          | None ->
+              let%map res = State.map gensym ~f:Result.return in
+              TyVar res
+        in
+        Lowercase.Map.set acc ~key ~data:sym)
   in
   replace_ty_vars_type_proof ~replacement_map type_proof
 
@@ -1615,6 +1658,31 @@ and add_rec_bindings l =
   let bindings = List.unzip bindings |> fst in
   List.concat [ vars_list; bindings ]
 
+and mono_of_field expr field ~mut =
+  let open State.Result.Let_syntax in
+  let%bind type_proof, muta, poly = lookup_field field in
+  let%bind () =
+    match (mut, muta) with
+    | true, `Immutable ->
+        State.Result.error
+          [%message
+            "Field needs to be mutable" (field : Lowercase.t Qualified.t)]
+    | _ -> return ()
+  in
+  let%bind named_poly = Named type_proof |> gen |> State.map ~f:Result.return in
+  let%bind monos =
+    inst_many [ named_poly; poly ] |> State.map ~f:Result.return
+  in
+  let type_proof, mono =
+    match monos with
+    | [ Named type_proof; mono ] -> (type_proof, mono)
+    | _ -> assert false
+  in
+  let%bind expr_mono = mono_of_expr expr in
+  let%bind () = unify expr_mono (Named type_proof) in
+  let%map mono = apply_substs mono in
+  mono
+
 and mono_of_expr expr =
   let open State.Result.Let_syntax in
   match expr with
@@ -1626,8 +1694,14 @@ and mono_of_expr expr =
   | Deref expr ->
       let%bind tyvar = gen_ty_var in
       let%bind mono = mono_of_expr expr in
-      let%bind () = unify mono (Reference tyvar) in
+      let%map () = unify mono (Reference tyvar) in
       Reference mono
+  | Field_access (expr, field) -> mono_of_field expr field ~mut:false
+  | Field_set (expr1, field, expr2) ->
+      let%bind field_mono = mono_of_field expr1 field ~mut:true in
+      let%bind rhs_mono = mono_of_expr expr2 in
+      let%map () = unify field_mono rhs_mono in
+      Named unit_type
   | If (pred, then_, else_) ->
       let%bind pred_mono = mono_of_expr pred in
       let%bind then_mono = mono_of_expr then_ in

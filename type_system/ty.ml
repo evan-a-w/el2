@@ -72,6 +72,8 @@ module Module_path = Qualified.Make (Uppercase)
 type module_bindings = {
   toplevel_vars : poly list Lowercase.Map.t;
   toplevel_records : (poly Lowercase.Map.t * type_proof) Lowercase.Set.Map.t;
+  toplevel_fields :
+    (type_proof * [ `Mutable | `Immutable ] * poly) Lowercase.Map.t;
   toplevel_constructors : (poly option * type_proof) Uppercase.Map.t;
   toplevel_type_constructors : type_id Lowercase.Map.t;
   toplevel_modules : module_bindings Uppercase.Map.t;
@@ -112,6 +114,7 @@ let base_module_bindings =
       (let init = Lowercase.Map.empty in
        Lowercase.Map.add_multi init ~key:"&"
          ~data:(Forall ("a", Mono (Lambda (TyVar "a", Reference (TyVar "a"))))));
+    toplevel_fields = Lowercase.Map.empty;
     toplevel_records = Lowercase.Set.Map.empty;
     toplevel_constructors = Uppercase.Map.empty;
     toplevel_type_constructors =
@@ -126,6 +129,7 @@ let base_module_bindings =
 let empty_module_bindings =
   {
     toplevel_vars = Lowercase.Map.empty;
+    toplevel_fields = Lowercase.Map.empty;
     toplevel_records = Lowercase.Set.Map.empty;
     toplevel_constructors = Uppercase.Map.empty;
     toplevel_type_constructors = Lowercase.Map.empty;

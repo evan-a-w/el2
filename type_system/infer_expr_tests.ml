@@ -17,9 +17,9 @@ let define_types ~type_exprs =
 let type_exprs =
   [
     {| type a option = None | Some a |};
-    {| type a node = { value : a; mutable next : &(a node) option } |};
+    {| type a node = { value : a; mutable next : @(a node) option } |};
     {| type a list = Cons (a, a list) | Nil |};
-    {| type a ref_list = Ref_cons (&a, a ref_list) | Ref_nil |};
+    {| type a ref_list = Ref_cons (@a, a ref_list) | Ref_nil |};
     {| type a nonempty_list = Nonempty_cons (a, a nonempty_list option) |};
   ]
 
@@ -293,7 +293,7 @@ let%expect_test "recursive last not pointer" =
            in last { value : 1; next : Some { value : 2; next : None } } |};
       ];
   [%expect {|
-    (error ("failed to unify types" "&i0 node" "int node")) |}]
+    (error ("failed to unify types" "@i0 node" "int node")) |}]
 
 let%expect_test "type annot1" =
   infer_type_of_expr ~print_state:false
@@ -334,7 +334,7 @@ let%expect_test "ref cons succ" =
     {|
     int ref_list
     int ref_list
-    (&a0, a0 ref_list) -> a0 ref_list |}]
+    (@a0, a0 ref_list) -> a0 ref_list |}]
 
 let%expect_test "ref cons fl" =
   infer_type_of_expr ~print_state:false
@@ -347,9 +347,9 @@ let%expect_test "ref cons fl" =
       ];
   [%expect
     {|
-    (error ("failed to unify types" &a0 int))
+    (error ("failed to unify types" @a0 int))
     (error ("types failed to unify" "a0 ref_list" "d0 list"))
-    (error ("failed to unify types" &a0 int))
+    (error ("failed to unify types" @a0 int))
     (error ("types failed to unify" int string)) |}]
 
 let%expect_test "rec tail nonempty list" =
@@ -466,7 +466,7 @@ let%expect_test "recursive last" =
         {| let rec last =
              fun l -> match l with
              | { value : x; next : None } -> x
-             | { value : _; next : Some &y } -> last y
+             | { value : _; next : Some @y } -> last y
            in last |};
       ];
   [%expect {|
@@ -479,8 +479,8 @@ let%expect_test "recursive last value" =
         {| let rec last =
              fun l -> match l with
              | { value : x; next : None } -> x
-             | { value : _; next : Some &y } -> last y in
-           last { value : 1; next : Some &{ value : 2; next : None } } |};
+             | { value : _; next : Some @y } -> last y in
+           last { value : 1; next : Some @{ value : 2; next : None } } |};
       ];
   [%expect {|
     int |}]
