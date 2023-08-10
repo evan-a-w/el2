@@ -1253,14 +1253,8 @@ let gen_ty_var : _ state_result_m =
   let%map.State sym = gensym in
   Ok (TyVar sym)
 
-let mono_of_literal literal =
-  match literal with
-  | Ast.Literal.Int _ -> State.Result.return (Named int_type)
-  | Ast.Literal.Float _ -> State.Result.return (Named float_type)
-  | Ast.Literal.Bool _ -> State.Result.return (Named bool_type)
-  | Ast.Literal.Unit -> State.Result.return (Named unit_type)
-  | Ast.Literal.String _ -> State.Result.return (Named string_type)
-  | Ast.Literal.Char _ -> State.Result.return (Named char_type)
+let type_literal literal =
+  State.Result.return @@ Typed_ast.expr_of_literal literal
 
 let poly_of_mono mono ~generalize ~value_restriction =
   match (generalize, value_restriction) with
@@ -1305,8 +1299,8 @@ let rec gen_binding_ty_vars ~initial_vars ~(binding : Ast.Binding.t) :
   let open State.Result.Let_syntax in
   match binding with
   | Ast.Binding.Literal l ->
-      let%map mono = mono_of_literal l in
-      (mono, initial_vars)
+      let mono = Typed_ast.Literal.mono_of_t l in
+      return (mono, initial_vars)
   | Ast.Binding.Name var ->
       let%bind ty_var = gen_ty_var in
       let poly = Mono ty_var in
@@ -1407,24 +1401,31 @@ let gen_var var =
   let%bind poly = State.Result.t_of_state (gen mono) in
   add_var var poly
 
-let rec mono_of_node node =
+let rec type_node node =
   let open State.Result.Let_syntax in
   match node with
-  | Ast.Literal literal -> mono_of_literal literal
-  | Ast.Var var_name -> lookup_var var_name >>= inst_result
+  | Ast.Literal literal -> type_literal literal
+  | Ast.Var var_name ->
+      let%map mono = lookup_var var_name >>= inst_result in
+      (Typed_ast.(Node (Var var_name)), mono)
   | Ast.Tuple qualified_tuple ->
       let qualifications, tuple = Qualified.split qualified_tuple in
       let%bind () = open_module qualifications in
-      let%bind l = State.Result.all (List.map tuple ~f:mono_of_expr) in
+      let%bind l = State.Result.all (List.map tuple ~f:type_expr) in
+      let monos = List.map l ~f:snd in
       let%map () = pop_opened_module in
-      Tuple l
+      let l = Qualified.prepend ~qualifications (Unqualified l) in
+      (Typed_ast.(Node (Tuple l)), Tuple monos)
   | Ast.Wrapped qualified_expr ->
       let qualifications, expr = Qualified.split qualified_expr in
       let%bind () = open_module qualifications in
-      let%bind res = mono_of_expr expr in
+      let%bind ((_, mono) as expr) = type_expr expr in
       let%map () = pop_opened_module in
-      res
-  | Ast.Constructor constructor -> type_of_constructor constructor
+      let expr = Qualified.prepend ~qualifications (Unqualified expr) in
+      (Typed_ast.(Node (Wrapped expr)), mono)
+  | Ast.Constructor constructor ->
+      let%map mono = type_of_constructor constructor in
+      (Typed_ast.(Node (Constructor constructor)), mono)
   | Ast.Record qualified_record ->
       let qualifications, record = Qualified.split qualified_record in
       let%bind () = open_module qualifications in
@@ -1445,26 +1446,31 @@ let rec mono_of_node node =
             (field, mono))
         |> State.Result.all >>| Lowercase.Map.of_alist_exn
       in
-      let%bind () =
-        Lowercase.Map.fold record ~init:(State.Result.return ())
+      let%bind expr_map =
+        Lowercase.Map.fold record
+          ~init:(State.Result.return Lowercase.Map.empty)
           ~f:(fun ~key:field ~data:expr acc ->
-            let%bind () = acc in
-            let%bind mono = mono_of_expr expr in
-            match Lowercase.Map.find field_mono_map field with
-            | None ->
-                State.Result.error
-                  [%message "Unknown field" (field : Lowercase.t)]
-            | Some field_mono -> unify field_mono mono)
+            let%bind acc = acc in
+            let%bind ((_, mono) as expr) = type_expr expr in
+            let%map () =
+              match Lowercase.Map.find field_mono_map field with
+              | None ->
+                  State.Result.error
+                    [%message "Unknown field" (field : Lowercase.t)]
+              | Some field_mono -> unify field_mono mono
+            in
+            Lowercase.Map.set acc ~key:field ~data:expr)
       in
-      apply_substs mono_res
+      let expr_map = Qualified.prepend ~qualifications (Unqualified expr_map) in
+      let%map mono = apply_substs mono_res in
+      (Typed_ast.(Node (Record expr_map)), mono)
 
 and add_var_mono ~generalize ~value_restriction var mono =
   let open State.Result.Let_syntax in
   let%bind poly = poly_of_mono ~generalize ~value_restriction mono in
   add_var var poly
 
-and process_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono :
-    (mono * Lowercase.t list) state_result_m =
+and type_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono =
   let open State.Result.Let_syntax in
   match binding with
   | Ast.Binding.Literal l ->
@@ -1679,7 +1685,7 @@ and mono_of_field expr field ~mut =
   let%map mono = apply_substs mono in
   mono
 
-and mono_of_expr expr =
+and type_expr expr =
   let open State.Result.Let_syntax in
   match expr with
   | Ast.Node node -> mono_of_node node
