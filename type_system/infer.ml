@@ -646,7 +646,6 @@ let add_field field poly =
 
 let add_record field_map type_proof : _ state_result_m =
   let open State.Result.Let_syntax in
-  let%bind state = State.Result.get in
   let%bind field_set =
     Lowercase.Map.fold field_map ~init:(return Lowercase.Set.empty)
       ~f:(fun ~key ~data:(poly, mut) acc ->
@@ -655,6 +654,7 @@ let add_record field_map type_proof : _ state_result_m =
         Lowercase.Set.add acc key)
   in
   let field_map = Lowercase.Map.map field_map ~f:fst in
+  let%bind state = State.Result.get in
   match
     Lowercase.Set.Map.add state.current_module_binding.toplevel_records
       ~key:field_set ~data:(field_map, type_proof)
@@ -781,13 +781,9 @@ let type_of_type_def_lit ~(type_name : string) ~type_id ~ordering
         State.Result.all
           (List.map record_type ~f:(fun (field, (mono, mut)) ->
                let%map.State poly = gen mono in
-               Ok (field, poly, mut)))
+               Ok (field, (poly, mut))))
       in
-      let field_map =
-        List.fold polys ~init:Lowercase.Map.empty
-          ~f:(fun acc (field, poly, mut) ->
-            Lowercase.Map.add_exn acc ~key:field ~data:(poly, mut))
-      in
+      let field_map = Lowercase.Map.of_alist_exn polys in
       let%map () = add_record field_map type_proof in
       (type_proof, user_type)
   | Ast.Type_def_lit.Enum l ->

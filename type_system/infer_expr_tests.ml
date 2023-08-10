@@ -534,3 +534,19 @@ let%expect_test "head generalizes" =
       ];
   [%expect {|
     (int option, string option) |}]
+
+let%expect_test "value field" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let rec value = fun l -> l.value in value { value : 1; next : None } |};
+      ];
+  [%expect {| int |}]
+
+let%expect_test "value field set" =
+  infer_type_of_expr ~print_state:false
+    ~programs:
+      [
+        {| let value = fun l -> l.value <- 2 in let initial = { value : 1; next : None } in value initial |};
+      ];
+  [%expect {| (error ("Field needs to be mutable" (field (Unqualified value)))) |}]
