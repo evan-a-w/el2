@@ -55,7 +55,7 @@ and mono =
 and record_type = (Lowercase.t * (mono * [ `Mutable | `Immutable ])) list
 [@@deriving sexp, equal, hash, compare]
 
-and enum_type = (Lowercase.t * mono option) list
+and enum_type = (Uppercase.t * mono option) list
 [@@deriving sexp, equal, hash, compare]
 
 and user_type =
@@ -72,15 +72,16 @@ type poly =
 
 module Module_path = Qualified.Make (Uppercase)
 
-type module_bindings =
+type 'data module_bindings =
   { toplevel_vars : poly list Lowercase.Map.t
   ; toplevel_records : (poly Lowercase.Map.t * type_proof) Lowercase.Set.Map.t
   ; toplevel_fields :
       (type_proof * [ `Mutable | `Immutable ] * poly) Lowercase.Map.t
   ; toplevel_constructors : (poly option * type_proof) Uppercase.Map.t
   ; toplevel_type_constructors : type_id Lowercase.Map.t
-  ; toplevel_modules : module_bindings Uppercase.Map.t
-  ; opened_modules : module_bindings List.t
+  ; toplevel_modules : 'data module_bindings Uppercase.Map.t
+  ; opened_modules : 'data module_bindings List.t
+  ; data : 'data
   }
 [@@deriving sexp, equal, hash, compare, fields]
 
@@ -112,7 +113,7 @@ let base_type_map =
   |> Int.Map.of_alist_exn
 ;;
 
-let base_module_bindings =
+let base_module_bindings empty_data =
   { toplevel_vars =
       (let init = Lowercase.Map.empty in
        Lowercase.Map.add_multi
@@ -129,16 +130,18 @@ let base_module_bindings =
       |> Lowercase.Map.of_alist_exn
   ; toplevel_modules = Uppercase.Map.empty
   ; opened_modules = []
+  ; data = empty_data
   }
 ;;
 
-let empty_module_bindings =
+let empty_module_bindings empty_data =
   { toplevel_vars = Lowercase.Map.empty
   ; toplevel_fields = Lowercase.Map.empty
   ; toplevel_records = Lowercase.Set.Map.empty
   ; toplevel_constructors = Uppercase.Map.empty
   ; toplevel_type_constructors = Lowercase.Map.empty
   ; toplevel_modules = Uppercase.Map.empty
-  ; opened_modules = [ base_module_bindings ]
+  ; opened_modules = [ base_module_bindings empty_data ]
+  ; data = empty_data
   }
 ;;

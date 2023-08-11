@@ -153,7 +153,6 @@ and expr =
 [@@deriving sexp, equal, hash, compare]
 
 and toplevel =
-  (* | Type_def of Type_def_lit.t type_description list [@sexp.list] *)
   | Type_def of Type_def_lit.t type_description
   | Let of let_def
   (* TODO: | Module_type of Uppercase.t * module_sig *)

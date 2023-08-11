@@ -10,7 +10,7 @@ let define_types ~type_exprs =
     let%bind type_name, type_def, ast_tags =
       Parser.try_parse (Parser.typedef_p ()) type_expr |> State.return
     in
-    process_type_def { type_name; type_def; ast_tags }
+    type_type_def { type_name; type_def; ast_tags } >>| ignore
   in
   State.Result.all_unit (List.map type_exprs ~f:action)
 ;;

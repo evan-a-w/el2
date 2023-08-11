@@ -41,19 +41,17 @@ type node =
   | Wrapped of expr Qualified.t
 [@@deriving sexp, equal, hash, compare]
 
-and 'a binding = 'a binding_inner * 'a [@@deriving sexp, equal, hash, compare]
-
-and 'a binding_inner =
+and binding =
   | Name_binding of Lowercase.t
-  | Constructor_binding of Uppercase.t Qualified.t * 'a binding option
+  | Constructor_binding of Uppercase.t Qualified.t * binding option
   | Literal_binding of Literal.t
-  | Record_binding of 'a binding Lowercase.Map.t Qualified.t
-  | Tuple_binding of 'a binding list Qualified.t
-  | Renamed_binding of 'a binding * Lowercase.t
-  | Reference_binding of 'a binding
+  | Record_binding of binding Lowercase.Map.t Qualified.t
+  | Tuple_binding of binding list Qualified.t
+  | Renamed_binding of binding * Lowercase.t
+  | Reference_binding of binding
 [@@deriving sexp, equal, hash, compare]
 
-and let_each = Ty.poly binding * expr [@@deriving sexp, equal, hash, compare]
+and let_each = binding * expr [@@deriving sexp, equal, hash, compare]
 
 and let_def =
   | Rec of let_each list
@@ -65,14 +63,14 @@ and expr = expr_inner * Ty.mono [@@deriving sexp, equal, hash, compare]
 and expr_inner =
   | Node of node
   | If of expr * expr * expr
-  | Lambda of Ty.mono binding * expr
+  | Lambda of binding * expr
   | App of expr * expr
   | Let_in of let_def * expr
   | Ref of expr
   | Deref of expr
   | Field_access of expr * Lowercase.t Qualified.t
   | Field_set of (expr * Lowercase.t Qualified.t * expr)
-  | Match of expr * (Ty.mono binding * expr) list
+  | Match of expr * (binding * expr) list
 [@@deriving sexp, equal, hash, compare]
 
 let expr_of_literal x = Node (Literal x), Literal.mono_of_t x
@@ -127,3 +125,45 @@ let map_binding_inner_m ~f =
     let%map x = f x in
     Reference_binding x
 ;;
+
+module Type_def = struct
+  type t =
+    { type_def : Ty.user_type
+    ; type_binding : Ast.Type_binding.t
+    ; type_proof : Ty.type_proof
+    }
+  [@@deriving sexp, equal, hash, compare]
+end
+
+type toplevel_type =
+  | Sig_binding of binding * Ty.poly
+  | Sig_module of module_description
+  | Sig_type_def of Type_def.t
+[@@deriving sexp, equal, hash, compare]
+
+and module_sig = toplevel_type list [@@deriving sexp, equal, hash, compare]
+
+and module_description =
+  { module_name : Uppercase.t Qualified.t
+  ; functor_args : (Uppercase.t * module_sig) list
+  }
+[@@deriving sexp, equal, hash, compare]
+
+type toplevel =
+  | Type_def of Type_def.t
+  | Let of let_def
+  | Module_def of module_def
+[@@deriving sexp, equal, hash, compare]
+
+and module_ = module_impl Ty.module_bindings
+[@@deriving sexp, equal, hash, compare]
+
+and module_def = module_description * module_
+[@@deriving sexp, equal, hash, compare]
+
+and module_impl =
+  | Here of toplevel list
+  | There of module_
+[@@deriving sexp, equal, hash, compare]
+
+let empty_data = Here []
