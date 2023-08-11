@@ -1,6 +1,6 @@
 (library
  (name frontend)
- (libraries core angstrom shared)
+ (libraries core angstrom shared pprint)
  (preprocess
   (pps ppx_jane))
  (inline_tests))

@@ -68,6 +68,15 @@ module Literal = struct
     | String of string
     | Char of char
   [@@deriving sexp, equal, hash, compare]
+
+  let pretty_print_t = function
+    | Unit -> PPrint.string "()"
+    | Int i -> Int.to_string i |> PPrint.string
+    | Bool b -> Bool.to_string b |> PPrint.string
+    | Float f -> Float.to_string f |> PPrint.string
+    | String s -> PPrint.dquotes (PPrint.string s)
+    | Char c -> PPrint.squotes (PPrint.char c)
+  ;;
 end
 
 module Binding = struct
@@ -163,3 +172,10 @@ and toplevel =
 [@@deriving sexp, equal, hash, compare]
 
 and t = toplevel list [@@deriving sexp, equal, hash, compare]
+
+let rec pretty_print_node node =
+  match node with
+  | Var s -> PPrint.string s
+  | Tuple _ | Constructor _ | Record _ | Wrapped _ -> failwith "TODO"
+  | Literal l -> Literal.pretty_print_t l
+;;

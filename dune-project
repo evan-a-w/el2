@@ -19,7 +19,7 @@
  (name lep)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml dune core angstrom)
+ (depends ocaml dune core angstrom pprint)
  (tags
   (topics "to describe" your project)))
 
