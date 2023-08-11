@@ -2286,3 +2286,10 @@ let rec show_module_bindings
 ;;
 
 let mono_of_expr e = State.Result.map (type_expr e) ~f:snd
+
+let process_toplevel_list toplevel_list =
+  let open State.Result.Let_syntax in
+  let%bind _ = type_toplevel_list toplevel_list in
+  let%map _, module_ = pop_module in
+  module_
+;;

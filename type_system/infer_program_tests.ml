@@ -10,7 +10,7 @@ let run program =
       Parser.try_parse Parser.parse_t program |> State.return
     in
     let%bind _ = type_toplevel_list toplevel_list in
-    let%bind module_bindings = get_current_module_binding in
+    let%bind _, module_bindings = pop_module in
     let%map s = show_module_bindings module_bindings in
     print_endline s
     (* print_s [%sexp (toplevels : Typed_ast.toplevel list)] *)
