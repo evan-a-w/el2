@@ -19,8 +19,9 @@ module Make (Token : S) = struct
     match Sequence.next tokens with
     | None -> end_of_input
     | Some (token, tokens) ->
-        let%bind () = put tokens in
-        return token
+      let%bind () = put tokens in
+      return token
+  ;;
 
   let next_opt : Token.t Option.t parser =
     let open Let_syntax in
@@ -28,40 +29,45 @@ module Make (Token : S) = struct
     match Sequence.next tokens with
     | None -> return None
     | Some (token, tokens) ->
-        let%bind () = put tokens in
-        return (Some token)
+      let%bind () = put tokens in
+      return (Some token)
+  ;;
 
   let is_eof : bool parser =
     let open Let_syntax in
     let%bind tokens = get in
     return (Sequence.is_empty tokens)
+  ;;
 
   let put_back token =
     let%bind tokens = get in
     put (Sequence.shift_right tokens token)
+  ;;
 
   let eat_token expected =
     let%bind got = next in
     match Token.compare got expected with
     | 0 -> return ()
     | _ -> error [%message (expected : Token.t) (got : Token.t)]
+  ;;
 
   let many_sep_rev p ~sep =
     let rec loop acc =
       let%bind prev_state = get in
       match%bind.State p with
       | Error _ ->
-          let%bind () = put prev_state in
-          return acc
-      | Ok res -> (
-          let%bind prev_state = get in
-          match%bind.State sep with
-          | Ok _ -> loop (res :: acc)
-          | Error _ ->
-              let%bind () = put prev_state in
-              return (res :: acc))
+        let%bind () = put prev_state in
+        return acc
+      | Ok res ->
+        let%bind prev_state = get in
+        (match%bind.State sep with
+         | Ok _ -> loop (res :: acc)
+         | Error _ ->
+           let%bind () = put prev_state in
+           return (res :: acc))
     in
     loop []
+  ;;
 
   let many_sep p ~sep = many_sep_rev p ~sep >>| List.rev
   let many_rev p = many_sep_rev p ~sep:(return ())
@@ -71,12 +77,14 @@ module Make (Token : S) = struct
     match ps with
     | [] -> error [%message "Expected at least one element"]
     | _ :: _ -> return ps
+  ;;
 
   let many_sep_rev2 p ~sep =
     let%bind ps = many_sep_rev p ~sep in
     match ps with
     | _ :: _ :: _ -> return ps
     | _ -> error [%message "Expected at least two elements"]
+  ;;
 
   let many_rev1 p = many_sep_rev1 p ~sep:(return ())
   let many_rev2 p = many_sep_rev2 p ~sep:(return ())
@@ -90,37 +98,43 @@ module Make (Token : S) = struct
   let matches_full p ~tokens =
     let result, tokens = run p ~tokens in
     Result.is_ok result && Sequence.is_empty tokens
+  ;;
 
   let matches p ~tokens ~(match_type : [< `Full | `Prefix ]) =
     match match_type with
     | `Full -> matches_full p ~tokens
     | `Prefix -> matches_prefix p ~tokens
+  ;;
 
   let optional p =
     let%bind prev_state = get in
     match%bind.State p with
     | Ok res -> return (Some res)
     | Error _ ->
-        let%bind () = put prev_state in
-        return None
+      let%bind () = put prev_state in
+      return None
+  ;;
 
   let if_ p ~then_ ~else_ =
     let%bind prev_state = get in
     match%bind.State p with
     | Ok _ -> then_
     | Error _ ->
-        let%bind () = put prev_state in
-        else_
+      let%bind () = put prev_state in
+      else_
+  ;;
 
   let satisfies f =
     let%bind token = next in
     if f token then return token else error [%message "Unexpected token"]
+  ;;
 
   let success p =
     let%bind state = get in
     match%bind.State p with
     | Ok _ -> return true
     | Error _ ->
-        let%bind () = put state in
-        return false
+      let%bind () = put state in
+      return false
+  ;;
 end

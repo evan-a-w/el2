@@ -19,14 +19,17 @@ module Literal = struct
     | Float _ -> Ty.float_type
     | String _ -> Ty.string_type
     | Char _ -> Ty.char_type
+  ;;
 
   let mono_of_t x =
     let type_proof = type_proof_of_t x in
     Ty.Named type_proof
+  ;;
 
   let poly_of_t x =
     let mono = mono_of_t x in
     Ty.Mono mono
+  ;;
 end
 
 type node =
@@ -38,21 +41,23 @@ type node =
   | Wrapped of expr Qualified.t
 [@@deriving sexp, equal, hash, compare]
 
-and binding = binding_inner * Ty.poly [@@deriving sexp, equal, hash, compare]
+and 'a binding = 'a binding_inner * 'a [@@deriving sexp, equal, hash, compare]
 
-and binding_inner =
+and 'a binding_inner =
   | Name_binding of Lowercase.t
-  | Constructor_binding of Uppercase.t Qualified.t * binding option
+  | Constructor_binding of Uppercase.t Qualified.t * 'a binding option
   | Literal_binding of Literal.t
-  | Record_binding of binding Lowercase.Map.t Qualified.t
-  | Tuple_binding of binding list Qualified.t
-  | Renamed_binding of binding * Lowercase.t
-  | Reference_binding of binding
+  | Record_binding of 'a binding Lowercase.Map.t Qualified.t
+  | Tuple_binding of 'a binding list Qualified.t
+  | Renamed_binding of 'a binding * Lowercase.t
+  | Reference_binding of 'a binding
 [@@deriving sexp, equal, hash, compare]
 
-and let_each = binding * expr [@@deriving sexp, equal, hash, compare]
+and let_each = Ty.poly binding * expr [@@deriving sexp, equal, hash, compare]
 
-and let_def = Rec of let_each list | Nonrec of let_each
+and let_def =
+  | Rec of let_each list
+  | Nonrec of let_each
 [@@deriving sexp, equal, hash, compare]
 
 and expr = expr_inner * Ty.mono [@@deriving sexp, equal, hash, compare]
@@ -60,14 +65,65 @@ and expr = expr_inner * Ty.mono [@@deriving sexp, equal, hash, compare]
 and expr_inner =
   | Node of node
   | If of expr * expr * expr
-  | Lambda of binding * expr
+  | Lambda of Ty.mono binding * expr
   | App of expr * expr
   | Let_in of let_def * expr
   | Ref of expr
   | Deref of expr
   | Field_access of expr * Lowercase.t Qualified.t
   | Field_set of (expr * Lowercase.t Qualified.t * expr)
-  | Match of expr * (binding * expr) list
+  | Match of expr * (Ty.mono binding * expr) list
 [@@deriving sexp, equal, hash, compare]
 
-let expr_of_literal x = (Node (Literal x), Literal.mono_of_t x)
+let expr_of_literal x = Node (Literal x), Literal.mono_of_t x
+
+let map_binding_inner ~f = function
+  | Name_binding x -> Name_binding x
+  | Constructor_binding (x, y) -> Constructor_binding (x, Option.map ~f y)
+  | Literal_binding x -> Literal_binding x
+  | Record_binding x ->
+    Record_binding (Qualified.map x ~f:(Lowercase.Map.map ~f))
+  | Tuple_binding x -> Tuple_binding (Qualified.map x ~f:(List.map ~f))
+  | Renamed_binding (x, y) -> Renamed_binding (f x, y)
+  | Reference_binding x -> Reference_binding (f x)
+;;
+
+let map_binding_inner_m ~f =
+  let open State.Result.Let_syntax in
+  function
+  | Name_binding x -> return @@ Name_binding x
+  | Constructor_binding (x, y) ->
+    let%map y =
+      match y with
+      | Some y ->
+        let%map y = f y in
+        Some y
+      | None -> return None
+    in
+    Constructor_binding (x, y)
+  | Literal_binding x -> return @@ Literal_binding x
+  | Record_binding x ->
+    let%map map =
+      Qualified.map_m
+        x
+        ~f:
+          (Lowercase.Map.fold
+             ~init:(return Lowercase.Map.empty)
+             ~f:(fun ~key ~data acc ->
+             let%bind acc = acc in
+             let%map data = f data in
+             Lowercase.Map.add_exn acc ~key ~data))
+    in
+    Record_binding map
+  | Tuple_binding x ->
+    let%map list =
+      Qualified.map_m x ~f:(fun l -> State.Result.all @@ List.map l ~f)
+    in
+    Tuple_binding list
+  | Renamed_binding (x, y) ->
+    let%map x = f x in
+    Renamed_binding (x, y)
+  | Reference_binding x ->
+    let%map x = f x in
+    Reference_binding x
+;;

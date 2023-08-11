@@ -16,6 +16,7 @@ let run program =
   match State.Result.run action ~state:empty_state with
   | Ok (), _ -> ()
   | Error error, _ -> print_s [%message (error : Sexp.t)]
+;;
 
 let program_a =
   {|
@@ -42,6 +43,7 @@ let list_of_option = fun (x : a option) ->
   | Some x -> Cons (x, Nil)
   | None -> Nil
 |}
+;;
 
 let%expect_test "program a" =
   run program_a;
@@ -68,6 +70,7 @@ let%expect_test "program a" =
     let list_of_option : a option -> a list
 
     let x : int |}]
+;;
 
 let program_b =
   {|
@@ -78,9 +81,12 @@ module X = struct
 end
 
 type t = X.t |}
+;;
 
-let%expect_test "program b" = run program_b;
-  [%expect {|
+let%expect_test "program b" =
+  run program_b;
+  [%expect
+    {|
     type a list =
     	| Cons (a, a list)
     	| Nil
@@ -91,3 +97,4 @@ let%expect_test "program b" = run program_b;
         type t =
         	| Pee
     end |}]
+;;

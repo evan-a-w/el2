@@ -11,18 +11,22 @@ struct
   let empty = Map.empty
 
   let add t mono =
-    match Map.add t ~key:mono ~data:mono with `Duplicate -> t | `Ok t -> t
+    match Map.add t ~key:mono ~data:mono with
+    | `Duplicate -> t
+    | `Ok t -> t
+  ;;
 
   let rec find t mono : Arg.t * t =
     match Map.find t mono with
-    | Some mono' when [%equal: Arg.t] mono mono' -> (mono, t)
+    | Some mono' when [%equal: Arg.t] mono mono' -> mono, t
     | Some mono' ->
-        let data, t' = find t mono' in
-        let t' = Map.set t' ~key:mono' ~data in
-        (data, t')
+      let data, t' = find t mono' in
+      let t' = Map.set t' ~key:mono' ~data in
+      data, t'
     | None ->
-        let t = add t mono in
-        (mono, t)
+      let t = add t mono in
+      mono, t
+  ;;
 
   let union t mono1 mono2 : t =
     let mono1, t = find t mono1 in
@@ -30,8 +34,9 @@ struct
     match [%equal: Arg.t] mono1 mono2 with
     | true -> t
     | false ->
-        let t = Map.set t ~key:mono2 ~data:mono1 in
-        t
+      let t = Map.set t ~key:mono2 ~data:mono1 in
+      t
+  ;;
 end
 
 let%test_module _ =
@@ -48,9 +53,11 @@ let%test_module _ =
       let t = String_ufds.union t "x" "y" in
       let results =
         List.map [ "a"; "b"; "c"; "d"; "e"; "z"; "x"; "y" ] ~f:(fun x ->
-            let res, _ = String_ufds.find t x in
-            res)
+          let res, _ = String_ufds.find t x in
+          res)
       in
       print_s [%sexp (results : string list)];
       [%expect {| (a a a a a z x x) |}]
+    ;;
   end)
+;;

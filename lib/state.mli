@@ -41,8 +41,10 @@ module Result : sig
 
   val error : 'stop -> ('go, 'stop, 'state) t
 
-  val run :
-    ('go, 'stop, 'state) t -> state:'state -> ('go, 'stop) result * 'state
+  val run
+    :  ('go, 'stop, 'state) t
+    -> state:'state
+    -> ('go, 'stop) result * 'state
 
   val get : ('state, 'stop, 'state) t
   val put : 'state -> (unit, 'stop, 'state) t
@@ -77,8 +79,10 @@ module Result : sig
   val return : 'a -> ('a, 'b, 'c) t
   val map : ('a, 'd, 'e) t -> f:('a -> 'b) -> ('b, 'd, 'e) t
 
-  val map_error :
-    ('a, 'error, 'state) t -> f:('error -> 'error') -> ('a, 'error', 'state) t
+  val map_error
+    :  ('a, 'error, 'state) t
+    -> f:('error -> 'error')
+    -> ('a, 'error', 'state) t
 
   val join : (('a, 'd, 'e) t, 'd, 'e) t -> ('a, 'd, 'e) t
   val ignore_m : ('a, 'd, 'e) t -> (unit, 'd, 'e) t

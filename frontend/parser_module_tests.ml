@@ -40,6 +40,7 @@ let%expect_test "test_simple_module" =
              ((module_name Y) (functor_args ()) (module_sig ())))
             (module_def
              (Struct ((Let (Nonrec ((Name y) (Node (Literal (Int 2))))))))))))))))) |}]
+;;
 
 let%expect_test "test_simple_module_with_sig" =
   let program =
@@ -100,6 +101,7 @@ let%expect_test "test_simple_module_with_sig" =
              ((module_name Y) (functor_args ()) (module_sig ())))
             (module_def
              (Struct ((Let (Nonrec ((Name y) (Node (Literal (Int 2))))))))))))))))) |}]
+;;
 
 let%expect_test "test_functor" =
   let program =
@@ -166,6 +168,7 @@ let%expect_test "test_functor" =
              ((module_name Y) (functor_args ()) (module_sig ())))
             (module_def
              (Struct ((Let (Nonrec ((Name y) (Node (Literal (Int 2))))))))))))))))) |}]
+;;
 
 let%expect_test "test_named_module_functor_app" =
   let program =
@@ -191,3 +194,4 @@ let%expect_test "test_named_module_functor_app" =
                (ast_tags ((deriving ((Symbol sexp)))))))
              (Sig_binding (Name x)
               ((type_expr (Single (Unqualified int))) (ast_tags ())))))))))))) |}]
+;;

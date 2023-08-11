@@ -23,7 +23,9 @@ module Type_binding = struct
   [@@deriving sexp, variants, equal, hash, compare]
 
   (* need to enforce that every arg appears in the definition *)
-  type t = Mono of Lowercase.t | Poly of (arg * Lowercase.t)
+  type t =
+    | Mono of Lowercase.t
+    | Poly of (arg * Lowercase.t)
   [@@deriving sexp, variants, equal, hash, compare]
 end
 
@@ -47,11 +49,11 @@ module Ast_tags = struct
 end
 
 module Value_tag = struct
-  type t = {
-    type_expr : Type_expr.t option; [@sexp.option]
-    mode : Mode.t option; [@sexp.option]
-    ast_tags : Ast_tags.t;
-  }
+  type t =
+    { type_expr : Type_expr.t option [@sexp.option]
+    ; mode : Mode.t option [@sexp.option]
+    ; ast_tags : Ast_tags.t
+    }
   [@@deriving sexp, compare, equal, hash, fields]
 
   let empty = { type_expr = None; mode = None; ast_tags = Ast_tags.empty }
@@ -86,11 +88,11 @@ module Binding = struct
   include T
 end
 
-type 'type_def type_description = {
-  type_name : Type_binding.t;
-  type_def : 'type_def;
-  ast_tags : Ast_tags.t;
-}
+type 'type_def type_description =
+  { type_name : Type_binding.t
+  ; type_def : 'type_def
+  ; ast_tags : Ast_tags.t
+  }
 [@@deriving sexp, equal, hash, compare]
 
 type toplevel_type =
@@ -101,11 +103,11 @@ type toplevel_type =
 
 and module_sig = toplevel_type list [@@deriving sexp, equal, hash, compare]
 
-and 'module_sig module_description = {
-  module_name : Uppercase.t;
-  functor_args : (Uppercase.t * module_sig) list;
-  module_sig : 'module_sig;
-}
+and 'module_sig module_description =
+  { module_name : Uppercase.t
+  ; functor_args : (Uppercase.t * module_sig) list
+  ; module_sig : 'module_sig
+  }
 [@@deriving sexp, equal, hash, compare]
 
 type rec_flag = bool [@@deriving sexp, equal, hash, compare]
@@ -122,7 +124,9 @@ type node =
 
 and let_each = Binding.t * expr [@@deriving sexp, equal, hash, compare]
 
-and let_def = Rec of let_each list | Nonrec of let_each
+and let_def =
+  | Rec of let_each list
+  | Nonrec of let_each
 [@@deriving sexp, equal, hash, compare]
 
 and module_def =
@@ -153,10 +157,10 @@ and toplevel =
   | Type_def of Type_def_lit.t type_description
   | Let of let_def
   (* TODO: | Module_type of Uppercase.t * module_sig *)
-  | Module_def of {
-      module_description : module_sig option module_description;
-      module_def : module_def;
-    }
+  | Module_def of
+      { module_description : module_sig option module_description
+      ; module_def : module_def
+      }
 [@@deriving sexp, equal, hash, compare]
 
 and t = toplevel list [@@deriving sexp, equal, hash, compare]

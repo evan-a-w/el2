@@ -6,18 +6,22 @@ let print_type_expr ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run (Parser.type_expr_p ()) ~tokens in
   print_s [%message (ast : (Ast.Type_expr.t, Sexp.t) Result.t)]
+;;
 
 let%expect_test "type_expr_single" =
   print_type_expr ~program:"int";
   [%expect {| (ast (Ok (Single (Unqualified int)))) |}]
+;;
 
 let%expect_test "type_expr_single_extra_paren" =
   print_type_expr ~program:"int)";
   [%expect {| (ast (Ok (Single (Unqualified int)))) |}]
+;;
 
 let%expect_test "type_expr_multi1" =
   print_type_expr ~program:"a int";
   [%expect {| (ast (Ok (Multi (Single (Unqualified a)) (Unqualified int)))) |}]
+;;
 
 let%expect_test "type_expr_multi2" =
   print_type_expr ~program:"(a, (b int)) int d";
@@ -32,6 +36,7 @@ let%expect_test "type_expr_multi2" =
           (Multi (Single (Unqualified b)) (Unqualified int))))
         (Unqualified int))
        (Unqualified d)))) |}]
+;;
 
 let test_parse_one ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
@@ -39,6 +44,7 @@ let test_parse_one ~program =
   let tokens = Sequence.to_list tokens in
   print_s
     [%message (ast : (Ast.expr, Sexp.t) Result.t) (tokens : Token.t List.t)]
+;;
 
 let%expect_test "test_function_one_arg" =
   let program = {|
@@ -53,6 +59,7 @@ let%expect_test "test_function_one_arg" =
         (Nonrec ((Name function) (Lambda (Name x) (Node (Literal (Int 1))))))
         (Node (Var (Unqualified function))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_function_two_args_nested" =
   let program =
@@ -72,6 +79,7 @@ let%expect_test "test_function_two_args_nested" =
              (Lambda (Name x) (Lambda (Name y) (Node (Literal (Int 1))))))))
           (Node (Var (Unqualified function))))))
        (tokens ())) |}]
+;;
 
 let%expect_test "test_if_simple" =
   let program = {|
@@ -90,6 +98,7 @@ let%expect_test "test_if_simple" =
             ((type_expr (Single (Unqualified int))) (ast_tags ()))))))
         (Node (Literal (Int 1))) (Node (Literal (Int 2))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_app" =
   let program = {|
@@ -106,6 +115,7 @@ let%expect_test "test_app" =
           (Node (Literal (Int 2)))))
         (Node (Literal (Int 3))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_if_nested_application" =
   let program =
@@ -128,6 +138,7 @@ let%expect_test "test_if_nested_application" =
          (Node (Literal (Int 2))))
         (Node (Literal (Int 3))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_let_nested" =
   let program =
@@ -149,6 +160,7 @@ let%expect_test "test_let_nested" =
              (Node (Var (Unqualified y))))))))
         (Node (Var (Unqualified nested))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_let_nested2" =
   let program = {|
@@ -164,6 +176,7 @@ let%expect_test "test_let_nested2" =
          (App (App (Node (Var (Unqualified +))) (Node (Var (Unqualified x))))
           (Node (Var (Unqualified y))))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_unit_value" =
   let program = {|
@@ -177,6 +190,7 @@ let%expect_test "test_unit_value" =
        (Let_in (Nonrec ((Name unit) (Node (Literal Unit))))
         (Node (Var (Unqualified unit))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_lots" =
   let program =
@@ -249,11 +263,13 @@ let%expect_test "test_lots" =
            (If (Node (Literal (Bool false))) (Node (Literal (Int 1)))
             (Node (Literal (Int 2))))
            (Node (Literal (Int 3)))))))))) |}]
+;;
 
 let%expect_test "test_atom_untagged" =
   let program = {| 1 |} in
   test_parse_one ~program;
   [%expect {| ((ast (Ok (Node (Literal (Int 1))))) (tokens ())) |}]
+;;
 
 let%expect_test "test_atom_tagged" =
   let program = {| (1 : int) |} in
@@ -268,6 +284,7 @@ let%expect_test "test_atom_tagged" =
             (Typed (Node (Literal (Int 1)))
              ((type_expr (Single (Unqualified int))) (ast_tags ()))))))))
        (tokens ())) |}]
+;;
 
 let%expect_test "test_lots_type_tags" =
   let program =
@@ -345,6 +362,7 @@ let%expect_test "test_lots_type_tags" =
              (Tuple ((Single (Unqualified int)) (Single (Unqualified int)))))
             (ast_tags ())))
           (Node (Literal (Int 1))))))))) |}]
+;;
 
 let%expect_test "test_apply_tags" =
   let program = {| g (1 : int) |} in
@@ -360,6 +378,7 @@ let%expect_test "test_apply_tags" =
            (Typed (Node (Literal (Int 1)))
             ((type_expr (Single (Unqualified int))) (ast_tags ())))))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_apply_b" =
   let program = {| g (if 1 then 1 else 1 : int) |} in
@@ -376,6 +395,7 @@ let%expect_test "test_apply_b" =
             (Typed (Node (Literal (Int 1)))
              ((type_expr (Single (Unqualified int))) (ast_tags ()))))))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_nested_typed_application" =
   let program = {| g (f (1 : int) (a b (c d : int) : int)) |} in
@@ -410,6 +430,7 @@ let%expect_test "test_nested_typed_application" =
                      ((type_expr (Single (Unqualified int))) (ast_tags ())))))))
                 ((type_expr (Single (Unqualified int))) (ast_tags ())))))))))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_unary_bang" =
   let program = {| 1 + !2 |} in
@@ -421,6 +442,7 @@ let%expect_test "test_unary_bang" =
        (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 1))))
         (App (Node (Var (Unqualified !))) (Node (Literal (Int 2)))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_apply_left_assoc" =
   let program = {| f x y |} in
@@ -432,6 +454,7 @@ let%expect_test "test_apply_left_assoc" =
        (App (App (Node (Var (Unqualified f))) (Node (Var (Unqualified x))))
         (Node (Var (Unqualified y))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_operator_binding" =
   let program = {|
@@ -443,6 +466,7 @@ let%expect_test "test_operator_binding" =
   [%expect
     {|
       (ast (Ok ((Let (Nonrec ((Name +) (Node (Literal (Int 1))))))))) |}]
+;;
 
 let%expect_test "test_operator_binding_fail" =
   let program = {|
@@ -452,11 +476,13 @@ let%expect_test "test_operator_binding_fail" =
   let ast, _ = run parse_t ~tokens in
   print_s [%message (ast : (Ast.t, Sexp.t) Result.t)];
   [%expect {| (ast (Error ("Unexpected token" (got (Keyword let))))) |}]
+;;
 
 let print_binding ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run (binding_p ()) ~tokens in
   print_s [%message (ast : (Ast.Binding.t, Sexp.t) Result.t)]
+;;
 
 let%expect_test "bindings" =
   print_binding ~program:"var";
@@ -465,6 +491,7 @@ let%expect_test "bindings" =
   [%expect {| (ast (Ok (Name +))) |}];
   print_binding ~program:"+";
   [%expect {| (ast (Error "Expected binding")) |}]
+;;
 
 let%expect_test "test_wrapped_addition" =
   let program = {| (4 + 5) |} in
@@ -479,6 +506,7 @@ let%expect_test "test_wrapped_addition" =
           (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 4))))
            (Node (Literal (Int 5)))))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_addition_and_times_binding" =
   let program = {| 1 * 2 + 3 * (4 + 5) |} in
@@ -498,17 +526,20 @@ let%expect_test "test_addition_and_times_binding" =
             (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 4))))
              (Node (Literal (Int 5)))))))))))
      (tokens ())) |}]
+;;
 
 let print ~parser ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, _ = run parser ~tokens in
   print_s [%message (ast : (Ast.expr, Sexp.t) Result.t)]
+;;
 
 let%expect_test "super_simple_apply" =
   let program = {| f 1 |} in
   print ~parser:(parse_pratt ()) ~program;
   [%expect
     {| (ast (Ok (App (Node (Var (Unqualified f))) (Node (Literal (Int 1)))))) |}]
+;;
 
 let%expect_test "simple_apply" =
   let program = {| (f 1) |} in
@@ -522,6 +553,7 @@ let%expect_test "simple_apply" =
          (Unqualified
           (App (Node (Var (Unqualified f))) (Node (Literal (Int 1)))))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "simple_prefix_apply" =
   let program = {| -f |} in
@@ -530,6 +562,7 @@ let%expect_test "simple_prefix_apply" =
     {|
       ((ast (Ok (App (Node (Var (Unqualified -))) (Node (Var (Unqualified f))))))
        (tokens ())) |}]
+;;
 
 let%expect_test "simple_apply2" =
   let program = {| f 1 + 2 |} in
@@ -543,6 +576,7 @@ let%expect_test "simple_apply2" =
          (App (Node (Var (Unqualified f))) (Node (Literal (Int 1)))))
         (Node (Literal (Int 2))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "simple_apply3" =
   let program = {| f 1 - 2 |} in
@@ -556,6 +590,7 @@ let%expect_test "simple_apply3" =
          (App (Node (Var (Unqualified f))) (Node (Literal (Int 1)))))
         (Node (Literal (Int 2))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_tag_p" =
   let program = {| #[type : int, mode : local, deriving : string int] |} in
@@ -568,6 +603,7 @@ let%expect_test "test_tag_p" =
      (Ok
       ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
        (ast_tags ((deriving ((Symbol string) (Symbol int)))))))) |}]
+;;
 
 let%expect_test "test_tags" =
   let program = {| (f #[type : int, mode : local, name : "x"]) |} in
@@ -583,6 +619,7 @@ let%expect_test "test_tags" =
            ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
             (ast_tags ((name ((String x))))))))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_tags_both" =
   let program = {| (f : string #[type : int, mode : local, name : "x"]) |} in
@@ -598,6 +635,7 @@ let%expect_test "test_tags_both" =
            ((type_expr (Single (Unqualified string))) (mode (Allocation Local))
             (ast_tags ((name ((String x))))))))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_qualified_expr" =
   let program =
@@ -617,6 +655,7 @@ let%expect_test "test_qualified_expr" =
              ((type_expr (Single (Unqualified string))) (mode (Allocation Local))
               (ast_tags ((name ((String x))))))))))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_tuple_simple" =
   let program = {| (1, 2) |} in
@@ -628,6 +667,7 @@ let%expect_test "test_tuple_simple" =
          (Node
           (Tuple (Unqualified ((Node (Literal (Int 1))) (Node (Literal (Int 2)))))))))
        (tokens ())) |}]
+;;
 
 let%expect_test "test_tuples" =
   let program =
@@ -670,6 +710,7 @@ let%expect_test "test_tuples" =
                 (Unqualified
                  (Typed (Node (Literal (Int 1)))
                   ((type_expr (Single (Unqualified int))) (ast_tags ())))))))))))))))) |}]
+;;
 
 let%expect_test "test_pattern_binding" =
   let program =
@@ -740,6 +781,7 @@ let%expect_test "test_pattern_binding" =
           (Node
            (Tuple
             (Unqualified ((Node (Literal (Int 1))) (Node (Literal (Int 2))))))))))))) |}]
+;;
 
 let%expect_test "test_type_define" =
   let program =
@@ -787,6 +829,7 @@ let%expect_test "test_type_define" =
                Mutable)))))
           (ast_tags ((cringe ((Bool false))))))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_match" =
   let program = {|
@@ -803,6 +846,7 @@ let%expect_test "test_match" =
           (Node (Var (Unqualified a))))
          ((Constructor (Unqualified Nil) ()) (Node (Literal (Int 1))))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_type_expr_no_paren" =
   let program = {| a b c : int |} in
@@ -816,27 +860,32 @@ let%expect_test "test_type_expr_no_paren" =
          (Node (Var (Unqualified c))))
         ((type_expr (Single (Unqualified int))) (ast_tags ())))))
      (tokens ())) |}]
+;;
 
 let%expect_test "type_expr_pointer" =
   print_type_expr ~program:"@int";
   [%expect {| (ast (Ok (Pointer (Single (Unqualified int))))) |}]
+;;
 
 let%expect_test "type_expr_pointer_multi" =
   print_type_expr ~program:"@int a";
   [%expect
     {|
     (ast (Ok (Multi (Pointer (Single (Unqualified int))) (Unqualified a)))) |}]
+;;
 
 let%expect_test "type_expr_pointer_paren" =
   print_type_expr ~program:"@(int a)";
   [%expect
     {|
     (ast (Ok (Pointer (Multi (Single (Unqualified int)) (Unqualified a))))) |}]
+;;
 
 let%expect_test "type_expr_multi_pointer" =
   print_type_expr ~program:"@@@int";
   [%expect
     {| (ast (Ok (Pointer (Pointer (Pointer (Single (Unqualified int))))))) |}]
+;;
 
 let%expect_test "test_infix_spaces" =
   let program = {| a b c + Cons t |} in
@@ -852,6 +901,7 @@ let%expect_test "test_infix_spaces" =
           (App (Node (Constructor (Unqualified Cons)))
            (Node (Var (Unqualified t)))))))
        (tokens ())) |}]
+;;
 
 let%expect_test "test_double_tag" =
   let program = {| 4 : int #[mode: local] |} in
@@ -864,6 +914,7 @@ let%expect_test "test_double_tag" =
         ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
          (ast_tags ())))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_tuple" =
   let program = {| (1, if p = 2 then 3 else 4 : int #[mode: local]) |} in
@@ -884,6 +935,7 @@ let%expect_test "test_tuple" =
              ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
               (ast_tags ()))))))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_record" =
   let program =
@@ -907,6 +959,7 @@ let%expect_test "test_record" =
               ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
                (ast_tags ())))))))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_constructor_with_infix" =
   let program =
@@ -937,6 +990,7 @@ let%expect_test "test_constructor_with_infix" =
              ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
               (ast_tags ()))))))))))))
    (tokens ())) |}]
+;;
 
 let%expect_test "test_exp_binding" =
   let program = {| 1 + @2 * 3**2 * (4 + 5) |} in
@@ -957,6 +1011,7 @@ let%expect_test "test_exp_binding" =
           (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 4))))
            (Node (Literal (Int 5)))))))))))
    (tokens ())) |}]
+;;
 
 let%expect_test "test_type_define_enum" =
   let program = {| type a list = Cons (a, @(a list)) | Nil |} in
@@ -979,6 +1034,7 @@ let%expect_test "test_type_define_enum" =
              (Nil ()))))
           (ast_tags ()))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_match" =
   let program =
@@ -998,6 +1054,7 @@ let%expect_test "test_match" =
           (Node (Var (Unqualified a))))
          ((Constructor (Unqualified Nil) ()) (Node (Literal (Int 1))))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "rec one" =
   let program =
@@ -1028,6 +1085,7 @@ let%expect_test "rec one" =
                (App (Node (Var (Unqualified last))) (Node (Var (Unqualified l)))))))))))
         (Node (Var (Unqualified last))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "rec two" =
   let program =
@@ -1068,6 +1126,7 @@ let%expect_test "rec two" =
                (Node (Var (Unqualified value))))))))))
         (Node (Var (Unqualified last_node))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "rec toplevel" =
   let program =
@@ -1100,6 +1159,7 @@ let%expect_test "rec toplevel" =
              (App (App (Node (Var (Unqualified +))) (Node (Var (Unqualified x))))
               (Node (Literal (Int 1))))))))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_field_access" =
   let program = {|
@@ -1110,6 +1170,7 @@ let%expect_test "test_field_access" =
     {|
     ((ast (Ok (Field_access (Node (Var (Unqualified x))) (Unqualified field))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_field_access2" =
   let program = {|
@@ -1131,12 +1192,12 @@ let%expect_test "test_field_access2" =
             (Unqualified field))))
          (Node (Literal Unit))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_field_access3" =
   let program = {|
   x.first.second.third.fourth  
      |} in
-
   test_parse_one ~program;
   [%expect
     {|
@@ -1150,6 +1211,7 @@ let%expect_test "test_field_access3" =
          (Unqualified third))
         (Unqualified fourth))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_field_set" =
   let program = {|
@@ -1164,6 +1226,7 @@ let%expect_test "test_field_set" =
         ((Ref (Node (Var (Unqualified x)))) (Unqualified field)
          (Node (Literal (Int 1)))))))
      (tokens ())) |}]
+;;
 
 let%expect_test "test_field_set2" =
   let program = {|
@@ -1181,3 +1244,4 @@ let%expect_test "test_field_set2" =
           (Unqualified second))
          (Qualified Cringe (Unqualified third)) (Node (Literal (Int 1)))))))
      (tokens ())) |}]
+;;

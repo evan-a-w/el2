@@ -13,6 +13,7 @@ type type_constructor_arg =
 let show_type_constructor_arg = function
   | Tuple_arg [ (_, s) ] | Single_arg (_, s) -> s
   | Tuple_arg l -> "(" ^ String.concat ~sep:", " (List.map l ~f:snd) ^ ")"
+;;
 
 type type_constructor =
   type_constructor_arg option * user_type * type_proof
@@ -29,13 +30,13 @@ type type_constructor =
    This should probably be cached. *)
 (* Variances of record fields is covariant if not mutable, invariant if mutable *)
 (* Variances of Enum is the combination of all underlying types *)
-and type_proof = {
-  type_name : Lowercase.t;
-  absolute_type_name : Lowercase.t Qualified.t;
-  ordering : Lowercase.t list option;
-  tyvar_map : mono Lowercase.Map.t;
-  type_id : type_id;
-}
+and type_proof =
+  { type_name : Lowercase.t
+  ; absolute_type_name : Lowercase.t Qualified.t
+  ; ordering : Lowercase.t list option
+  ; tyvar_map : mono Lowercase.Map.t
+  ; type_id : type_id
+  }
 [@@deriving sexp, equal, hash, compare]
 
 and type_id = int [@@deriving sexp, equal, hash, compare]
@@ -64,21 +65,23 @@ and user_type =
   | User_mono of mono
 [@@deriving sexp, equal, hash, compare]
 
-type poly = Mono of mono | Forall of Lowercase.t * poly
+type poly =
+  | Mono of mono
+  | Forall of Lowercase.t * poly
 [@@deriving sexp, equal, hash, compare, variants]
 
 module Module_path = Qualified.Make (Uppercase)
 
-type module_bindings = {
-  toplevel_vars : poly list Lowercase.Map.t;
-  toplevel_records : (poly Lowercase.Map.t * type_proof) Lowercase.Set.Map.t;
-  toplevel_fields :
-    (type_proof * [ `Mutable | `Immutable ] * poly) Lowercase.Map.t;
-  toplevel_constructors : (poly option * type_proof) Uppercase.Map.t;
-  toplevel_type_constructors : type_id Lowercase.Map.t;
-  toplevel_modules : module_bindings Uppercase.Map.t;
-  opened_modules : module_bindings List.t;
-}
+type module_bindings =
+  { toplevel_vars : poly list Lowercase.Map.t
+  ; toplevel_records : (poly Lowercase.Map.t * type_proof) Lowercase.Set.Map.t
+  ; toplevel_fields :
+      (type_proof * [ `Mutable | `Immutable ] * poly) Lowercase.Map.t
+  ; toplevel_constructors : (poly option * type_proof) Uppercase.Map.t
+  ; toplevel_type_constructors : type_id Lowercase.Map.t
+  ; toplevel_modules : module_bindings Uppercase.Map.t
+  ; opened_modules : module_bindings List.t
+  }
 [@@deriving sexp, equal, hash, compare, fields]
 
 module Absolute_name = Qualified.Make (Lowercase)
@@ -87,13 +90,13 @@ let type_id_of_absolute_name = Absolute_name.hash
 
 let make_type_proof (s : Lowercase.t) =
   let absolute_type_name = Qualified.Unqualified s in
-  {
-    type_name = s;
-    absolute_type_name;
-    ordering = None;
-    tyvar_map = Lowercase.Map.empty;
-    type_id = type_id_of_absolute_name absolute_type_name;
+  { type_name = s
+  ; absolute_type_name
+  ; ordering = None
+  ; tyvar_map = Lowercase.Map.empty
+  ; type_id = type_id_of_absolute_name absolute_type_name
   }
+;;
 
 let int_type = make_type_proof "int"
 let float_type = make_type_proof "float"
@@ -105,34 +108,37 @@ let char_type = make_type_proof "char"
 let base_type_map =
   List.map
     [ int_type; float_type; bool_type; unit_type; string_type; char_type ]
-    ~f:(fun t -> (t.type_id, (None, Abstract, t)))
+    ~f:(fun t -> t.type_id, (None, Abstract, t))
   |> Int.Map.of_alist_exn
+;;
 
 let base_module_bindings =
-  {
-    toplevel_vars =
+  { toplevel_vars =
       (let init = Lowercase.Map.empty in
-       Lowercase.Map.add_multi init ~key:"&"
-         ~data:(Forall ("a", Mono (Lambda (TyVar "a", Reference (TyVar "a"))))));
-    toplevel_fields = Lowercase.Map.empty;
-    toplevel_records = Lowercase.Set.Map.empty;
-    toplevel_constructors = Uppercase.Map.empty;
-    toplevel_type_constructors =
+       Lowercase.Map.add_multi
+         init
+         ~key:"&"
+         ~data:(Forall ("a", Mono (Lambda (TyVar "a", Reference (TyVar "a"))))))
+  ; toplevel_fields = Lowercase.Map.empty
+  ; toplevel_records = Lowercase.Set.Map.empty
+  ; toplevel_constructors = Uppercase.Map.empty
+  ; toplevel_type_constructors =
       List.map
         [ int_type; float_type; bool_type; unit_type; string_type; char_type ]
-        ~f:(fun t -> (t.type_name, t.type_id))
-      |> Lowercase.Map.of_alist_exn;
-    toplevel_modules = Uppercase.Map.empty;
-    opened_modules = [];
+        ~f:(fun t -> t.type_name, t.type_id)
+      |> Lowercase.Map.of_alist_exn
+  ; toplevel_modules = Uppercase.Map.empty
+  ; opened_modules = []
   }
+;;
 
 let empty_module_bindings =
-  {
-    toplevel_vars = Lowercase.Map.empty;
-    toplevel_fields = Lowercase.Map.empty;
-    toplevel_records = Lowercase.Set.Map.empty;
-    toplevel_constructors = Uppercase.Map.empty;
-    toplevel_type_constructors = Lowercase.Map.empty;
-    toplevel_modules = Uppercase.Map.empty;
-    opened_modules = [ base_module_bindings ];
+  { toplevel_vars = Lowercase.Map.empty
+  ; toplevel_fields = Lowercase.Map.empty
+  ; toplevel_records = Lowercase.Set.Map.empty
+  ; toplevel_constructors = Uppercase.Map.empty
+  ; toplevel_type_constructors = Lowercase.Map.empty
+  ; toplevel_modules = Uppercase.Map.empty
+  ; opened_modules = [ base_module_bindings ]
   }
+;;

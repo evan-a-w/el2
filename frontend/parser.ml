@@ -8,12 +8,14 @@ let symbol_p =
   match%bind next with
   | Token.Symbol s -> return s
   | got -> error [%message "Expected symbol" (got : Token.t)]
+;;
 
 let parse_in_paren p =
   let%bind () = eat_token LParen in
   let%bind inner = p in
   let%bind () = eat_token RParen in
   return inner
+;;
 
 let maybe_in_paren p = parse_in_paren p <|> p
 
@@ -21,11 +23,13 @@ let lowercase_p =
   match%bind next with
   | Token.Symbol s when s.[0] |> Char.is_lowercase -> return s
   | got -> error [%message "Expected symbol" (got : Token.t)]
+;;
 
 let uppercase_p =
   match%bind next with
   | Token.Symbol s when s.[0] |> Char.is_uppercase -> return s
   | got -> error [%message "Expected symbol" (got : Token.t)]
+;;
 
 let rec identifier_p () : String.t parser =
   let%bind token = next in
@@ -34,13 +38,13 @@ let rec identifier_p () : String.t parser =
   | Symbol s
     when not
            (Lexer.is_operator s || Lexer.is_keyword s || Char.is_uppercase s.[0])
-    ->
-      return s
+    -> return s
   | LParen ->
-      let%bind inner = symbol_p <|> identifier_p () in
-      let%bind () = eat_token RParen in
-      return inner
+    let%bind inner = symbol_p <|> identifier_p () in
+    let%bind () = eat_token RParen in
+    return inner
   | got -> error [%message "Expected binding" (got : Token.t)]
+;;
 
 let module_name_p = uppercase_p
 
@@ -59,6 +63,7 @@ let qualified_p p : 'a Qualified.t parser =
     indexed <|> base
   in
   inner ()
+;;
 
 let literal_p : Ast.Literal.t parser =
   match%bind next with
@@ -68,9 +73,10 @@ let literal_p : Ast.Literal.t parser =
   | String s -> Ast.Literal.String s |> return
   | Char c -> Ast.Literal.Char c |> return
   | LParen ->
-      let%bind () = eat_token RParen in
-      return Ast.Literal.Unit
+    let%bind () = eat_token RParen in
+    return Ast.Literal.Unit
   | got -> error [%message "Expected atom" (got : Token.t)]
+;;
 
 let constructor_name_p = qualified_p (maybe_in_paren uppercase_p)
 
@@ -79,22 +85,25 @@ let tuple_p p : 'a Ast.Tuple.t parser =
   let%bind res = many_sep2 (p ()) ~sep:(eat_token Token.Comma) in
   let%map () = eat_token Token.RParen in
   res
+;;
 
 let variance_p : Variance.t parser =
   eat_token (Token.Symbol "+")
   >>| (fun () -> Variance.Covariant)
   <|> (eat_token (Token.Symbol "-") >>| fun () -> Variance.Contravariant)
   <|> return Variance.Invariant
+;;
 
 let type_binding_arg_p () : Ast.Type_binding.arg parser =
   let inner () =
     let%bind variance = variance_p in
     let%map name = lowercase_p in
-    (variance, name)
+    variance, name
   in
   let single = inner () >>| Ast.Type_binding.single in
   let tuple () = tuple_p inner >>| Ast.Type_binding.tuple in
   tuple () <|> single
+;;
 
 let type_binding_p () : Ast.Type_binding.t parser =
   let mono = lowercase_p >>| Ast.Type_binding.mono in
@@ -104,6 +113,7 @@ let type_binding_p () : Ast.Type_binding.t parser =
     Ast.Type_binding.poly (arg, name)
   in
   poly <|> mono
+;;
 
 let single_type_expr_p = qualified_p (identifier_p ()) >>| Ast.Type_expr.single
 
@@ -118,7 +128,9 @@ and multi_type_expr_p () : Ast.Type_expr.t parser =
   List.fold ~init:first ~f:(fun acc x -> Ast.Type_expr.Multi (acc, x)) next
 
 and type_expr_no_spaces_p () =
-  tuple_type_expr_p () <|> paren_type_expr_p () <|> single_type_expr_p
+  tuple_type_expr_p ()
+  <|> paren_type_expr_p ()
+  <|> single_type_expr_p
   <|> pointer_type_expr_p ()
 
 and arrow_type_expr_p () =
@@ -143,6 +155,7 @@ and tuple_type_expr_p () =
   let%bind res = many_sep2 (type_expr_p ()) ~sep:(eat_token Token.Comma) in
   let%map () = eat_token Token.RParen in
   Ast.Type_expr.Tuple res
+;;
 
 let ast_tag_p : (Ast.Tag.t * Token.t list) parser =
   let%bind tag = symbol_p in
@@ -156,11 +169,13 @@ let ast_tag_p : (Ast.Tag.t * Token.t list) parser =
   in
   let without_tag = return (tag, []) in
   with_tag <|> without_tag
+;;
 
 let type_tag_p =
   let%bind () = eat_token Token.Colon in
   let%bind type_expr_ = type_expr_p () in
   return { Ast.Value_tag.empty with type_expr = Some type_expr_ }
+;;
 
 let ast_tags_p : Ast.Ast_tags.t parser =
   let%bind () = eat_token Token.Hash in
@@ -172,9 +187,10 @@ let ast_tags_p : Ast.Ast_tags.t parser =
   in
   let tag =
     List.fold list ~init:Ast.Ast_tags.empty ~f:(fun acc (key, data) ->
-        Ast.Tag.Map.change acc key ~f:(fun _ -> Some data))
+      Ast.Tag.Map.change acc key ~f:(fun _ -> Some data))
   in
   return tag
+;;
 
 let tag_list_p : Ast.Value_tag.t parser =
   let%bind () = eat_token Token.Hash in
@@ -212,23 +228,25 @@ let tag_list_p : Ast.Value_tag.t parser =
   in
   let tag =
     List.fold list ~init:Ast.Value_tag.empty ~f:(fun acc x ->
-        match x with
-        | `Type_expr type_expr -> { acc with type_expr = Some type_expr }
-        | `Mode mode -> { acc with mode = Some mode }
-        | `Other (key, data) ->
-            { acc with ast_tags = Ast.Tag.Map.add_exn acc.ast_tags ~key ~data })
+      match x with
+      | `Type_expr type_expr -> { acc with type_expr = Some type_expr }
+      | `Mode mode -> { acc with mode = Some mode }
+      | `Other (key, data) ->
+        { acc with ast_tags = Ast.Tag.Map.add_exn acc.ast_tags ~key ~data })
   in
   return tag
+;;
 
 let tag_p : Ast.Value_tag.t parser =
   let%bind type_tag = optional type_tag_p in
   let%bind tag_list = optional tag_list_p in
-  match (type_tag, tag_list) with
+  match type_tag, tag_list with
   | Some type_tag, Some tag_list ->
-      return Ast.Value_tag.{ tag_list with type_expr = type_tag.type_expr }
+    return Ast.Value_tag.{ tag_list with type_expr = type_tag.type_expr }
   | Some type_tag, None -> return type_tag
   | None, Some tag_list -> return tag_list
   | None, None -> error [%message "Expected tag"]
+;;
 
 let parse_tagged p =
   let%bind () = eat_token LParen in
@@ -236,21 +254,24 @@ let parse_tagged p =
   let%bind tag = tag_p in
   let%bind () = eat_token RParen in
   return (inner, tag)
+;;
 
 let parse_maybe_tagged p =
   let fst =
     let%bind a, b = parse_tagged p in
     return (a, Some b)
   in
-  let snd = p >>| fun x -> (x, None) in
+  let snd = p >>| fun x -> x, None in
   fst <|> snd
+;;
 
 let record_p ?(from_name = Fn.const None) p : 'a Lowercase.Map.t parser =
   let%bind () = eat_token Token.LBrace in
   let each =
     let%bind name = lowercase_p in
     let%bind value =
-      if_ (eat_token Token.Colon)
+      if_
+        (eat_token Token.Colon)
         ~then_:(p () >>| Option.some)
         ~else_:(return (from_name name))
     in
@@ -262,26 +283,28 @@ let record_p ?(from_name = Fn.const None) p : 'a Lowercase.Map.t parser =
   let%bind _ = optional (eat_token Token.Semicolon) in
   let%map () = eat_token Token.RBrace in
   Lowercase.Map.of_alist_exn list
+;;
 
 let name_binding_p : Ast.Binding.t parser =
   let%map name = identifier_p () in
   Ast.Binding.Name name
+;;
 
 let literal_binding_p : Ast.Binding.t parser =
   let%map literal = literal_p in
   Ast.Binding.Literal literal
+;;
 
 let rec binding_p () : Ast.Binding.t parser =
   first
-    [
-      pointer_binding_p ();
-      constructor_binding_p ();
-      tuple_binding_p ();
-      record_binding_p ();
-      renamed_binding_p ();
-      typed_binding_p ();
-      name_binding_p;
-      literal_binding_p;
+    [ pointer_binding_p ()
+    ; constructor_binding_p ()
+    ; tuple_binding_p ()
+    ; record_binding_p ()
+    ; renamed_binding_p ()
+    ; typed_binding_p ()
+    ; name_binding_p
+    ; literal_binding_p
     ]
   |> map_error ~f:(fun _ -> [%message "Expected binding"])
 
@@ -323,6 +346,7 @@ and record_binding_p () =
     record_p ~from_name:(Fn.compose Option.some Ast.Binding.name) binding_p
   in
   qualified_p inner >>| Ast.Binding.record
+;;
 
 let[@inline] parse_in_paren_maybe_typed p =
   let%bind () = eat_token LParen in
@@ -338,14 +362,17 @@ let[@inline] parse_in_paren_maybe_typed p =
   in
   let%bind tag = with_type_tag <|> without_type_tag in
   return (inner, tag)
+;;
 
 let single_name_t (name : Lowercase.t) : Ast.expr =
   Ast.Node (Ast.Var (Qualified.Unqualified name))
+;;
 
 let binding_power ~operator =
   match Pratt.infix_binding_power ~operator with
   | Some (l_bp, r_bp) -> return (l_bp, r_bp)
   | None -> error [%message "Expected infix operator" ~got:(operator : string)]
+;;
 
 let rec parse_node () : Ast.node parser =
   first
@@ -360,19 +387,20 @@ and parse_record () : Ast.node parser =
 
 and parse_expr_no_type () : Ast.expr parser =
   first
-    [
-      parse_lambda ();
-      parse_let_in ();
-      parse_if ();
-      parse_match ();
-      parse_pratt ();
+    [ parse_lambda ()
+    ; parse_let_in ()
+    ; parse_if ()
+    ; parse_match ()
+    ; parse_pratt ()
     ]
   |> map_error ~f:(fun _ -> [%message "Failed to parse (b expr)"])
 
 and parse_expr () : Ast.expr parser =
   let%bind t = parse_expr_no_type () in
   let%map tag = optional tag_p in
-  match tag with None -> t | Some tag -> Ast.Typed (t, tag)
+  match tag with
+  | None -> t
+  | Some tag -> Ast.Typed (t, tag)
 
 and parse_wrapped_node () : Ast.node parser =
   let in_paren =
@@ -392,15 +420,15 @@ and parse_lambda () : Ast.expr parser =
   match bindings with
   | [] -> assert false
   | x :: xs ->
-      let init = Ast.Lambda (x, expr) in
-      let lambda = List.fold xs ~init ~f:(fun acc x -> Ast.Lambda (x, acc)) in
-      return lambda
+    let init = Ast.Lambda (x, expr) in
+    let lambda = List.fold xs ~init ~f:(fun acc x -> Ast.Lambda (x, acc)) in
+    return lambda
 
 and parse_let_each () =
   let%bind binding = binding_p () in
   let%bind () = eat_token (Token.Symbol "=") in
   let%map expr = parse_expr () in
-  (binding, expr)
+  binding, expr
 
 and parse_let_def () =
   let%bind () = eat_token (Token.Keyword "let") in
@@ -409,13 +437,13 @@ and parse_let_def () =
   match rec_flag with
   | false -> return (Ast.Nonrec (binding, expr))
   | true ->
-      let sep = eat_token (Token.Keyword "and") in
-      let%bind rest =
-        match%bind optional sep with
-        | None -> return []
-        | Some _ -> many_sep1 (parse_let_each ()) ~sep
-      in
-      return (Ast.Rec ((binding, expr) :: rest))
+    let sep = eat_token (Token.Keyword "and") in
+    let%bind rest =
+      match%bind optional sep with
+      | None -> return []
+      | Some _ -> many_sep1 (parse_let_each ()) ~sep
+    in
+    return (Ast.Rec ((binding, expr) :: rest))
 
 and parse_let_in () : Ast.expr parser =
   let%bind let_def = parse_let_def () in
@@ -474,7 +502,7 @@ and parse_node_with_prefix ?(min_bp = 0) () : Ast.expr parser =
       | Some bp when bp >= min_bp -> return bp
       | Some _ -> error [%message "Expected higher binding power"]
       | None ->
-          error [%message "Expected prefix operator" ~got:(operator : string)]
+        error [%message "Expected prefix operator" ~got:(operator : string)]
     in
     let%bind rhs = parse_node () in
     return (Ast.App (var, Ast.Node rhs))
@@ -507,17 +535,18 @@ and parse_pratt ?(min_bp = 0) () : Ast.expr parser =
     let%bind prev_state = get in
     match%bind optional (parse_op ()) with
     | None -> return lhs
-    | Some operator -> (
-        let%bind l_bp, r_bp = binding_power ~operator in
-        if l_bp < min_bp then
-          let%bind () = put prev_state in
-          return lhs
-        else
-          let%bind rhs = parse_pratt ~min_bp:r_bp () in
-          match (operator, lhs, rhs) with
-          | ".", _, Ast.Node (Ast.Var s) -> inner (Ast.Field_access (lhs, s))
-          | "<-", Ast.Field_access (a, b), _ -> inner (Field_set (a, b, rhs))
-          | _ -> inner (Ast.App (Ast.App (single_name_t operator, lhs), rhs)))
+    | Some operator ->
+      let%bind l_bp, r_bp = binding_power ~operator in
+      if l_bp < min_bp
+      then (
+        let%bind () = put prev_state in
+        return lhs)
+      else (
+        let%bind rhs = parse_pratt ~min_bp:r_bp () in
+        match operator, lhs, rhs with
+        | ".", _, Ast.Node (Ast.Var s) -> inner (Ast.Field_access (lhs, s))
+        | "<-", Ast.Field_access (a, b), _ -> inner (Field_set (a, b, rhs))
+        | _ -> inner (Ast.App (Ast.App (single_name_t operator, lhs), rhs)))
   in
   inner lhs
 
@@ -550,7 +579,9 @@ and module_def_in_paren_p () =
   def
 
 and module_def_no_functor_p () =
-  module_def_named_p <|> module_def_struct_p () <|> module_def_in_paren_p ()
+  module_def_named_p
+  <|> module_def_struct_p ()
+  <|> module_def_in_paren_p ()
   <|> module_def_typed_p ()
 
 and module_def_functor_app_p () =
@@ -566,7 +597,7 @@ and module_def_arg_p () : (Uppercase.t * Ast.module_sig) parser =
   let%bind () = eat_token Token.Colon in
   let%bind sig_ = module_sig_p () in
   let%map () = eat_token Token.RParen in
-  (name, sig_)
+  name, sig_
 
 and module_description_p ?(optional_sig_fn = optional) () =
   let%bind () = eat_token (Token.Keyword "module") in
@@ -577,7 +608,7 @@ and module_description_p ?(optional_sig_fn = optional) () =
     module_sig_p ()
   in
   let%map maybe_sig = optional_sig_fn with_sig in
-  (name, args, maybe_sig)
+  name, args, maybe_sig
 
 and module_sig_binding_p () =
   let%bind () = eat_token (Token.Keyword "let") in
@@ -615,7 +646,8 @@ and module_sig_module_p () =
 and module_sig_p () : Ast.module_sig parser =
   let%bind () = eat_token (Token.Keyword "sig") in
   let each =
-    module_sig_binding_p () <|> module_sig_type_def_p ()
+    module_sig_binding_p ()
+    <|> module_sig_type_def_p ()
     <|> module_sig_module_p ()
   in
   let%bind res = many each in
@@ -627,7 +659,8 @@ and record_type_def_lit_p () =
   let each =
     let%bind mut =
       eat_token (Token.Keyword "mutable")
-      >>| Fn.const `Mutable <|> return `Immutable
+      >>| Fn.const `Mutable
+      <|> return `Immutable
     in
     let%bind name = lowercase_p in
     let%bind () = eat_token Token.Colon in
@@ -660,7 +693,7 @@ and typedef_p () =
   let%map ast_tags =
     optional ast_tags_p >>| Option.value ~default:Ast.Ast_tags.empty
   in
-  (name, expr, ast_tags)
+  name, expr, ast_tags
 
 and typedef_toplevel_p () : Ast.toplevel parser =
   let%map type_name, type_def, ast_tags = typedef_p () in
@@ -686,12 +719,14 @@ let parse_t =
   match%bind get >>| Sequence.next with
   | None -> return res
   | Some (got, _) -> error [%message "Unexpected token" (got : Token.t)]
+;;
 
 let try_parse p string =
   let open Result.Let_syntax in
   let%bind tokens =
     Lexer.lex ~program:string
     |> Result.map_error ~f:(fun error ->
-           [%message "Failed to lex" (error : string)])
+         [%message "Failed to lex" (error : string)])
   in
   run p ~tokens |> fst
+;;
