@@ -42,8 +42,13 @@ let test_parse_one ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, tokens = run parse_one ~tokens in
   let tokens = Sequence.to_list tokens in
-  print_s
-    [%message (ast : (Ast.expr, Sexp.t) Result.t) (tokens : Token.t List.t)]
+  match ast with
+  | Ok ast ->
+    let pp = Ast.pprint_expr ast in
+    let () = PPrint.ToChannel.pretty 1. 80 Out_channel.stdout pp in
+    let () = print_endline "" in
+    print_s [%message (tokens : Token.t List.t)]
+  | Error err -> print_s [%message (err : Sexp.t) (tokens : Token.t List.t)]
 ;;
 
 let%expect_test "test_function_one_arg" =
@@ -51,14 +56,9 @@ let%expect_test "test_function_one_arg" =
        let function = fun x -> 1 in function
      |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (Let_in
-        (Nonrec ((Name function) (Lambda (Name x) (Node (Literal (Int 1))))))
-        (Node (Var (Unqualified function))))))
-     (tokens ())) |}]
+  [%expect {|
+    let function = fun x -> 1 in function
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_function_two_args_nested" =
@@ -70,15 +70,8 @@ let%expect_test "test_function_two_args_nested" =
   test_parse_one ~program;
   [%expect
     {|
-      ((ast
-        (Ok
-         (Let_in
-          (Nonrec
-           ((Name function)
-            (Let_in (Nonrec ((Name y) (Node (Literal (Int 1)))))
-             (Lambda (Name x) (Lambda (Name y) (Node (Literal (Int 1))))))))
-          (Node (Var (Unqualified function))))))
-       (tokens ())) |}]
+      let function = let y = 1 in fun x -> fun y -> 1 in function
+      (tokens ()) |}]
 ;;
 
 let%expect_test "test_if_simple" =
@@ -86,18 +79,9 @@ let%expect_test "test_if_simple" =
     if (true : int) then 1 else 2
      |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (If
-        (Node
-         (Wrapped
-          (Unqualified
-           (Typed (Node (Literal (Bool true)))
-            ((type_expr (Single (Unqualified int))) (ast_tags ()))))))
-        (Node (Literal (Int 1))) (Node (Literal (Int 2))))))
-     (tokens ())) |}]
+  [%expect {|
+    if (true : int) then 1 else 2
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_app" =
@@ -105,16 +89,9 @@ let%expect_test "test_app" =
     1 + 2 = 3
      |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (App
-        (App (Node (Var (Unqualified =)))
-         (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 1))))
-          (Node (Literal (Int 2)))))
-        (Node (Literal (Int 3))))))
-     (tokens ())) |}]
+  [%expect {|
+    = (+ 1 2) 3
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_if_nested_application" =
@@ -126,18 +103,8 @@ let%expect_test "test_if_nested_application" =
   test_parse_one ~program;
   [%expect
     {|
-    ((ast
-      (Ok
-       (If
-        (App
-         (App (Node (Var (Unqualified =)))
-          (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 1))))
-           (Node (Literal (Int 2)))))
-         (Node (Literal (Int 3))))
-        (If (Node (Literal (Bool false))) (Node (Literal (Int 1)))
-         (Node (Literal (Int 2))))
-        (Node (Literal (Int 3))))))
-     (tokens ())) |}]
+    if = (+ 1 2) 3 then if false then 1 else 2 else 3
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_let_nested" =
@@ -149,17 +116,8 @@ let%expect_test "test_let_nested" =
   test_parse_one ~program;
   [%expect
     {|
-    ((ast
-      (Ok
-       (Let_in
-        (Nonrec
-         ((Name nested)
-          (Let_in (Nonrec ((Name x) (Node (Literal (Int 1)))))
-           (Let_in (Nonrec ((Name y) (Node (Literal (Int 2)))))
-            (App (App (Node (Var (Unqualified +))) (Node (Var (Unqualified x))))
-             (Node (Var (Unqualified y))))))))
-        (Node (Var (Unqualified nested))))))
-     (tokens ())) |}]
+    let nested = let x = 1 in let y = 2 in + x y in nested
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_let_nested2" =
@@ -167,15 +125,9 @@ let%expect_test "test_let_nested2" =
     let x = 1 in let y = 2 in x + y
   |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (Let_in (Nonrec ((Name x) (Node (Literal (Int 1)))))
-        (Let_in (Nonrec ((Name y) (Node (Literal (Int 2)))))
-         (App (App (Node (Var (Unqualified +))) (Node (Var (Unqualified x))))
-          (Node (Var (Unqualified y))))))))
-     (tokens ())) |}]
+  [%expect {|
+    let x = 1 in let y = 2 in + x y
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_unit_value" =
@@ -183,13 +135,9 @@ let%expect_test "test_unit_value" =
     let unit = () in unit
   |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (Let_in (Nonrec ((Name unit) (Node (Literal Unit))))
-        (Node (Var (Unqualified unit))))))
-     (tokens ())) |}]
+  [%expect {|
+    let unit = () in unit
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_lots" =
@@ -268,22 +216,17 @@ let%expect_test "test_lots" =
 let%expect_test "test_atom_untagged" =
   let program = {| 1 |} in
   test_parse_one ~program;
-  [%expect {| ((ast (Ok (Node (Literal (Int 1))))) (tokens ())) |}]
+  [%expect {|
+    1
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_atom_tagged" =
   let program = {| (1 : int) |} in
   test_parse_one ~program;
-  [%expect
-    {|
-      ((ast
-        (Ok
-         (Node
-          (Wrapped
-           (Unqualified
-            (Typed (Node (Literal (Int 1)))
-             ((type_expr (Single (Unqualified int))) (ast_tags ()))))))))
-       (tokens ())) |}]
+  [%expect {|
+      (1 : int)
+      (tokens ()) |}]
 ;;
 
 let%expect_test "test_lots_type_tags" =
@@ -367,93 +310,41 @@ let%expect_test "test_lots_type_tags" =
 let%expect_test "test_apply_tags" =
   let program = {| g (1 : int) |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (App (Node (Var (Unqualified g)))
-        (Node
-         (Wrapped
-          (Unqualified
-           (Typed (Node (Literal (Int 1)))
-            ((type_expr (Single (Unqualified int))) (ast_tags ())))))))))
-     (tokens ())) |}]
+  [%expect {|
+    g (1 : int)
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_apply_b" =
   let program = {| g (if 1 then 1 else 1 : int) |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (App (Node (Var (Unqualified g)))
-        (Node
-         (Wrapped
-          (Unqualified
-           (If (Node (Literal (Int 1))) (Node (Literal (Int 1)))
-            (Typed (Node (Literal (Int 1)))
-             ((type_expr (Single (Unqualified int))) (ast_tags ()))))))))))
-     (tokens ())) |}]
+  [%expect {|
+    g (if 1 then 1 else 1 : int)
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_nested_typed_application" =
   let program = {| g (f (1 : int) (a b (c d : int) : int)) |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (App (Node (Var (Unqualified g)))
-        (Node
-         (Wrapped
-          (Unqualified
-           (App
-            (App (Node (Var (Unqualified f)))
-             (Node
-              (Wrapped
-               (Unqualified
-                (Typed (Node (Literal (Int 1)))
-                 ((type_expr (Single (Unqualified int))) (ast_tags ())))))))
-            (Node
-             (Wrapped
-              (Unqualified
-               (Typed
-                (App
-                 (App (Node (Var (Unqualified a))) (Node (Var (Unqualified b))))
-                 (Node
-                  (Wrapped
-                   (Unqualified
-                    (Typed
-                     (App (Node (Var (Unqualified c)))
-                      (Node (Var (Unqualified d))))
-                     ((type_expr (Single (Unqualified int))) (ast_tags ())))))))
-                ((type_expr (Single (Unqualified int))) (ast_tags ())))))))))))))
-     (tokens ())) |}]
+  [%expect {|
+    g (f (1 : int) (a b (c d : int) : int))
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_unary_bang" =
   let program = {| 1 + !2 |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 1))))
-        (App (Node (Var (Unqualified !))) (Node (Literal (Int 2)))))))
-     (tokens ())) |}]
+  [%expect {|
+    + 1 (! 2)
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_apply_left_assoc" =
   let program = {| f x y |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (App (App (Node (Var (Unqualified f))) (Node (Var (Unqualified x))))
-        (Node (Var (Unqualified y))))))
-     (tokens ())) |}]
+  [%expect {|
+    f x y
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_operator_binding" =
@@ -496,36 +387,17 @@ let%expect_test "bindings" =
 let%expect_test "test_wrapped_addition" =
   let program = {| (4 + 5) |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (Node
-        (Wrapped
-         (Unqualified
-          (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 4))))
-           (Node (Literal (Int 5)))))))))
-     (tokens ())) |}]
+  [%expect {|
+    (+ 4 5)
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_addition_and_times_binding" =
   let program = {| 1 * 2 + 3 * (4 + 5) |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (App
-        (App (Node (Var (Unqualified +)))
-         (App (App (Node (Var (Unqualified *))) (Node (Literal (Int 1))))
-          (Node (Literal (Int 2)))))
-        (App (App (Node (Var (Unqualified *))) (Node (Literal (Int 3))))
-         (Node
-          (Wrapped
-           (Unqualified
-            (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 4))))
-             (Node (Literal (Int 5)))))))))))
-     (tokens ())) |}]
+  [%expect {|
+    + (* 1 2) (* 3 (+ 4 5))
+    (tokens ()) |}]
 ;;
 
 let print ~parser ~program =
@@ -544,52 +416,33 @@ let%expect_test "super_simple_apply" =
 let%expect_test "simple_apply" =
   let program = {| (f 1) |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (Node
-        (Wrapped
-         (Unqualified
-          (App (Node (Var (Unqualified f))) (Node (Literal (Int 1)))))))))
-     (tokens ())) |}]
+  [%expect {|
+    (f 1)
+    (tokens ()) |}]
 ;;
 
 let%expect_test "simple_prefix_apply" =
   let program = {| -f |} in
   test_parse_one ~program;
-  [%expect
-    {|
-      ((ast (Ok (App (Node (Var (Unqualified -))) (Node (Var (Unqualified f))))))
-       (tokens ())) |}]
+  [%expect {|
+      - f
+      (tokens ()) |}]
 ;;
 
 let%expect_test "simple_apply2" =
   let program = {| f 1 + 2 |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (App
-        (App (Node (Var (Unqualified +)))
-         (App (Node (Var (Unqualified f))) (Node (Literal (Int 1)))))
-        (Node (Literal (Int 2))))))
-     (tokens ())) |}]
+  [%expect {|
+    + (f 1) 2
+    (tokens ()) |}]
 ;;
 
 let%expect_test "simple_apply3" =
   let program = {| f 1 - 2 |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (App
-        (App (Node (Var (Unqualified -)))
-         (App (Node (Var (Unqualified f))) (Node (Literal (Int 1)))))
-        (Node (Literal (Int 2))))))
-     (tokens ())) |}]
+  [%expect {|
+    - (f 1) 2
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_tag_p" =
@@ -608,33 +461,17 @@ let%expect_test "test_tag_p" =
 let%expect_test "test_tags" =
   let program = {| (f #[type : int, mode : local, name : "x"]) |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (Node
-        (Wrapped
-         (Unqualified
-          (Typed (Node (Var (Unqualified f)))
-           ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
-            (ast_tags ((name ((String x))))))))))))
-     (tokens ())) |}]
+  [%expect {|
+    (f : int #[mode: local,  name: "x"])
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_tags_both" =
   let program = {| (f : string #[type : int, mode : local, name : "x"]) |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (Node
-        (Wrapped
-         (Unqualified
-          (Typed (Node (Var (Unqualified f)))
-           ((type_expr (Single (Unqualified string))) (mode (Allocation Local))
-            (ast_tags ((name ((String x))))))))))))
-     (tokens ())) |}]
+  [%expect {|
+    (f : string #[mode: local,  name: "x"])
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_qualified_expr" =
@@ -644,29 +481,16 @@ let%expect_test "test_qualified_expr" =
   test_parse_one ~program;
   [%expect
     {|
-    ((ast
-      (Ok
-       (Node
-        (Wrapped
-         (Qualified Ast
-          (Qualified B
-           (Unqualified
-            (Typed (Node (Var (Unqualified f)))
-             ((type_expr (Single (Unqualified string))) (mode (Allocation Local))
-              (ast_tags ((name ((String x))))))))))))))
-     (tokens ())) |}]
+    Ast.B.(f : string #[mode: local,  name: "x"])
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_tuple_simple" =
   let program = {| (1, 2) |} in
   test_parse_one ~program;
-  [%expect
-    {|
-      ((ast
-        (Ok
-         (Node
-          (Tuple (Unqualified ((Node (Literal (Int 1))) (Node (Literal (Int 2)))))))))
-       (tokens ())) |}]
+  [%expect {|
+      (1, 2)
+      (tokens ()) |}]
 ;;
 
 let%expect_test "test_tuples" =
@@ -837,29 +661,17 @@ let%expect_test "test_match" =
       | Cons a -> a
       | Nil -> 1 |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (Match (Node (Literal (Int 1)))
-        (((Constructor (Unqualified Cons) ((Name a)))
-          (Node (Var (Unqualified a))))
-         ((Constructor (Unqualified Nil) ()) (Node (Literal (Int 1))))))))
-     (tokens ())) |}]
+  [%expect {|
+    match 1 with | Cons a -> a | Nil -> 1
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_type_expr_no_paren" =
   let program = {| a b c : int |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (Typed
-        (App (App (Node (Var (Unqualified a))) (Node (Var (Unqualified b))))
-         (Node (Var (Unqualified c))))
-        ((type_expr (Single (Unqualified int))) (ast_tags ())))))
-     (tokens ())) |}]
+  [%expect {|
+    a b c : int
+    (tokens ()) |}]
 ;;
 
 let%expect_test "type_expr_pointer" =
@@ -890,30 +702,17 @@ let%expect_test "type_expr_multi_pointer" =
 let%expect_test "test_infix_spaces" =
   let program = {| a b c + Cons t |} in
   test_parse_one ~program;
-  [%expect
-    {|
-      ((ast
-        (Ok
-         (App
-          (App (Node (Var (Unqualified +)))
-           (App (App (Node (Var (Unqualified a))) (Node (Var (Unqualified b))))
-            (Node (Var (Unqualified c)))))
-          (App (Node (Constructor (Unqualified Cons)))
-           (Node (Var (Unqualified t)))))))
-       (tokens ())) |}]
+  [%expect {|
+      + (a b c) (Cons t)
+      (tokens ()) |}]
 ;;
 
 let%expect_test "test_double_tag" =
   let program = {| 4 : int #[mode: local] |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (Typed (Node (Literal (Int 4)))
-        ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
-         (ast_tags ())))))
-     (tokens ())) |}]
+  [%expect {|
+    4 : int #[mode: local]
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_tuple" =
@@ -921,20 +720,8 @@ let%expect_test "test_tuple" =
   test_parse_one ~program;
   [%expect
     {|
-    ((ast
-      (Ok
-       (Node
-        (Tuple
-         (Unqualified
-          ((Node (Literal (Int 1)))
-           (If
-            (App (App (Node (Var (Unqualified =))) (Node (Var (Unqualified p))))
-             (Node (Literal (Int 2))))
-            (Node (Literal (Int 3)))
-            (Typed (Node (Literal (Int 4)))
-             ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
-              (ast_tags ()))))))))))
-     (tokens ())) |}]
+    (1, if = p 2 then 3 else 4 : int #[mode: local])
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_record" =
@@ -944,21 +731,8 @@ let%expect_test "test_record" =
   test_parse_one ~program;
   [%expect
     {|
-    ((ast
-      (Ok
-       (Node
-        (Record
-         (Unqualified
-          ((x (Node (Literal (Int 1))))
-           (y
-            (If
-             (App (App (Node (Var (Unqualified =))) (Node (Var (Unqualified p))))
-              (Node (Literal (Int 2))))
-             (Node (Literal (Int 3)))
-             (Typed (Node (Literal (Int 4)))
-              ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
-               (ast_tags ())))))))))))
-     (tokens ())) |}]
+    {x : 1; y : if = p 2 then 3 else 4 : int #[mode: local]; }
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_constructor_with_infix" =
@@ -968,49 +742,16 @@ let%expect_test "test_constructor_with_infix" =
   test_parse_one ~program;
   [%expect
     {|
-  ((ast
-    (Ok
-     (App
-      (App (Node (Var (Unqualified +)))
-       (App
-        (App (Node (Var (Unqualified +)))
-         (App (Node (Constructor (Unqualified Cons))) (Node (Literal (Int 1)))))
-        (Node (Literal (Int 2)))))
-      (Node
-       (Record
-        (Unqualified
-         ((x (Node (Literal (Int 1))))
-          (y
-           (If
-            (App
-             (App (Node (Var (Unqualified =))) (Node (Var (Unqualified p))))
-             (Node (Literal (Int 2))))
-            (Node (Literal (Int 3)))
-            (Typed (Node (Literal (Int 4)))
-             ((type_expr (Single (Unqualified int))) (mode (Allocation Local))
-              (ast_tags ()))))))))))))
-   (tokens ())) |}]
+  + (+ (Cons 1) 2) {x : 1; y : if = p 2 then 3 else 4 : int #[mode: local]; }
+  (tokens ()) |}]
 ;;
 
 let%expect_test "test_exp_binding" =
   let program = {| 1 + @2 * 3**2 * (4 + 5) |} in
   test_parse_one ~program;
-  [%expect
-    {|
-  ((ast
-    (Ok
-     (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 1))))
-      (App
-       (App (Node (Var (Unqualified *)))
-        (App (App (Node (Var (Unqualified *))) (Ref (Node (Literal (Int 2)))))
-         (App (App (Node (Var (Unqualified **))) (Node (Literal (Int 3))))
-          (Node (Literal (Int 2))))))
-       (Node
-        (Wrapped
-         (Unqualified
-          (App (App (Node (Var (Unqualified +))) (Node (Literal (Int 4))))
-           (Node (Literal (Int 5)))))))))))
-   (tokens ())) |}]
+  [%expect {|
+  + 1 (* (* (@2) (** 3 2)) (+ 4 5))
+  (tokens ()) |}]
 ;;
 
 let%expect_test "test_type_define_enum" =
@@ -1044,16 +785,9 @@ let%expect_test "test_match" =
       | Nil -> 1 |}
   in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (Match
-        (App (Node (Constructor (Unqualified Cons))) (Node (Literal (Int 1))))
-        (((Constructor (Unqualified Cons) ((Name a)))
-          (Node (Var (Unqualified a))))
-         ((Constructor (Unqualified Nil) ()) (Node (Literal (Int 1))))))))
-     (tokens ())) |}]
+  [%expect {|
+    match Cons 1 with | Cons a -> a | Nil -> 1
+    (tokens ()) |}]
 ;;
 
 let%expect_test "rec one" =
@@ -1067,24 +801,16 @@ let%expect_test "rec one" =
   test_parse_one ~program;
   [%expect
     {|
-    ((ast
-      (Ok
-       (Let_in
-        (Rec
-         (((Name last)
-           (Lambda (Name l)
-            (Match (Node (Var (Unqualified l)))
-             (((Record
-                (Unqualified
-                 ((next (Constructor (Unqualified None) ())) (value (Name x)))))
-               (Node (Var (Unqualified x))))
-              ((Record
-                (Unqualified
-                 ((next (Constructor (Unqualified Some) ((Name y))))
-                  (value (Name _)))))
-               (App (Node (Var (Unqualified last))) (Node (Var (Unqualified l)))))))))))
-        (Node (Var (Unqualified last))))))
-     (tokens ())) |}]
+    let rec last =
+    fun l ->
+        match
+          l
+        with
+        | {next : None; value : x; } -> x
+        | {next : Some y; value : _; } -> last l
+    in
+    last
+    (tokens ()) |}]
 ;;
 
 let%expect_test "rec two" =
@@ -1099,33 +825,18 @@ let%expect_test "rec two" =
   test_parse_one ~program;
   [%expect
     {|
-    ((ast
-      (Ok
-       (Let_in
-        (Rec
-         (((Name last_node)
-           (Lambda (Name l)
-            (Match (Node (Var (Unqualified l)))
-             (((Renamed
-                (Record
-                 (Unqualified
-                  ((next (Constructor (Unqualified None) ())) (value (Name _)))))
-                p)
-               (App (Node (Var (Unqualified value)))
-                (Node (Var (Unqualified p)))))
-              ((Record
-                (Unqualified
-                 ((next (Constructor (Unqualified Some) ((Name y))))
-                  (value (Name _)))))
-               (App (Node (Var (Unqualified last_node)))
-                (Node (Var (Unqualified y)))))))))
-          ((Name value)
-           (Lambda (Name x)
-            (Match (Node (Var (Unqualified x)))
-             (((Record (Unqualified ((next (Name next)) (value (Name value)))))
-               (Node (Var (Unqualified value))))))))))
-        (Node (Var (Unqualified last_node))))))
-     (tokens ())) |}]
+    let rec last_node =
+    fun l ->
+        match
+          l
+        with
+        | {next : None; value : _; } as p -> value p
+        | {next : Some y; value : _; } -> last_node y
+    and value =
+    fun x -> match x with | {next : next; value : value; } -> value
+    in
+    last_node
+    (tokens ()) |}]
 ;;
 
 let%expect_test "rec toplevel" =
@@ -1166,10 +877,9 @@ let%expect_test "test_field_access" =
      x.field
      |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast (Ok (Field_access (Node (Var (Unqualified x))) (Unqualified field))))
-     (tokens ())) |}]
+  [%expect {|
+    x.field
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_field_access2" =
@@ -1177,21 +887,9 @@ let%expect_test "test_field_access2" =
      let _ = @x.field in let _ = $x.field in ()
      |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (Let_in
-        (Nonrec
-         ((Name _)
-          (Field_access (Ref (Node (Var (Unqualified x)))) (Unqualified field))))
-        (Let_in
-         (Nonrec
-          ((Name _)
-           (Field_access (Deref (Node (Var (Unqualified x))))
-            (Unqualified field))))
-         (Node (Literal Unit))))))
-     (tokens ())) |}]
+  [%expect {|
+    let _ = @x.field in let _ = !x.field in ()
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_field_access3" =
@@ -1199,18 +897,9 @@ let%expect_test "test_field_access3" =
   x.first.second.third.fourth  
      |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (Field_access
-        (Field_access
-         (Field_access
-          (Field_access (Node (Var (Unqualified x))) (Unqualified first))
-          (Unqualified second))
-         (Unqualified third))
-        (Unqualified fourth))))
-     (tokens ())) |}]
+  [%expect {|
+    x.first.second.third.fourth
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_field_set" =
@@ -1218,14 +907,9 @@ let%expect_test "test_field_set" =
      @x.field <- 1
      |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (Field_set
-        ((Ref (Node (Var (Unqualified x)))) (Unqualified field)
-         (Node (Literal (Int 1)))))))
-     (tokens ())) |}]
+  [%expect {|
+    @x.field <- 1
+    (tokens ()) |}]
 ;;
 
 let%expect_test "test_field_set2" =
@@ -1233,15 +917,7 @@ let%expect_test "test_field_set2" =
      x.Cringe1.first.second.Cringe.third <- 1
      |} in
   test_parse_one ~program;
-  [%expect
-    {|
-    ((ast
-      (Ok
-       (Field_set
-        ((Field_access
-          (Field_access (Node (Var (Unqualified x)))
-           (Qualified Cringe1 (Unqualified first)))
-          (Unqualified second))
-         (Qualified Cringe (Unqualified third)) (Node (Literal (Int 1)))))))
-     (tokens ())) |}]
+  [%expect {|
+    x.Cringe1.first.second.Cringe.third <- 1
+    (tokens ()) |}]
 ;;

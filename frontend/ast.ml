@@ -4,6 +4,16 @@ module Tag = String_replacement.Make ()
 
 module Tuple = struct
   type 'a t = 'a list [@@deriving sexp, compare, equal, hash]
+
+  let pprint_t pprint_a l =
+    let open PPrint in
+    let rec loop = function
+      | [] -> string ""
+      | [ x ] -> pprint_a x
+      | x :: xs -> pprint_a x ^^ string ", " ^^ loop xs
+    in
+    string "(" ^^ loop l ^^ string ")"
+  ;;
 end
 
 module Type_expr = struct
@@ -14,6 +24,16 @@ module Type_expr = struct
     | Tuple of t Tuple.t
     | Multi of t * Lowercase.t Qualified.t
   [@@deriving sexp, variants, compare, hash, equal]
+
+  let rec pprint_t =
+    let open PPrint in
+    function
+    | Pointer t -> char '@' ^^ pprint_t t
+    | Single x -> Qualified.pprint_t string x
+    | Arrow (x, y) -> pprint_t x ^^ string " -> " ^^ pprint_t y
+    | Tuple l -> Tuple.pprint_t pprint_t l
+    | Multi (x, y) -> pprint_t x ^^ char ' ' ^^ Qualified.pprint_t string y
+  ;;
 end
 
 module Type_binding = struct
@@ -40,6 +60,11 @@ end
 module Mode = struct
   type t = Allocation of [ `Local | `Global ]
   [@@deriving sexp, compare, equal, hash, variants]
+
+  let to_string = function
+    | Allocation `Local -> "local"
+    | Allocation `Global -> "global"
+  ;;
 end
 
 module Ast_tags = struct
@@ -57,6 +82,37 @@ module Value_tag = struct
   [@@deriving sexp, compare, equal, hash, fields]
 
   let empty = { type_expr = None; mode = None; ast_tags = Ast_tags.empty }
+
+  let pprint_t t =
+    let open PPrint in
+    let type_expr =
+      match type_expr t with
+      | None -> empty
+      | Some t -> string " : " ^^ Type_expr.pprint_t t
+    in
+    let tag_list = ast_tags t |> Tag.Map.to_alist in
+    let tag_list =
+      match mode t with
+      | None -> tag_list
+      | Some m -> ("mode", [ Token.Symbol (Mode.to_string m) ]) :: tag_list
+    in
+    let each_tag tag tokens =
+      string tag ^^ string ": " ^^ separate_map (break 1) Token.pprint_t tokens
+    in
+    let tags =
+      match tag_list with
+      | [] -> empty
+      | _ ->
+        let inner =
+          separate_map
+            (string ", " ^^ break 1)
+            (fun (tag, tokens) -> each_tag tag tokens)
+            tag_list
+        in
+        break 1 ^^ string "#[" ^^ inner ^^ string "]"
+    in
+    type_expr ^^ tags
+  ;;
 end
 
 module Literal = struct
@@ -79,6 +135,21 @@ module Literal = struct
   ;;
 end
 
+let pprint_record pprint_a map =
+  let open PPrint in
+  let lhs =
+    if Lowercase.Map.is_empty map
+    then string "{}"
+    else
+      Lowercase.Map.fold map ~init:empty ~f:(fun ~key ~data acc ->
+        let curr =
+          string key ^^ string " : " ^^ pprint_a data ^^ char ';' ^^ break 1
+        in
+        acc ^^ curr)
+  in
+  group (char '{' ^^ nest 2 lhs ^^ char '}')
+;;
+
 module Binding = struct
   module T = struct
     type t =
@@ -95,6 +166,28 @@ module Binding = struct
 
   module Table = Map.Make (T)
   include T
+
+  let rec pprint_t =
+    let open PPrint in
+    function
+    | Name x -> string x
+    | Constructor (x, None) -> Qualified.pprint_t string x
+    | Constructor (x, Some y) ->
+      Qualified.pprint_t string x ^^ nest 2 (break 1 ^^ pprint_t y)
+    | Literal l -> Literal.pretty_print_t l
+    | Record r ->
+      Qualified.map ~f:(pprint_record pprint_t) r |> Qualified.pprint_t Fn.id
+    | Tuple t ->
+      Qualified.map ~f:(Tuple.pprint_t pprint_t) t |> Qualified.pprint_t Fn.id
+    | Typed (t, value_tag) ->
+      char '('
+      ^^ pprint_t t
+      ^^ break 1
+      ^^ Value_tag.pprint_t value_tag
+      ^^ char ')'
+    | Renamed (t, x) -> pprint_t t ^^ string " as " ^^ string x
+    | Pointer t -> char '@' ^^ pprint_t t
+  ;;
 end
 
 type 'type_def type_description =
@@ -173,9 +266,109 @@ and toplevel =
 
 and t = toplevel list [@@deriving sexp, equal, hash, compare]
 
-let rec pretty_print_node node =
+let rec pprint_node node =
   match node with
-  | Var s -> PPrint.string s
-  | Tuple _ | Constructor _ | Record _ | Wrapped _ -> failwith "TODO"
   | Literal l -> Literal.pretty_print_t l
+  | Var s -> Qualified.pprint_t PPrint.string s
+  | Tuple l ->
+    Qualified.map ~f:(Tuple.pprint_t pprint_expr) l |> Qualified.pprint_t Fn.id
+  | Constructor s -> Qualified.pprint_t PPrint.string s
+  | Record r ->
+    Qualified.map ~f:(pprint_record pprint_expr) r |> Qualified.pprint_t Fn.id
+  | Wrapped e ->
+    Qualified.map ~f:(fun e -> PPrint.(char '(' ^^ pprint_expr e ^^ char ')')) e
+    |> Qualified.pprint_t Fn.id
+
+and pprint_expr_no_spaces =
+  let open PPrint in
+  function
+  | Node node -> pprint_node node
+  | expr -> char '(' ^^ pprint_expr expr ^^ char ')'
+
+and pprint_expr =
+  let open PPrint in
+  function
+  | Node node -> pprint_node node
+  | If (pred, then_, else_) ->
+    group
+      (string "if"
+       ^^ nest 2 (break 1 ^^ pprint_expr pred)
+       ^^ break 1
+       ^^ string "then"
+       ^^ nest 2 (break 1 ^^ pprint_expr then_)
+       ^^ break 1
+       ^^ string "else"
+       ^^ nest 2 (break 1 ^^ pprint_expr else_))
+  | Lambda (binding, expr) ->
+    group
+      (group
+         (string "fun"
+          ^^ break 1
+          ^^ Binding.pprint_t binding
+          ^^ break 1
+          ^^ string "->")
+       ^^ nest 2 (break 1 ^^ pprint_expr expr))
+  | App (a, b) ->
+    group (pprint_expr a ^^ nest 2 (break 1 ^^ pprint_expr_no_spaces b))
+  | Let_in (Nonrec let_each, expr2) ->
+    pprint_x_in (pprint_let_each "let" let_each) expr2
+  | Let_in (Rec let_each_list, expr2) ->
+    let hd, let_each_list =
+      match let_each_list with
+      | [] -> failwith "empty let rec"
+      | hd :: tl -> hd, tl
+    in
+    let init = pprint_let_each "let rec" hd in
+    let lhs =
+      List.fold let_each_list ~init ~f:(fun acc let_each ->
+        acc ^^ break 1 ^^ pprint_let_each "and" let_each)
+    in
+    pprint_x_in lhs expr2
+  | Ref expr -> group (char '@' ^^ pprint_expr expr)
+  | Deref expr -> group (char '!' ^^ pprint_expr expr)
+  | Field_access (lhs, field) ->
+    group
+      (pprint_expr lhs
+       ^^ char '.'
+       ^^ nest 2 (break 0 ^^ Qualified.pprint_t PPrint.string field))
+  | Field_set (lhs, field, rhs) ->
+    group
+      (pprint_expr lhs
+       ^^ char '.'
+       ^^ nest 2 (break 0 ^^ Qualified.pprint_t PPrint.string field)
+       ^^ break 1
+       ^^ string "<-"
+       ^^ nest 2 (break 1 ^^ pprint_expr rhs))
+  | Match (expr, cases) ->
+    group
+      (string "match"
+       ^^ nest 2 (break 1 ^^ pprint_expr expr)
+       ^^ break 1
+       ^^ string "with"
+       ^^ break 1
+       ^^ string "| "
+       ^^ separate_map
+            (break 1 ^^ string "| ")
+            (fun (binding, expr) ->
+              group
+                (Binding.pprint_t binding
+                 ^^ nest
+                      2
+                      (break 1
+                       ^^ string "->"
+                       ^^ nest 2 (break 1 ^^ pprint_expr expr))))
+            cases)
+  | Typed (expr, value_tag) ->
+    group (pprint_expr expr ^^ nest 2 (Value_tag.pprint_t value_tag))
+
+and pprint_let_each s (binding, expr) =
+  let open PPrint in
+  group
+    (string s ^^ break 1 ^^ Binding.pprint_t binding ^^ break 1 ^^ string "=")
+  ^^ break 1
+  ^^ nest 2 (pprint_expr expr)
+
+and pprint_x_in x expr =
+  let open PPrint in
+  group (x ^^ break 1 ^^ string "in" ^^ break 1 ^^ pprint_expr expr)
 ;;

@@ -115,3 +115,20 @@ let map_m t ~f =
   in
   loop t
 ;;
+
+let pprint_t pp_a =
+  let rec loop t =
+    match t with
+    | Qualified (q, t) -> PPrint.(string q ^^ dot ^^ loop t)
+    | Unqualified a -> pp_a a
+  in
+  loop
+;;
+
+let%expect_test "pretty print" =
+  let a = Qualified ("A", Qualified ("B", Unqualified "C")) in
+  let pp_a = PPrint.string in
+  PPrint.ToChannel.pretty 1. 80 Out_channel.stdout (pprint_t pp_a a);
+  [%expect {|
+    A.B.C |}]
+;;
