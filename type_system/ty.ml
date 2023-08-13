@@ -40,6 +40,7 @@ and type_proof =
 [@@deriving sexp, equal, hash, compare]
 
 and type_id = int [@@deriving sexp, equal, hash, compare]
+and binding_id = int [@@deriving sexp, equal, hash, compare]
 
 and mono =
   (* name and type args *)
@@ -73,7 +74,7 @@ type poly =
 module Module_path = Qualified.Make (Uppercase)
 
 type 'data module_bindings =
-  { toplevel_vars : poly list Lowercase.Map.t
+  { toplevel_vars : (poly * binding_id) list Lowercase.Map.t
   ; toplevel_records : (poly Lowercase.Map.t * type_proof) Lowercase.Set.Map.t
   ; toplevel_fields :
       (type_proof * [ `Mutable | `Immutable ] * poly) Lowercase.Map.t
@@ -114,12 +115,7 @@ let base_type_map =
 ;;
 
 let base_module_bindings empty_data =
-  { toplevel_vars =
-      (let init = Lowercase.Map.empty in
-       Lowercase.Map.add_multi
-         init
-         ~key:"&"
-         ~data:(Forall ("a", Mono (Lambda (TyVar "a", Reference (TyVar "a"))))))
+  { toplevel_vars = Lowercase.Map.empty
   ; toplevel_fields = Lowercase.Map.empty
   ; toplevel_records = Lowercase.Set.Map.empty
   ; toplevel_constructors = Uppercase.Map.empty

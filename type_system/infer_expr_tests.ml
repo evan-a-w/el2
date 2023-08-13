@@ -334,7 +334,7 @@ let%expect_test "type annot1" =
 let%expect_test "node value" =
   infer_type_of_expr
     ~print_state:false
-    ~programs:[ {| { value : 1; next : Some &{ value : 2; next : None } } |} ];
+    ~programs:[ {| { value : 1; next : Some @{ value : 2; next : None } } |} ];
   [%expect {|
     int node |}]
 ;;
@@ -342,7 +342,7 @@ let%expect_test "node value" =
 let%expect_test "node value fail" =
   infer_type_of_expr
     ~print_state:false
-    ~programs:[ {| { value : 1; next : Some &{ value : "a"; next : None } } |} ];
+    ~programs:[ {| { value : 1; next : Some @{ value : "a"; next : None } } |} ];
   [%expect {|
     (error ("types failed to unify" string int)) |}]
 ;;
@@ -351,8 +351,8 @@ let%expect_test "ref cons succ" =
   infer_type_of_expr
     ~print_state:false
     ~programs:
-      [ {| Ref_cons (&1, Ref_nil) |}
-      ; {| Ref_cons (&1, (Ref_cons (&2, Ref_nil))) |}
+      [ {| Ref_cons (@1, Ref_nil) |}
+      ; {| Ref_cons (@1, (Ref_cons (@2, Ref_nil))) |}
       ; {| Ref_cons |}
       ];
   [%expect
@@ -367,14 +367,14 @@ let%expect_test "ref cons fl" =
     ~print_state:false
     ~programs:
       [ {| Ref_cons (1, Nil) |}
-      ; {| Ref_cons (&1, Nil) |}
+      ; {| Ref_cons (@1, Nil) |}
       ; {| Ref_cons (1, Ref_nil) |}
-      ; {| Ref_cons (&1, (Ref_cons (&"hi", Ref_nil))) |}
+      ; {| Ref_cons (@1, (Ref_cons (@"hi", Ref_nil))) |}
       ];
   [%expect
     {|
     (error ("failed to unify types" @a0 int))
-    (error ("types failed to unify" "a0 ref_list" "d0 list"))
+    (error ("types failed to unify" "a0 ref_list" "b0 list"))
     (error ("failed to unify types" @a0 int))
     (error ("types failed to unify" int string)) |}]
 ;;
@@ -489,7 +489,7 @@ let%expect_test "head record value" =
              | { value : x; next : None } -> x
              | { value : x; next : Some y } -> x
            in
-           head { value : 1; next : Some &{ value : 2; next : None } } |}
+           head { value : 1; next : Some @{ value : 2; next : None } } |}
       ];
   [%expect {| int |}]
 ;;
@@ -532,7 +532,7 @@ let%expect_test "recursive last value keeps type" =
              | { value : _; next : Some y } -> last l
            in
            let (=) = fun (x : string) (y : string) -> true in
-           let x = last { value : 1; next : Some &{ value : 2; next : None } } in
+           let x = last { value : 1; next : Some @{ value : 2; next : None } } in
            let y = "hi" in
            x = y |}
       ];

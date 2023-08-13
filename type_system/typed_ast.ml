@@ -33,7 +33,7 @@ module Literal = struct
 end
 
 type node =
-  | Var of Lowercase.t Qualified.t
+  | Var of Lowercase.t Qualified.t * Ty.binding_id
   | Literal of Literal.t
   | Tuple of expr list Qualified.t
   | Constructor of Uppercase.t Qualified.t
