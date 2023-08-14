@@ -132,3 +132,8 @@ let%expect_test "pretty print" =
   [%expect {|
     A.B.C |}]
 ;;
+
+let rec inner = function
+  | Unqualified x -> x
+  | Qualified (_, x) -> inner x
+;;

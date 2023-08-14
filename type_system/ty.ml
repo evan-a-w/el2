@@ -47,7 +47,7 @@ and mono =
   | Weak of Lowercase.t
   (* keep track of the path and arg for equality *)
   | TyVar of Lowercase.t
-  | Lambda of mono * mono
+  | Lambda of mono * mono * bool (* not partial app ie. result of Lambda ast *)
   | Tuple of mono list
   | Reference of mono
   | Named of type_proof
@@ -70,6 +70,11 @@ type poly =
   | Mono of mono
   | Forall of Lowercase.t * poly
 [@@deriving sexp, equal, hash, compare, variants]
+
+let rec get_mono_from_poly_without_gen = function
+  | Mono m -> m
+  | Forall (_, p) -> get_mono_from_poly_without_gen p
+;;
 
 module Module_path = Qualified.Make (Uppercase)
 

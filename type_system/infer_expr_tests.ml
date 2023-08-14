@@ -31,7 +31,6 @@ let infer_type_of_expr ~programs ~print_state =
     (* let%bind expr = replace_user_ty_vars expr in *)
     (* print_s [%message (expr : Ast.expr)]; *)
     let%bind mono = mono_of_expr expr in
-    let%bind mono = apply_substs mono in
     let%map s = show_mono mono in
     print_endline s
   in
@@ -198,6 +197,13 @@ let%expect_test "let_expr_tag1" =
     (error "Failed to parse (b expr)") |}]
 ;;
 
+(* [%expect *)
+(*   {| *)
+  (*   e0 list -> e0 -> e0 *)
+  (*   e0 list -> e0 -> e0 *)
+  (*   (error ("types failed to unify" "c0 list" int)) *)
+  (*   (error "Failed to parse (b expr)") |}] *)
+
 let%expect_test "type_def_record" =
   let lit =
     Ast.(
@@ -234,7 +240,9 @@ let%expect_test "last_list_record_occurs" =
            in last last |}
       ];
   [%expect
-    {| (error ("occurs check failed" (a a0) (mono (Lambda (TyVar a0) (TyVar g0))))) |}]
+    {|
+      (error
+       ("occurs check failed" (a a0) (mono (Lambda (TyVar a0) (TyVar g0) false)))) |}]
 ;;
 
 let%expect_test "head nonempty list" =
@@ -601,5 +609,6 @@ let%expect_test "closure" =
       [ {| let x = 1 in
            let val = fun () -> x in
            val |} ];
-  [%expect {| unit -> int |}]
+  [%expect {|
+    unit -> int |}]
 ;;
