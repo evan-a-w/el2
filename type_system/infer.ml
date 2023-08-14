@@ -13,13 +13,18 @@ type module_history =
   }
 [@@deriving sexp, equal, compare, fields]
 
+type binding_state = { abstraction_level : int }
+[@@deriving sexp, equal, compare, fields]
+
 type state =
   { mono_ufds : Mono_ufds.t
   ; current_module_binding : Typed_ast.module_
   ; local_vars : (poly * binding_id) list Lowercase.Map.t
   ; module_history : module_history
   ; symbol_n : int
+  ; abstraction_level : int
   ; binding_id_n : int
+  ; binding_map : binding_state Int.Map.t
   ; type_map : type_constructor Int.Map.t
   }
 [@@deriving sexp, equal, compare, fields]
@@ -49,6 +54,26 @@ let get_binding_id =
   let res = state.binding_id_n in
   let%map () = State.Result.put { state with binding_id_n = res + 1 } in
   res
+;;
+
+let get_abstraction_level =
+  let open State.Result.Let_syntax in
+  let%map state = State.Result.get in
+  state.abstraction_level
+;;
+
+let incr_abstraction_level =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  State.Result.put
+    { state with abstraction_level = state.abstraction_level + 1 }
+;;
+
+let decr_abstraction_level =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  State.Result.put
+    { state with abstraction_level = state.abstraction_level - 1 }
 ;;
 
 let add_type_constructor arg name user_type type_proof =
@@ -121,6 +146,8 @@ let empty_state =
   ; binding_id_n = 0
   ; local_vars = Lowercase.Map.empty
   ; type_map = base_type_map
+  ; binding_map = Int.Map.empty
+  ; abstraction_level = 0
   }
 ;;
 
@@ -159,7 +186,13 @@ let add_module_var ?binding_id name poly =
   let current_module_binding =
     { state.current_module_binding with toplevel_vars }
   in
-  State.Result.put { state with current_module_binding }
+  let binding_map =
+    Int.Map.set
+      state.binding_map
+      ~key:binding_id
+      ~data:{ abstraction_level = state.abstraction_level }
+  in
+  State.Result.put { state with current_module_binding; binding_map }
 ;;
 
 let add_local_var ?binding_id name poly =
@@ -173,7 +206,19 @@ let add_local_var ?binding_id name poly =
   let local_vars =
     Lowercase.Map.add_multi state.local_vars ~key:name ~data:(poly, binding_id)
   in
-  State.Result.put { state with local_vars }
+  print_s
+    [%message
+      "add var"
+        (name : Lowercase.t)
+        (binding_id : int)
+        (state.abstraction_level : int)];
+  let binding_map =
+    Int.Map.set
+      state.binding_map
+      ~key:binding_id
+      ~data:{ abstraction_level = state.abstraction_level }
+  in
+  State.Result.put { state with local_vars; binding_map }
 ;;
 
 let pop_local_var name =
@@ -1580,6 +1625,55 @@ let gen_var var ~(add_var : add_var_t) ~pop_var =
   add_var ~binding_id var poly
 ;;
 
+let rec check_closure (expr : Typed_ast.expr_inner) ~abstraction_level =
+  let open State.Result.Let_syntax in
+  let%bind state = State.Result.get in
+  match expr with
+  | Typed_ast.(Node (Var (_, binding_id))) ->
+    let%bind { is_lifted; obs_abstraction_level } =
+      match Int.Map.find state.binding_map binding_id with
+      | Some x -> x
+      | None ->
+        State.Result.error [%message "Binding not found" (binding_id : int)]
+    in
+    if obs_abstraction_level < abstraction_level && not is_lifted
+    then
+      State.Result.error
+        [%message
+          "Closures are not yet implemented"
+            (abstraction_level : int)
+            (obs_abstraction_level : int)
+            (expr : Typed_ast.expr_inner)]
+    else return ()
+  | Typed_ast.(Node _) -> return ()
+  | Typed_ast.If ((a, _), (b, _), (c, _)) ->
+    let%bind () = check_closure a ~abstraction_level in
+    let%bind () = check_closure b ~abstraction_level in
+    check_closure c ~abstraction_level
+  | Typed_ast.Lambda (_, (b, _)) ->
+    check_closure b ~abstraction_level:(abstraction_level + 1)
+  | Typed_ast.App ((a, _), (b, _)) ->
+    let%bind () = check_closure a ~abstraction_level in
+    check_closure b ~abstraction_level
+  | Typed_ast.(Let_in (Nonrec (_, (a, _)), (b, _))) ->
+    let%bind () = check_closure a ~abstraction_level in
+    check_closure b ~abstraction_level
+  | Typed_ast.(Let_in (Rec l, (b, _))) ->
+    let%bind () =
+      State.Result.all_unit
+      @@ List.map l ~f:(fun (_, (a, _)) -> check_closure a ~abstraction_level)
+    in
+    check_closure b ~abstraction_level
+  | Typed_ast.Ref (a, _) -> check_closure a ~abstraction_level
+  | Typed_ast.Deref (a, _) -> check_closure a ~abstraction_level
+  | Typed_ast.Field_access (_, _) -> return ()
+  | Typed_ast.Field_set (_, _, (a, _)) -> check_closure a ~abstraction_level
+  | Typed_ast.Match ((a, _), cases) ->
+    let%bind () = check_closure a ~abstraction_level in
+    State.Result.all_unit
+    @@ List.map cases ~f:(fun (_, (a, _)) -> check_closure a ~abstraction_level)
+;;
+
 let rec type_node node =
   let open State.Result.Let_syntax in
   match node with
@@ -1848,6 +1942,7 @@ and add_nonrec_bindings ~binding ~expr ~add_var_mono =
 
 and add_rec_bindings l ~(add_var : add_var_t) ~pop_var =
   let open State.Result.Let_syntax in
+  let%bind () = incr_abstraction_level in
   let%bind bindings =
     State.Result.all
       (List.map l ~f:(fun (binding, expr) ->
@@ -1856,6 +1951,7 @@ and add_rec_bindings l ~(add_var : add_var_t) ~pop_var =
          in
          b, value_restriction expr))
   in
+  let%bind () = decr_abstraction_level in
   let act_on_var var mono =
     let%bind current, _ = lookup_var (Qualified.Unqualified var) in
     let mono' = mono_of_poly_no_inst current in
@@ -1872,7 +1968,8 @@ and add_rec_bindings l ~(add_var : add_var_t) ~pop_var =
          binding, (inner, mono), vars))
   in
   let typed_bindings, exprs, vars_list = List.unzip3 vars_list in
-  let%map () =
+  let%bind () = incr_abstraction_level in
+  let%bind () =
     List.map bindings ~f:(fun (inner, v) ->
       match v with
       | false ->
@@ -1880,6 +1977,7 @@ and add_rec_bindings l ~(add_var : add_var_t) ~pop_var =
       | true -> return ())
     |> State.Result.all_unit
   in
+  let%map () = decr_abstraction_level in
   let bindings = List.unzip bindings |> fst in
   typed_bindings, exprs, List.concat [ vars_list; bindings ]
 
@@ -2004,6 +2102,7 @@ and type_expr expr =
     Typed_ast.(Match (expr1, cases)), mono
   | Lambda (binding, body) ->
     let%bind var = gen_ty_var in
+    let%bind () = incr_abstraction_level in
     let%bind binding, (res_inner, res_mono) =
       let_each_of_binding_typed
         ~binding
@@ -2015,6 +2114,9 @@ and type_expr expr =
         ~pop_var:pop_local_var
     in
     let%bind var = apply_substs var in
+    let%bind abstraction_level = get_abstraction_level in
+    let%bind () = check_closure res_inner ~abstraction_level in
+    let%bind () = decr_abstraction_level in
     let%map res_mono = apply_substs res_mono in
     Typed_ast.Lambda (binding, (res_inner, res_mono)), Lambda (var, res_mono)
 ;;

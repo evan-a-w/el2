@@ -593,3 +593,13 @@ let%expect_test "value field set" =
   [%expect
     {| (error ("Field needs to be mutable" (field (Unqualified value)))) |}]
 ;;
+
+let%expect_test "closure" =
+  infer_type_of_expr
+    ~print_state:false
+    ~programs:
+      [ {| let x = 1 in
+           let val = fun () -> x in
+           val |} ];
+  [%expect {| unit -> int |}]
+;;
