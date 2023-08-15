@@ -33,6 +33,13 @@ type state =
   }
 [@@deriving sexp, equal, compare, fields]
 
+let lookup_binding_id binding_id =
+  let%bind.State.Result state = State.Result.get in
+  match Int.Map.find state.binding_map binding_id with
+  | Some x -> State.Result.return x
+  | None -> State.Result.error [%message "Binding not found" (binding_id : int)]
+;;
+
 let add_module ~name ~module_bindings =
   let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
@@ -466,10 +473,24 @@ and show_mono mono =
   match mono with
   | Weak s | TyVar s -> return s
   | Named proof -> show_type_proof proof
-  | Lambda (a, b, _) ->
+  | Function (a, b) ->
     let%bind a = show_mono a in
     let%map b = show_mono b in
     a ^ " -> " ^ b
+  | Lambda (a, b, binding_set) ->
+    let%bind list =
+      Binding_id.Set.fold binding_set ~init:(return []) ~f:(fun acc id ->
+        let%bind acc = acc in
+        let%bind { name; poly; _ } = lookup_binding_id id in
+        let mono = get_mono_from_poly_without_gen poly in
+        let%map s = show_mono mono in
+        let s = [%string "%{name} : %{s}"] in
+        s :: acc)
+    in
+    let list = List.to_string list ~f:Fn.id in
+    let%bind a = show_mono a in
+    let%map b = show_mono b in
+    a ^ [%string " %{list}=> "] ^ b
   | Tuple l ->
     let%map shown = List.map ~f:show_mono l |> State.Result.all in
     "(" ^ String.concat ~sep:", " shown ^ ")"
@@ -569,6 +590,7 @@ let rec map_ty_vars ~f (mono : mono) =
   | TyVar m -> Option.value (f m) ~default:mono
   | Weak _ -> mono
   | Lambda (a, b, c) -> Lambda (map_ty_vars ~f a, map_ty_vars ~f b, c)
+  | Function (a, b) -> Function (map_ty_vars ~f a, map_ty_vars ~f b)
   | Tuple l -> Tuple (List.map l ~f:(map_ty_vars ~f))
   | Named type_proof -> Named (map_type_proof ~f type_proof)
   | Reference x -> Reference (map_ty_vars ~f x)
@@ -707,7 +729,7 @@ let rec type_of_type_expr type_expr : mono state_result_m =
   | Arrow (first, second) ->
     let%map first = type_of_type_expr first
     and second = type_of_type_expr second in
-    Lambda (first, second, true)
+    Function (first, second)
   | Ast.Type_expr.Single name -> lookup_type name
   | Ast.Type_expr.Multi (first, second) ->
     let%bind constructor_arg, _, type_proof = lookup_type_constructor second in
@@ -1181,7 +1203,7 @@ let type_of_constructor constructor =
   let open State.Result.Let_syntax in
   match%map inst_constructor constructor with
   | None, mono -> mono
-  | Some mono_arg, mono_res -> Lambda (mono_arg, mono_res, true)
+  | Some mono_arg, mono_res -> Function (mono_arg, mono_res)
 ;;
 
 let occurs_check a mono =

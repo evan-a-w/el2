@@ -64,7 +64,6 @@ and expr_inner =
   | Node of node
   | If of expr * expr * expr
   | Lambda of binding * expr
-  | Closure of binding * expr * Ty.binding_id list
   | App of expr * expr
   | Let_in of let_def * expr
   | Ref of expr

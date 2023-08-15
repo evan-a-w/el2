@@ -15,6 +15,8 @@ let show_type_constructor_arg = function
   | Tuple_arg l -> "(" ^ String.concat ~sep:", " (List.map l ~f:snd) ^ ")"
 ;;
 
+module Binding_id = Id.Make ()
+
 type type_constructor =
   type_constructor_arg option * user_type * type_proof
   (* replace bound variables in type_constructor_arg with new TyVars when using this mono *)
@@ -40,14 +42,15 @@ and type_proof =
 [@@deriving sexp, equal, hash, compare]
 
 and type_id = int [@@deriving sexp, equal, hash, compare]
-and binding_id = int [@@deriving sexp, equal, hash, compare]
+and binding_id = Binding_id.t [@@deriving sexp, equal, hash, compare]
 
 and mono =
   (* name and type args *)
   | Weak of Lowercase.t
   (* keep track of the path and arg for equality *)
   | TyVar of Lowercase.t
-  | Lambda of mono * mono * bool (* not partial app ie. result of Lambda ast *)
+  | Function of mono * mono
+  | Lambda of mono * mono * Binding_id.Set.t
   | Tuple of mono list
   | Reference of mono
   | Named of type_proof
