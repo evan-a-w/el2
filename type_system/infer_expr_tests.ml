@@ -24,15 +24,14 @@ let type_exprs =
   ]
 ;;
 
-let infer_type_of_expr ~programs ~print_state =
+let infer_expr ~programs ~print_state ~print =
   let action program : unit state_result_m =
     let%bind () = define_types ~type_exprs in
     let%bind expr = Parser.try_parse Parser.parse_one program |> State.return in
     (* let%bind expr = replace_user_ty_vars expr in *)
     (* print_s [%message (expr : Ast.expr)]; *)
-    let%bind mono = mono_of_expr expr in
-    let%map s = show_mono mono in
-    print_endline s
+    let%bind x = type_expr expr in
+    print x
   in
   List.iter programs ~f:(fun program ->
     match print_state, State.Result.run (action program) ~state:empty_state with
@@ -43,8 +42,20 @@ let infer_type_of_expr ~programs ~print_state =
     | false, (Error error, _) -> print_s [%message (error : Sexp.t)])
 ;;
 
+let infer_and_print_mono ~programs ~print_state =
+  infer_expr ~programs ~print_state ~print:(fun (_, mono) ->
+    let%map s = show_mono mono in
+    print_endline s)
+;;
+
+let infer_and_print_expr ~programs ~print_state =
+  infer_expr ~programs ~print_state ~print:(fun expr ->
+    print_s [%message (expr : Typed_ast.expr)];
+    return ())
+;;
+
 let%expect_test "simple" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| Cons (1, Nil) |}
@@ -65,18 +76,18 @@ let%expect_test "simple" =
 ;;
 
 let%expect_test "if_expr" =
-  infer_type_of_expr ~print_state:false ~programs:[ "if true then 1 else 0" ];
+  infer_and_print_mono ~print_state:false ~programs:[ "if true then 1 else 0" ];
   [%expect {|
     int |}];
-  infer_type_of_expr ~print_state:false ~programs:[ "if 1 then 1 else 0" ];
+  infer_and_print_mono ~print_state:false ~programs:[ "if 1 then 1 else 0" ];
   [%expect {|
     (error ("types failed to unify" int bool)) |}];
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:[ "if true then \"hi\" else 0" ];
   [%expect {|
     (error ("types failed to unify" string int)) |}];
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:[ "if true then Cons (1, Nil) else Cons (2, Cons (1, Nil))" ];
   [%expect {|
@@ -84,7 +95,7 @@ let%expect_test "if_expr" =
 ;;
 
 let%expect_test "match_expr" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| match Nil with | Nil -> 0 | Cons (x, _) -> x |}
@@ -103,7 +114,7 @@ let%expect_test "match_expr" =
 ;;
 
 let%expect_test "match_expr2" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let x = Nil in let _ = match x with | Nil -> 1 | Cons (x, _) -> x in x |}
@@ -113,7 +124,7 @@ let%expect_test "match_expr2" =
 ;;
 
 let%expect_test "lambda_expr" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:[ {| (fun x -> 1) |}; {| (fun x -> 1) 1 |} ];
   [%expect {|
@@ -122,7 +133,7 @@ let%expect_test "lambda_expr" =
 ;;
 
 let%expect_test "let_expr1" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let x = (fun x -> 1) in x 1 |}
@@ -138,7 +149,7 @@ let%expect_test "let_expr1" =
 ;;
 
 let%expect_test "let_expr2" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let x = (fun y -> match y with | Nil -> 1 | Cons (1, Cons (2, Nil)) -> 2) in
@@ -158,14 +169,14 @@ let%expect_test "let_expr2" =
 ;;
 
 let%expect_test "let_expr3" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:[ {| let x = fun x -> (fun x -> x) (fun x -> x) x in x |} ];
   [%expect {| f0 -> f0 |}]
 ;;
 
 let%expect_test "let_expr_tag1" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let head = fun l default ->
@@ -231,7 +242,7 @@ let%expect_test "type_def_record" =
 ;;
 
 let%expect_test "last_list_record_occurs" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let last = fun f l -> match l with
@@ -246,7 +257,7 @@ let%expect_test "last_list_record_occurs" =
 ;;
 
 let%expect_test "head nonempty list" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let id = fun x -> x in
@@ -262,7 +273,7 @@ let%expect_test "head nonempty list" =
 ;;
 
 let%expect_test "head list value" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let head =
@@ -276,7 +287,7 @@ let%expect_test "head list value" =
 ;;
 
 let%expect_test "mutual recursion" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let rec (-) = fun (a : int) (b : int) -> 0
@@ -293,7 +304,7 @@ let%expect_test "mutual recursion" =
 ;;
 
 let%expect_test "mutual recursion fail" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let rec (-) = fun a b -> 0
@@ -310,7 +321,7 @@ let%expect_test "mutual recursion fail" =
 ;;
 
 let%expect_test "recursive last not pointer" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let rec last =
@@ -324,7 +335,7 @@ let%expect_test "recursive last not pointer" =
 ;;
 
 let%expect_test "type annot1" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let id = fun (y : int) (x : string) -> x in id |}
@@ -340,7 +351,7 @@ let%expect_test "type annot1" =
 ;;
 
 let%expect_test "node value" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:[ {| { value : 1; next : Some @{ value : 2; next : None } } |} ];
   [%expect {|
@@ -348,7 +359,7 @@ let%expect_test "node value" =
 ;;
 
 let%expect_test "node value fail" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:[ {| { value : 1; next : Some @{ value : "a"; next : None } } |} ];
   [%expect {|
@@ -356,7 +367,7 @@ let%expect_test "node value fail" =
 ;;
 
 let%expect_test "ref cons succ" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| Ref_cons (@1, Ref_nil) |}
@@ -371,7 +382,7 @@ let%expect_test "ref cons succ" =
 ;;
 
 let%expect_test "ref cons fl" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| Ref_cons (1, Nil) |}
@@ -388,7 +399,7 @@ let%expect_test "ref cons fl" =
 ;;
 
 let%expect_test "rec tail nonempty list" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let rec tail =
@@ -403,7 +414,7 @@ let%expect_test "rec tail nonempty list" =
 ;;
 
 let%expect_test "rec tail list" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let rec tail =
@@ -419,7 +430,7 @@ let%expect_test "rec tail list" =
 ;;
 
 let%expect_test "rec tail nonempty list" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let rec tail =
@@ -433,7 +444,7 @@ let%expect_test "rec tail nonempty list" =
 ;;
 
 let%expect_test "rec tail list value" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let rec tail =
@@ -449,7 +460,7 @@ let%expect_test "rec tail list value" =
 ;;
 
 let%expect_test "head nonempty list rec needless" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let id = fun x -> x in
@@ -465,7 +476,7 @@ let%expect_test "head nonempty list rec needless" =
 ;;
 
 let%expect_test "record create" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let singleton =
@@ -477,7 +488,7 @@ let%expect_test "record create" =
 ;;
 
 let%expect_test "head record destruct" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let head =
@@ -489,7 +500,7 @@ let%expect_test "head record destruct" =
 ;;
 
 let%expect_test "head record value" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let head =
@@ -503,7 +514,7 @@ let%expect_test "head record value" =
 ;;
 
 let%expect_test "recursive last" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let rec last =
@@ -517,7 +528,7 @@ let%expect_test "recursive last" =
 ;;
 
 let%expect_test "recursive last value" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let rec last =
@@ -531,7 +542,7 @@ let%expect_test "recursive last value" =
 ;;
 
 let%expect_test "recursive last value keeps type" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let rec last =
@@ -549,7 +560,7 @@ let%expect_test "recursive last value keeps type" =
 ;;
 
 let%expect_test "recursive last generalizes" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {|
@@ -567,7 +578,7 @@ let%expect_test "recursive last generalizes" =
 ;;
 
 let%expect_test "head generalizes" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let head = fun l ->
@@ -584,7 +595,7 @@ let%expect_test "head generalizes" =
 ;;
 
 let%expect_test "value field" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let rec value = fun l -> l.value in value { value : 1; next : None } |}
@@ -593,7 +604,7 @@ let%expect_test "value field" =
 ;;
 
 let%expect_test "value field set" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let value = fun l -> l.value <- 2 in let initial = { value : 1; next : None } in value initial |}
@@ -603,7 +614,7 @@ let%expect_test "value field set" =
 ;;
 
 let%expect_test "closure" =
-  infer_type_of_expr
+  infer_and_print_mono
     ~print_state:false
     ~programs:
       [ {| let x = 1 in
