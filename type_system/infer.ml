@@ -612,6 +612,10 @@ let rec map_ty_vars_m ~f (mono : mono) =
     let%bind a = map_ty_vars_m ~f a in
     let%map b = map_ty_vars_m ~f b in
     Lambda (a, b, c)
+  | Function (a, b) ->
+    let%bind a = map_ty_vars_m ~f a in
+    let%map b = map_ty_vars_m ~f b in
+    Function (a, b)
   | Tuple l ->
     let%map l = State.Result.all (List.map l ~f:(map_ty_vars_m ~f)) in
     Tuple l
@@ -643,6 +647,7 @@ let rec map_weak_vars ~f (mono : mono) =
   | Weak m -> Option.value (f m) ~default:mono
   | TyVar _ -> mono
   | Lambda (a, b, c) -> Lambda (map_weak_vars ~f a, map_weak_vars ~f b, c)
+  | Function (a, b) -> Function (map_weak_vars ~f a, map_weak_vars ~f b)
   | Tuple l -> Tuple (List.map l ~f:(map_weak_vars ~f))
   | Reference x -> Reference (map_weak_vars ~f x)
   | Named type_proof -> Named (map_weak_type_proof ~f type_proof)
@@ -1661,8 +1666,9 @@ let gen_var var ~(add_var : add_var_t) ~pop_var =
 
 let is_plain_function mono =
   match%map.State.Result reach_end_mono mono with
-  | Lambda (_, _, b) -> b
-  | Weak _ | TyVar _ | Tuple _ | Reference _ | Named _ -> false
+  | Function (_, _) -> true
+  | Weak _ | TyVar _ | Tuple _ | Reference _ | Named _ | Lambda (_, _, _) ->
+    false
 ;;
 
 let rec check_closure_acc
@@ -1684,9 +1690,9 @@ let rec check_closure_acc
       is_plain_function @@ get_mono_from_poly_without_gen poly
     in
     if obs_abstraction_level < abstraction_level && not is_function
-    then binding_id :: closed_vars
+    then Binding_id.Set.add closed_vars binding_id
     else closed_vars
-  | Closure (_, _, l) -> return @@ closed_vars @ l
+  | Closure (_, _, l) -> return @@ Binding_id.Set.merge closed_vars l
   | Typed_ast.(Node (Wrapped e)) ->
     let e, _ = Qualified.inner e in
     check_closure_acc e ~abstraction_level ~closed_vars
