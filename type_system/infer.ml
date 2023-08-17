@@ -275,7 +275,7 @@ let merge_variance_map_list =
 (*       List.fold l ~init:Lowercase.Map.empty ~f:(fun acc mono -> *)
 (*           merge_variance_maps acc (calculate_variance mono)) *)
 (*   | Reference mono -> calculate_variance mono *)
-(*   | Lambda (l, r) -> *)
+(*   | Closure (l, r) -> *)
 (*       let left = *)
 (*         match l with *)
 (*         | TyVar x -> Lowercase.Map.singleton x Variance.Contravariant *)
@@ -477,7 +477,7 @@ and show_mono mono =
     let%bind a = show_mono a in
     let%map b = show_mono b in
     a ^ " -> " ^ b
-  | Lambda (a, b, binding_set) ->
+  | Closure (a, b, binding_set) ->
     let%bind list =
       Binding_id.Set.fold binding_set ~init:(return []) ~f:(fun acc id ->
         let%bind acc = acc in
@@ -589,7 +589,7 @@ let rec map_ty_vars ~f (mono : mono) =
   match mono with
   | TyVar m -> Option.value (f m) ~default:mono
   | Weak _ -> mono
-  | Lambda (a, b, c) -> Lambda (map_ty_vars ~f a, map_ty_vars ~f b, c)
+  | Closure (a, b, c) -> Closure (map_ty_vars ~f a, map_ty_vars ~f b, c)
   | Function (a, b) -> Function (map_ty_vars ~f a, map_ty_vars ~f b)
   | Tuple l -> Tuple (List.map l ~f:(map_ty_vars ~f))
   | Named type_proof -> Named (map_type_proof ~f type_proof)
@@ -608,10 +608,10 @@ let rec map_ty_vars_m ~f (mono : mono) =
   match mono with
   | TyVar m -> f m
   | Weak _ -> return mono
-  | Lambda (a, b, c) ->
+  | Closure (a, b, c) ->
     let%bind a = map_ty_vars_m ~f a in
     let%map b = map_ty_vars_m ~f b in
-    Lambda (a, b, c)
+    Closure (a, b, c)
   | Function (a, b) ->
     let%bind a = map_ty_vars_m ~f a in
     let%map b = map_ty_vars_m ~f b in
@@ -646,7 +646,7 @@ let rec map_weak_vars ~f (mono : mono) =
   match mono with
   | Weak m -> Option.value (f m) ~default:mono
   | TyVar _ -> mono
-  | Lambda (a, b, c) -> Lambda (map_weak_vars ~f a, map_weak_vars ~f b, c)
+  | Closure (a, b, c) -> Closure (map_weak_vars ~f a, map_weak_vars ~f b, c)
   | Function (a, b) -> Function (map_weak_vars ~f a, map_weak_vars ~f b)
   | Tuple l -> Tuple (List.map l ~f:(map_weak_vars ~f))
   | Reference x -> Reference (map_weak_vars ~f x)
@@ -1275,7 +1275,10 @@ let rec unify mono1 mono2 =
     let%bind () = occurs_check x mono1 in
     State.map (union mono1 mono2) ~f:Result.return
   | Reference x, Reference y -> unify x y
-  | Lambda (x1, x2, _), Lambda (y1, y2, _) ->
+  | Function (x1, x2), Function (y1, y2) ->
+    let%bind () = unify x1 y1 in
+    unify x2 y2
+  | Closure (x1, x2, _), Closure (y1, y2, _) ->
     let%bind () = unify x1 y1 in
     unify x2 y2
   | Tuple l1, Tuple l2 -> unify_lists ~unification_error l1 l2
@@ -1331,7 +1334,7 @@ let rec unify_less_general mono1 mono2 =
     let%bind () = occurs_check x mono1 in
     State.map (union mono1 mono2) ~f:Result.return
   | Reference x, Reference y -> unify_less_general x y
-  | Lambda (x1, x2, _), Lambda (y1, y2, _) ->
+  | Closure (x1, x2, _), Closure (y1, y2, _) ->
     let%bind () = unify_less_general x1 y1 in
     unify_less_general x2 y2
   | Tuple l1, Tuple l2 -> unify_less_general_lists ~unification_error l1 l2
@@ -1667,83 +1670,8 @@ let gen_var var ~(add_var : add_var_t) ~pop_var =
 let is_plain_function mono =
   match%map.State.Result reach_end_mono mono with
   | Function (_, _) -> true
-  | Weak _ | TyVar _ | Tuple _ | Reference _ | Named _ | Lambda (_, _, _) ->
+  | Weak _ | TyVar _ | Tuple _ | Reference _ | Named _ | Closure (_, _, _) ->
     false
-;;
-
-let rec check_closure_acc
-  (expr : Typed_ast.expr_inner)
-  ~abstraction_level
-  ~closed_vars
-  =
-  let open State.Result.Let_syntax in
-  let%bind state = State.Result.get in
-  match expr with
-  | Typed_ast.(Node (Var (_, binding_id))) ->
-    let%bind { abstraction_level = obs_abstraction_level; poly; _ } =
-      match Int.Map.find state.binding_map binding_id with
-      | Some x -> return x
-      | None ->
-        State.Result.error [%message "Binding not found" (binding_id : int)]
-    in
-    let%map is_function =
-      is_plain_function @@ get_mono_from_poly_without_gen poly
-    in
-    if obs_abstraction_level < abstraction_level && not is_function
-    then Binding_id.Set.add closed_vars binding_id
-    else closed_vars
-  | Closure (_, _, l) -> return @@ Binding_id.Set.merge closed_vars l
-  | Typed_ast.(Node (Wrapped e)) ->
-    let e, _ = Qualified.inner e in
-    check_closure_acc e ~abstraction_level ~closed_vars
-  | Typed_ast.(Node _) -> return closed_vars
-  | Typed_ast.If ((a, _), (b, _), (c, _)) ->
-    let%bind closed_vars =
-      check_closure_acc a ~abstraction_level ~closed_vars
-    in
-    let%bind closed_vars =
-      check_closure_acc b ~abstraction_level ~closed_vars
-    in
-    check_closure_acc c ~abstraction_level ~closed_vars
-  | Typed_ast.Lambda (_, (b, _)) ->
-    check_closure_acc b ~abstraction_level:(abstraction_level + 1) ~closed_vars
-  | Typed_ast.App ((a, _), (b, _)) ->
-    let%bind closed_vars =
-      check_closure_acc a ~abstraction_level ~closed_vars
-    in
-    check_closure_acc b ~abstraction_level ~closed_vars
-  | Typed_ast.(Let_in (Nonrec (_, (a, _)), (b, _))) ->
-    let%bind closed_vars =
-      check_closure_acc a ~abstraction_level ~closed_vars
-    in
-    check_closure_acc b ~abstraction_level ~closed_vars
-  | Typed_ast.(Let_in (Rec l, (b, _))) ->
-    let%bind closed_vars =
-      List.fold l ~init:(return closed_vars) ~f:(fun acc (_, (a, _)) ->
-        let%bind closed_vars = acc in
-        check_closure_acc a ~abstraction_level ~closed_vars)
-    in
-    check_closure_acc b ~abstraction_level ~closed_vars
-  | Typed_ast.Ref (a, _) -> check_closure_acc a ~abstraction_level ~closed_vars
-  | Typed_ast.Deref (a, _) ->
-    check_closure_acc a ~abstraction_level ~closed_vars
-  | Typed_ast.Field_access (_, _) -> return closed_vars
-  | Typed_ast.Field_set (_, _, (a, _)) ->
-    check_closure_acc a ~abstraction_level ~closed_vars
-  | Typed_ast.Match ((a, _), cases) ->
-    let%bind closed_vars =
-      check_closure_acc a ~abstraction_level ~closed_vars
-    in
-    List.fold
-      cases
-      ~init:(State.Result.return closed_vars)
-      ~f:(fun acc (_, (a, _)) ->
-      let%bind closed_vars = acc in
-      check_closure_acc a ~abstraction_level ~closed_vars)
-;;
-
-let check_closure (expr : Typed_ast.expr_inner) ~abstraction_level =
-  check_closure_acc expr ~abstraction_level ~closed_vars:[]
 ;;
 
 let rec type_node node =
@@ -2117,13 +2045,8 @@ and type_expr expr =
     let%bind ((_, func_mono) as func_expr) = type_expr func in
     let%bind ((_, arg_mono) as arg_expr) = type_expr arg in
     let%bind res_mono = gen_ty_var in
-    let%bind () = unify func_mono (Lambda (arg_mono, res_mono, false)) in
+    let%bind () = unify func_mono (Function (arg_mono, res_mono)) in
     let%bind res_mono = apply_substs res_mono in
-    let res_mono =
-      match res_mono with
-      | Lambda (a, b, true) -> Lambda (a, b, false)
-      | _ -> res_mono
-    in
     (Typed_ast.App (func_expr, arg_expr), res_mono) |> substitute
   | Typed (expr, ty) ->
     let%bind expr_inner, mono = type_expr expr in
@@ -2196,17 +2119,16 @@ and type_expr expr =
         ~pop_var:pop_local_var
     in
     let%bind var = apply_substs var in
-    let%bind abstraction_level = get_abstraction_level in
-    let%bind closed_vars = check_closure res_inner ~abstraction_level in
+    let%bind closed_vars = return Binding_id.Set.empty in
     let%bind () = decr_abstraction_level in
     let%map res_mono = apply_substs res_mono in
-    (match closed_vars with
-     | [] ->
+    (match Binding_id.Set.is_empty closed_vars with
+     | true ->
        ( Typed_ast.Lambda (binding, (res_inner, res_mono))
-       , Lambda (var, res_mono, true) )
-     | _ ->
-       ( Typed_ast.Closure (binding, (res_inner, res_mono), closed_vars)
-       , Lambda (var, res_mono, true) ))
+       , Function (var, res_mono) )
+     | false ->
+       ( Typed_ast.Lambda (binding, (res_inner, res_mono))
+       , Closure (var, res_mono, closed_vars) ))
 ;;
 
 let type_let_def (let_def : Ast.let_def) =
@@ -2448,8 +2370,10 @@ and type_toplevel_list (l : Ast.t) =
 let rec replace_type_name ~type_name (mono : mono) =
   match mono with
   | TyVar _ | Weak _ -> mono
-  | Lambda (a, b, c) ->
-    Lambda (replace_type_name ~type_name a, replace_type_name ~type_name b, c)
+  | Function (a, b) ->
+    Function (replace_type_name ~type_name a, replace_type_name ~type_name b)
+  | Closure (a, b, c) ->
+    Closure (replace_type_name ~type_name a, replace_type_name ~type_name b, c)
   | Tuple l -> Tuple (List.map l ~f:(replace_type_name ~type_name))
   | Reference x -> Reference (replace_type_name ~type_name x)
   | Named type_proof -> Named (replace_type_name_proof ~type_name type_proof)
@@ -2470,7 +2394,7 @@ let rec show_mono_def (mono : mono) =
         | None -> show_mono mono))
   | Weak s -> return [%string "weak %{s}"]
   | TyVar s -> return s
-  | Lambda _ | Tuple _ | Reference _ -> show_mono mono
+  | Closure _ | Function _ | Tuple _ | Reference _ -> show_mono mono
 
 and show_user_type (user_type : user_type) =
   let open State.Result.Let_syntax in

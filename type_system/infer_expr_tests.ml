@@ -253,7 +253,7 @@ let%expect_test "last_list_record_occurs" =
   [%expect
     {|
       (error
-       ("occurs check failed" (a a0) (mono (Lambda (TyVar a0) (TyVar g0) false)))) |}]
+       ("occurs check failed" (a a0) (mono (Function (TyVar a0) (TyVar g0))))) |}]
 ;;
 
 let%expect_test "head nonempty list" =

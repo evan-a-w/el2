@@ -50,7 +50,7 @@ and mono =
   (* keep track of the path and arg for equality *)
   | TyVar of Lowercase.t
   | Function of mono * mono
-  | Lambda of mono * mono * Binding_id.Set.t
+  | Closure of mono * mono * Binding_id.Set.t
   | Tuple of mono list
   | Reference of mono
   | Named of type_proof
