@@ -507,10 +507,10 @@ and show_mono mono =
         let s = [%string "%{name} : %{s}"] in
         s :: acc)
     in
-    let list = List.to_string list ~f:Fn.id in
+    let list = "{" ^ String.concat ~sep:";" list ^ "}" in
     let%bind a = show_mono a in
     let%map b = show_mono b in
-    a ^ [%string " %{list}=> "] ^ b
+    a ^ [%string " -%{list}> "] ^ b
   | Tuple l ->
     let%map shown = List.map ~f:show_mono l |> State.Result.all in
     "(" ^ String.concat ~sep:", " shown ^ ")"
@@ -2359,7 +2359,7 @@ and type_expr expr =
     in
     Typed_ast.(Match (expr1, cases)), mono
   | Lambda (binding, body) ->
-    let already_bound = already_bound body in
+    let%bind closed_vars = already_bound body in
     let%bind var = gen_ty_var in
     let%bind () = incr_abstraction_level in
     let%bind binding, (res_inner, res_mono) =
@@ -2373,7 +2373,6 @@ and type_expr expr =
         ~pop_var:pop_local_var
     in
     let%bind var = apply_substs var in
-    let%bind closed_vars = return Binding_id.Map.empty in
     let%bind () = decr_abstraction_level in
     let%map res_mono = apply_substs res_mono in
     (match Binding_id.Map.is_empty closed_vars with
