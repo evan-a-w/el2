@@ -237,8 +237,8 @@ let%expect_test "type_def_record" =
          ((a
            (Named
             ((type_name int) (absolute_type_name (Unqualified int)) (ordering ())
-             (tyvar_map ()) (type_id 173207638))))))
-        (type_id 156654405))))) |}]
+             (tyvar_map ()) (type_id 173207638) (mem_rep (Closed Bits32)))))))
+        (type_id 156654405) (mem_rep (Any 0)))))) |}]
 ;;
 
 let%expect_test "last_list_record_occurs" =
@@ -253,7 +253,8 @@ let%expect_test "last_list_record_occurs" =
   [%expect
     {|
       (error
-       ("occurs check failed" (a a0) (mono (Function (TyVar a0) (TyVar g0))))) |}]
+       ("occurs check failed" (a a0)
+        (mono (Function (TyVar a0 (Any a0)) (TyVar g0 (Any g0)))))) |}]
 ;;
 
 let%expect_test "head nonempty list" =
