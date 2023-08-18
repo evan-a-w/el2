@@ -46,11 +46,12 @@ and binding_id = Binding_id.t [@@deriving sexp, equal, hash, compare]
 
 and mono =
   (* name and type args *)
-  | Weak of Lowercase.t
+  | Weak of Lowercase.t * Mem_rep.abstract
   (* keep track of the path and arg for equality *)
-  | TyVar of Lowercase.t
+  | TyVar of Lowercase.t * Mem_rep.abstract
   | Function of mono * mono
-  | Closure of mono * mono * Binding_id.Set.t
+  (* closures unify with all closures that have an equivalent mem rep and input/return type *)
+  | Closure of mono * mono * Mem_rep.abstract Binding_id.Map.t
   | Tuple of mono list
   | Reference of mono
   | Named of type_proof
@@ -63,7 +64,7 @@ and enum_type = (Uppercase.t * mono option) list
 [@@deriving sexp, equal, hash, compare]
 
 and user_type =
-  | Abstract
+  | Abstract of Mem_rep.abstract
   | Record of record_type
   | Enum of enum_type
   | User_mono of mono
@@ -108,17 +109,17 @@ let make_type_proof (s : Lowercase.t) =
   }
 ;;
 
-let int_type = make_type_proof "int"
-let float_type = make_type_proof "float"
-let bool_type = make_type_proof "bool"
-let unit_type = make_type_proof "unit"
-let string_type = make_type_proof "string"
-let char_type = make_type_proof "char"
+let int_type = make_type_proof "int", Mem_rep.Bits32
+let float_type = make_type_proof "float", Mem_rep.Bits64
+let bool_type = make_type_proof "bool", Mem_rep.Bits8
+let unit_type = make_type_proof "unit", Mem_rep.Bits0
+let string_type = make_type_proof "string", Mem_rep.Reg
+let char_type = make_type_proof "char", Mem_rep.Bits8
 
 let base_type_map =
   List.map
     [ int_type; float_type; bool_type; unit_type; string_type; char_type ]
-    ~f:(fun t -> t.type_id, (None, Abstract, t))
+    ~f:(fun (t, rep) -> t.type_id, (None, Abstract (Closed rep), t))
   |> Int.Map.of_alist_exn
 ;;
 
@@ -130,7 +131,7 @@ let base_module_bindings empty_data =
   ; toplevel_type_constructors =
       List.map
         [ int_type; float_type; bool_type; unit_type; string_type; char_type ]
-        ~f:(fun t -> t.type_name, t.type_id)
+        ~f:(fun (t, _) -> t.type_name, t.type_id)
       |> Lowercase.Map.of_alist_exn
   ; toplevel_modules = Uppercase.Map.empty
   ; opened_modules = []

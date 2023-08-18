@@ -12,7 +12,10 @@ module Literal = struct
     | Char of char
   [@@deriving sexp, equal, hash, compare]
 
-  let type_proof_of_t = function
+  let type_proof_of_t x =
+    fst
+    @@
+    match x with
     | Unit -> Ty.unit_type
     | Int _ -> Ty.int_type
     | Bool _ -> Ty.bool_type
