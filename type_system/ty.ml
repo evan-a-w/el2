@@ -52,7 +52,7 @@ and mono =
   | TyVar of Lowercase.t * Mem_rep.abstract
   | Function of mono * mono
   (* closures unify with all closures that have an equivalent mem rep and input/return type *)
-  | Closure of mono * mono * (Lowercase.t * Mem_rep.abstract) Binding_id.Map.t
+  | Closure of mono * mono * (Lowercase.t * mono) Binding_id.Map.t
   | Tuple of mono list
   | Reference of mono
   | Named of type_proof
@@ -78,7 +78,7 @@ let rec mem_rep_of_mono = function
   | Closure (_, _, rep) ->
     let list =
       Binding_id.Map.to_alist rep
-      |> List.map ~f:(fun (a, (f, m)) -> f ^ Int.to_string a, m)
+      |> List.map ~f:(fun (a, (f, m)) -> f ^ Int.to_string a, mem_rep_of_mono m)
     in
     Closed (`Native_struct list)
   | Tuple l ->
