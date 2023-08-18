@@ -137,3 +137,5 @@ let rec inner = function
   | Unqualified x -> x
   | Qualified (_, x) -> inner x
 ;;
+
+let iter t ~f : unit = f (inner t)

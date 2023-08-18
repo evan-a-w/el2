@@ -167,6 +167,20 @@ module Binding = struct
   module Table = Map.Make (T)
   include T
 
+  let rec iter_names (t : t) ~f =
+    match t with
+    | Name s -> f s
+    | Constructor (_, None) | Literal _ -> ()
+    | Constructor (_, Some t) -> iter_names t ~f
+    | Record r -> Qualified.iter ~f:(Lowercase.Map.iter ~f:(iter_names ~f)) r
+    | Tuple l -> Qualified.iter ~f:(List.iter ~f:(iter_names ~f)) l
+    | Typed (t, _) -> iter_names t ~f
+    | Renamed (t, s) ->
+      iter_names t ~f;
+      f s
+    | Pointer t -> iter_names t ~f
+  ;;
+
   let rec pprint_t =
     let open PPrint in
     function

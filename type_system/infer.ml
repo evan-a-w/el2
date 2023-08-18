@@ -549,6 +549,14 @@ let show_mono_ufds (mono_ufds : Mono_ufds.t) =
   [%message (alist : (string * string) list)]
 ;;
 
+let lookup_local_var name =
+  let open State.Result.Let_syntax in
+  let%map state = State.Result.get in
+  match Lowercase.Map.find state.local_vars name with
+  | Some (x :: _) -> Some x
+  | _ -> None
+;;
+
 let lookup_var qualified_name : _ state_result_m =
   let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
@@ -1835,6 +1843,90 @@ let check_closure (expr : Typed_ast.expr_inner) ~abstraction_level =
   check_closure_acc expr ~abstraction_level ~closed_vars:Binding_id.Map.empty
 ;;
 
+let rec already_bound
+  ?(acc = Binding_id.Map.empty)
+  ?(shadowed = Lowercase.Set.empty)
+  (expr : Ast.expr)
+  =
+  let open State.Result.Let_syntax in
+  match expr with
+  | Ast.Node n -> already_bound_node ~acc ~shadowed n
+  | Ast.If (a, b, c) ->
+    let%bind acc = already_bound ~acc ~shadowed a in
+    let%bind acc = already_bound ~acc ~shadowed b in
+    already_bound ~acc ~shadowed c
+  | Ast.Lambda (binding, expr) ->
+    let shadowed = add_shadowed ~shadowed ~binding in
+    already_bound ~acc ~shadowed expr
+  | Ast.App (a, b) ->
+    let%bind acc = already_bound ~acc ~shadowed a in
+    already_bound ~acc ~shadowed b
+  | Ast.Let_in (Nonrec (binding, expr1), expr2) ->
+    let%bind acc = already_bound ~acc ~shadowed expr1 in
+    let shadowed = add_shadowed ~shadowed ~binding in
+    already_bound ~acc ~shadowed expr2
+  | Ast.Let_in (Rec l, expr2) ->
+    let%bind shadowed =
+      List.fold l ~init:(return shadowed) ~f:(fun acc (binding, _) ->
+        let%map shadowed = acc in
+        add_shadowed ~shadowed ~binding)
+    in
+    let%bind acc =
+      List.fold l ~init:(return acc) ~f:(fun acc (_, expr) ->
+        let%bind acc = acc in
+        already_bound ~acc ~shadowed expr)
+    in
+    already_bound ~acc ~shadowed expr2
+  | Ast.Ref expr
+  | Ast.Typed (expr, _)
+  | Ast.Deref expr
+  | Ast.Field_access (expr, _) -> already_bound ~acc ~shadowed expr
+  | Ast.Field_set (expr1, _, expr2) ->
+    let%bind acc = already_bound ~acc ~shadowed expr1 in
+    already_bound ~acc ~shadowed expr2
+  | Ast.Match (expr, cases) ->
+    let%bind acc = already_bound ~acc ~shadowed expr in
+    List.fold
+      cases
+      ~init:(State.Result.return acc)
+      ~f:(fun acc (binding, expr) ->
+      let%bind acc = acc in
+      let shadowed = add_shadowed ~shadowed ~binding in
+      already_bound ~acc ~shadowed expr)
+
+and already_bound_node ~acc ~shadowed (node : Ast.node) =
+  let open State.Result.Let_syntax in
+  match node with
+  | Ast.Var (Qualified.Unqualified s) ->
+    let is_shadowed = Set.mem shadowed s in
+    (match%map lookup_local_var s with
+     | Some (poly, binding_id) when not is_shadowed ->
+       Binding_id.Map.set
+         acc
+         ~key:binding_id
+         ~data:(s, mono_of_poly_no_inst poly)
+     | _ -> acc)
+  | Ast.Var _ | Ast.Literal _ | Ast.Constructor _ -> return acc
+  | Ast.Tuple l ->
+    let l = Qualified.inner l in
+    List.fold l ~init:(return acc) ~f:(fun acc expr ->
+      let%bind acc = acc in
+      already_bound ~acc ~shadowed expr)
+  | Ast.Record r ->
+    let r = Qualified.inner r in
+    Lowercase.Map.fold r ~init:(return acc) ~f:(fun ~key:_ ~data:expr acc ->
+      let%bind acc = acc in
+      already_bound ~acc ~shadowed expr)
+  | Ast.Wrapped e ->
+    let e = Qualified.inner e in
+    already_bound ~acc ~shadowed e
+
+and add_shadowed ~shadowed ~binding =
+  let res = ref shadowed in
+  Ast.Binding.iter_names ~f:(fun name -> res := Set.add !res name) binding;
+  !res
+;;
+
 let rec type_node node =
   let open State.Result.Let_syntax in
   match node with
@@ -2267,7 +2359,7 @@ and type_expr expr =
     in
     Typed_ast.(Match (expr1, cases)), mono
   | Lambda (binding, body) ->
-    (* let already_bound = already_bound body in *)
+    let already_bound = already_bound body in
     let%bind var = gen_ty_var in
     let%bind () = incr_abstraction_level in
     let%bind binding, (res_inner, res_mono) =
