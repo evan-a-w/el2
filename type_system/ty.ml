@@ -52,7 +52,7 @@ and mono =
   | TyVar of Lowercase.t * Mem_rep.abstract
   | Function of mono * mono
   (* closures unify with all closures that have an equivalent mem rep and input/return type *)
-  | Closure of mono * mono * (Lowercase.t * mono) Binding_id.Map.t
+  | Closure of mono * mono * Binding_id.Set.t
   | Tuple of mono list
   | Reference of mono
   | Named of type_proof
@@ -70,38 +70,6 @@ and user_type =
   | Enum of enum_type
   | User_mono of mono
 [@@deriving sexp, equal, hash, compare]
-
-let rec mem_rep_of_mono = function
-  | Weak (_, rep) -> rep
-  | TyVar (_, rep) -> rep
-  | Function _ -> Closed `Reg
-  | Closure (_, _, rep) ->
-    let list =
-      Binding_id.Map.to_alist rep
-      |> List.map ~f:(fun (a, (f, m)) -> f ^ Int.to_string a, mem_rep_of_mono m)
-    in
-    Closed (`Native_struct list)
-  | Tuple l ->
-    let list =
-      List.mapi l ~f:(fun i x -> [%string "_%{i#Int}"], mem_rep_of_mono x)
-    in
-    Closed (`Native_struct list)
-  | Reference m -> Closed (`Pointer (mem_rep_of_mono m))
-  | Named t -> t.mem_rep
-
-and mem_rep_of_user_type = function
-  | Abstract x -> x
-  | Record l ->
-    let list = List.map l ~f:(fun (a, (m, _)) -> a, mem_rep_of_mono m) in
-    Closed (`Native_struct list)
-  | Enum l ->
-    let list =
-      List.map l ~f:(fun (_, m) ->
-        Option.value_map m ~default:(Mem_rep.Closed `Bits0) ~f:mem_rep_of_mono)
-    in
-    Closed (`Union list)
-  | User_mono m -> mem_rep_of_mono m
-;;
 
 type poly =
   | Mono of mono

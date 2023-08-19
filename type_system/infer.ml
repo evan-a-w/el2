@@ -29,7 +29,7 @@ type state =
   ; symbol_n : int
   ; abstraction_level : int
   ; binding_id_n : int
-  ; binding_map : binding_state Int.Map.t
+  ; binding_map : binding_state Binding_id.Map.t
   ; type_map : type_constructor Int.Map.t
   }
 [@@deriving sexp, equal, compare, fields]
@@ -47,7 +47,7 @@ let on_mem_rep_ufds ~(f : ('a, Sexp.t, Mem_rep.Abstract_ufds.t) State.Result.t) 
 
 let lookup_binding_id binding_id =
   let%bind.State.Result state = State.Result.get in
-  match Int.Map.find state.binding_map binding_id with
+  match Binding_id.Map.find state.binding_map binding_id with
   | Some x -> State.Result.return x
   | None -> State.Result.error [%message "Binding not found" (binding_id : int)]
 ;;
@@ -170,7 +170,7 @@ let empty_state =
   ; binding_id_n = 0
   ; local_vars = Lowercase.Map.empty
   ; type_map = base_type_map
-  ; binding_map = Int.Map.empty
+  ; binding_map = Binding_id.Map.empty
   ; abstraction_level = 0
   }
 ;;
@@ -211,7 +211,7 @@ let add_module_var ?binding_id name poly =
     { state.current_module_binding with toplevel_vars }
   in
   let binding_map =
-    Int.Map.set
+    Binding_id.Map.set
       state.binding_map
       ~key:binding_id
       ~data:{ abstraction_level = state.abstraction_level; poly; name }
@@ -231,7 +231,7 @@ let add_local_var ?binding_id name poly =
     Lowercase.Map.add_multi state.local_vars ~key:name ~data:(poly, binding_id)
   in
   let binding_map =
-    Int.Map.set
+    Binding_id.Map.set
       state.binding_map
       ~key:binding_id
       ~data:{ abstraction_level = state.abstraction_level; poly; name }
@@ -496,10 +496,7 @@ and show_mono mono =
     a ^ " -> " ^ b
   | Closure (a, b, binding_map) ->
     let%bind list =
-      Binding_id.Map.fold
-        binding_map
-        ~init:(return [])
-        ~f:(fun ~key:id ~data:_ acc ->
+      Binding_id.Set.fold binding_map ~init:(return []) ~f:(fun acc id ->
         let%bind acc = acc in
         let%bind { name; poly; _ } = lookup_binding_id id in
         let mono = get_mono_from_poly_without_gen poly in
@@ -1611,7 +1608,6 @@ let apply_substs mono =
   let%map.State state = State.get in
   let mono =
     map_ty_vars mono ~f:(fun (a, b) ->
-      (* let b, _ = Mem_rep.Abstract_ufds.find state.mem_rep_ufds b in *)
       let mono, _ = Mono_ufds.find state.mono_ufds (TyVar (a, b)) in
       Some mono)
   in
@@ -1771,76 +1767,38 @@ let is_plain_function mono =
     false
 ;;
 
-let rec check_closure_acc
-  (expr : Typed_ast.expr_inner)
-  ~abstraction_level
-  ~closed_vars
-  =
+let rec mem_rep_of_mono =
   let open State.Result.Let_syntax in
-  let%bind state = State.Result.get in
-  match expr with
-  | Typed_ast.(Node (Var (_, binding_id))) ->
-    let%map { abstraction_level = obs_abstraction_level; poly; name; _ } =
-      match Int.Map.find state.binding_map binding_id with
-      | Some x -> return x
-      | None ->
-        State.Result.error [%message "Binding not found" (binding_id : int)]
+  function
+  | Weak (_, rep) -> rep
+  | TyVar (_, rep) -> rep
+  | Function _ -> Closed `Reg
+  | Closure (_, _, rep) ->
+    let list =
+      Binding_id.Map.to_alist rep
+      |> List.map ~f:(fun (a, (f, m)) -> f ^ Int.to_string a, mem_rep_of_mono m)
     in
-    let mono = mono_of_poly_no_inst poly in
-    if obs_abstraction_level < abstraction_level
-    then Binding_id.Map.add_exn closed_vars ~key:binding_id ~data:(name, mono)
-    else closed_vars
-  | Typed_ast.(Node (Wrapped e)) ->
-    let e, _ = Qualified.inner e in
-    check_closure_acc e ~abstraction_level ~closed_vars
-  | Typed_ast.(Node _) -> return closed_vars
-  | Typed_ast.If ((a, _), (b, _), (c, _)) ->
-    let%bind closed_vars =
-      check_closure_acc a ~abstraction_level ~closed_vars
+    Closed (`Native_struct list)
+  | Tuple l ->
+    let list =
+      List.mapi l ~f:(fun i x -> [%string "_%{i#Int}"], mem_rep_of_mono x)
     in
-    let%bind closed_vars =
-      check_closure_acc b ~abstraction_level ~closed_vars
-    in
-    check_closure_acc c ~abstraction_level ~closed_vars
-  | Typed_ast.Lambda (_, (b, _)) ->
-    check_closure_acc b ~abstraction_level:(abstraction_level + 1) ~closed_vars
-  | Typed_ast.App ((a, _), (b, _)) ->
-    let%bind closed_vars =
-      check_closure_acc a ~abstraction_level ~closed_vars
-    in
-    check_closure_acc b ~abstraction_level ~closed_vars
-  | Typed_ast.(Let_in (Nonrec (_, (a, _)), (b, _))) ->
-    let%bind closed_vars =
-      check_closure_acc a ~abstraction_level ~closed_vars
-    in
-    check_closure_acc b ~abstraction_level ~closed_vars
-  | Typed_ast.(Let_in (Rec l, (b, _))) ->
-    let%bind closed_vars =
-      List.fold l ~init:(return closed_vars) ~f:(fun acc (_, (a, _)) ->
-        let%bind closed_vars = acc in
-        check_closure_acc a ~abstraction_level ~closed_vars)
-    in
-    check_closure_acc b ~abstraction_level ~closed_vars
-  | Typed_ast.Ref (a, _) -> check_closure_acc a ~abstraction_level ~closed_vars
-  | Typed_ast.Deref (a, _) ->
-    check_closure_acc a ~abstraction_level ~closed_vars
-  | Typed_ast.Field_access (_, _) -> return closed_vars
-  | Typed_ast.Field_set (_, _, (a, _)) ->
-    check_closure_acc a ~abstraction_level ~closed_vars
-  | Typed_ast.Match ((a, _), cases) ->
-    let%bind closed_vars =
-      check_closure_acc a ~abstraction_level ~closed_vars
-    in
-    List.fold
-      cases
-      ~init:(State.Result.return closed_vars)
-      ~f:(fun acc (_, (a, _)) ->
-      let%bind closed_vars = acc in
-      check_closure_acc a ~abstraction_level ~closed_vars)
-;;
+    Closed (`Native_struct list)
+  | Reference m -> Closed (`Pointer (mem_rep_of_mono m))
+  | Named t -> t.mem_rep
 
-let check_closure (expr : Typed_ast.expr_inner) ~abstraction_level =
-  check_closure_acc expr ~abstraction_level ~closed_vars:Binding_id.Map.empty
+and mem_rep_of_user_type = function
+  | Abstract x -> x
+  | Record l ->
+    let list = List.map l ~f:(fun (a, (m, _)) -> a, mem_rep_of_mono m) in
+    Closed (`Native_struct list)
+  | Enum l ->
+    let list =
+      List.map l ~f:(fun (_, m) ->
+        Option.value_map m ~default:(Mem_rep.Closed `Bits0) ~f:mem_rep_of_mono)
+    in
+    Closed (`Union list)
+  | User_mono m -> mem_rep_of_mono m
 ;;
 
 let rec already_bound
@@ -1900,11 +1858,7 @@ and already_bound_node ~acc ~shadowed (node : Ast.node) =
   | Ast.Var (Qualified.Unqualified s) ->
     let is_shadowed = Set.mem shadowed s in
     (match%map lookup_local_var s with
-     | Some (poly, binding_id) when not is_shadowed ->
-       Binding_id.Map.set
-         acc
-         ~key:binding_id
-         ~data:(s, mono_of_poly_no_inst poly)
+     | Some _ when not is_shadowed -> Binding_id.Set.add acc binding_id
      | _ -> acc)
   | Ast.Var _ | Ast.Literal _ | Ast.Constructor _ -> return acc
   | Ast.Tuple l ->
@@ -2298,8 +2252,28 @@ and type_expr expr =
     let%bind ((_, func_mono) as func_expr) = type_expr func in
     let%bind ((_, arg_mono) as arg_expr) = type_expr arg in
     let%bind res_mono = gen_ty_var in
-    let%bind () = unify func_mono (Function (arg_mono, res_mono)) in
-    let%bind res_mono = apply_substs res_mono in
+    let%bind state = State.Result.get in
+    let non_closed () =
+      let%bind () = unify func_mono (Function (arg_mono, res_mono)) in
+      apply_substs res_mono
+    in
+    let closed () =
+      match func_mono with
+      | Closure (a, b, _) ->
+        let%bind () = unify a arg_mono in
+        let%bind () = unify b res_mono in
+        apply_substs res_mono
+      | _ -> State.Result.error [%sexp 1]
+    in
+    let%bind res_mono =
+      match%bind.State non_closed () with
+      | Ok res_mono -> return res_mono
+      | Error _ as err ->
+        let%bind () = State.Result.put state in
+        (match%map.State closed () with
+         | Ok _ as x -> x
+         | Error _ -> err)
+    in
     (Typed_ast.App (func_expr, arg_expr), res_mono) |> substitute
   | Typed (expr, ty) ->
     let%bind expr_inner, mono = type_expr expr in
@@ -2359,7 +2333,6 @@ and type_expr expr =
     in
     Typed_ast.(Match (expr1, cases)), mono
   | Lambda (binding, body) ->
-    let%bind closed_vars = already_bound body in
     let%bind var = gen_ty_var in
     let%bind () = incr_abstraction_level in
     let%bind binding, (res_inner, res_mono) =
@@ -2374,6 +2347,7 @@ and type_expr expr =
     in
     let%bind var = apply_substs var in
     let%bind () = decr_abstraction_level in
+    let%bind closed_vars = already_bound body in
     let%map res_mono = apply_substs res_mono in
     (match Binding_id.Map.is_empty closed_vars with
      | true ->
