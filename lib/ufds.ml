@@ -1,8 +1,8 @@
 open! Core
 
 module Make (Arg : sig
-  type t [@@deriving sexp, equal, compare]
-end) =
+    type t [@@deriving sexp, equal, compare]
+  end) =
 struct
   module Map = Map.Make (Arg)
 
@@ -11,17 +11,17 @@ struct
   let empty = Map.empty
 
   let add t mono =
-    match Map.add t ~key:mono ~data:mono with
+    match Core.Map.add t ~key:mono ~data:mono with
     | `Duplicate -> t
     | `Ok t -> t
   ;;
 
   let rec find t mono : Arg.t * t =
-    match Map.find t mono with
+    match Core.Map.find t mono with
     | Some mono' when [%equal: Arg.t] mono mono' -> mono, t
     | Some mono' ->
       let data, t' = find t mono' in
-      let t' = Map.set t' ~key:mono' ~data in
+      let t' = Core.Map.set t' ~key:mono' ~data in
       data, t'
     | None ->
       let t = add t mono in
@@ -34,7 +34,7 @@ struct
     match [%equal: Arg.t] mono1 mono2 with
     | true -> t
     | false ->
-      let t = Map.set t ~key:mono2 ~data:mono1 in
+      let t = Core.Map.set t ~key:mono2 ~data:mono1 in
       t
   ;;
 end

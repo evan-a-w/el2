@@ -68,9 +68,9 @@ module Mode = struct
 end
 
 module Ast_tags = struct
-  type t = Token.t list Tag.Map.t [@@deriving sexp, compare, equal, hash]
+  type t = Token.t list Lowercase.Map.t [@@deriving sexp, compare, equal, hash]
 
-  let empty = Tag.Map.empty
+  let empty = Lowercase.Map.empty
 end
 
 module Value_tag = struct
@@ -90,7 +90,7 @@ module Value_tag = struct
       | None -> empty
       | Some t -> string " : " ^^ Type_expr.pprint_t t
     in
-    let tag_list = ast_tags t |> Tag.Map.to_alist in
+    let tag_list = ast_tags t |> Map.to_alist in
     let tag_list =
       match mode t with
       | None -> tag_list
@@ -138,10 +138,10 @@ end
 let pprint_record pprint_a map =
   let open PPrint in
   let lhs =
-    if Lowercase.Map.is_empty map
+    if Map.is_empty map
     then string "{}"
     else
-      Lowercase.Map.fold map ~init:empty ~f:(fun ~key ~data acc ->
+      Map.fold map ~init:empty ~f:(fun ~key ~data acc ->
         let curr =
           string key ^^ string " : " ^^ pprint_a data ^^ char ';' ^^ break 1
         in
@@ -172,7 +172,7 @@ module Binding = struct
     | Name s -> f s
     | Constructor (_, None) | Literal _ -> ()
     | Constructor (_, Some t) -> iter_names t ~f
-    | Record r -> Qualified.iter ~f:(Lowercase.Map.iter ~f:(iter_names ~f)) r
+    | Record r -> Qualified.iter ~f:(Map.iter ~f:(iter_names ~f)) r
     | Tuple l -> Qualified.iter ~f:(List.iter ~f:(iter_names ~f)) l
     | Typed (t, _) -> iter_names t ~f
     | Renamed (t, s) ->

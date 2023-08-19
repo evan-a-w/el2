@@ -51,7 +51,7 @@ module Make () = struct
         t
         : Ppx_hash_lib.Std.Hash.state
         =
-        Map.fold
+        Core.Map.fold
           ~init:hash_state
           ~f:(fun ~key ~data hash_state ->
             [%hash_fold: T.t * a] hash_state (key, data))

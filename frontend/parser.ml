@@ -187,7 +187,7 @@ let ast_tags_p : Ast.Ast_tags.t parser =
   in
   let tag =
     List.fold list ~init:Ast.Ast_tags.empty ~f:(fun acc (key, data) ->
-      Ast.Tag.Map.change acc key ~f:(fun _ -> Some data))
+      Map.change acc key ~f:(fun _ -> Some data))
   in
   return tag
 ;;
@@ -232,7 +232,7 @@ let tag_list_p : Ast.Value_tag.t parser =
       | `Type_expr type_expr -> { acc with type_expr = Some type_expr }
       | `Mode mode -> { acc with mode = Some mode }
       | `Other (key, data) ->
-        { acc with ast_tags = Ast.Tag.Map.add_exn acc.ast_tags ~key ~data })
+        { acc with ast_tags = Map.add_exn acc.ast_tags ~key ~data })
   in
   return tag
 ;;
@@ -726,7 +726,7 @@ let try_parse p string =
   let%bind tokens =
     Lexer.lex ~program:string
     |> Result.map_error ~f:(fun error ->
-         [%message "Failed to lex" (error : string)])
+      [%message "Failed to lex" (error : string)])
   in
   run p ~tokens |> fst
 ;;

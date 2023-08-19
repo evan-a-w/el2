@@ -106,12 +106,10 @@ let map_binding_inner_m ~f =
       Qualified.map_m
         x
         ~f:
-          (Lowercase.Map.fold
-             ~init:(return Lowercase.Map.empty)
-             ~f:(fun ~key ~data acc ->
+          (Map.fold ~init:(return Lowercase.Map.empty) ~f:(fun ~key ~data acc ->
              let%bind acc = acc in
              let%map data = f data in
-             Lowercase.Map.add_exn acc ~key ~data))
+             Map.add_exn acc ~key ~data))
     in
     Record_binding map
   | Tuple_binding x ->

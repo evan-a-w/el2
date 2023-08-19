@@ -82,17 +82,17 @@ module Size_class = struct
   module Map = struct
     include Map.Make (T)
 
-    let add_int t ~key ~data = add t ~key:(T.Size key) ~data
+    let add_int t ~key ~data = Map.add t ~key:(T.Size key) ~data
   end
 
   include T
 
   let max t1 t2 =
     match t1, t2 with
-    | Max l1, Max l2 -> Max (Size_class_set.union l1 l2)
+    | Max l1, Max l2 -> Max (Set.union l1 l2)
     | Size a, Size b -> Size (max a b)
     | Var a, Var b when Lowercase.equal a b -> Var a
-    | Max l, x | x, Max l -> Max (Size_class_set.add l x)
+    | Max l, x | x, Max l -> Max (Set.add l x)
     | _ -> Max (Size_class_set.of_list [ t1; t2 ])
   ;;
 end
