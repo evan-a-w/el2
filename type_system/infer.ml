@@ -491,7 +491,7 @@ and show_mono mono =
     a ^ " -> " ^ b
   | Closure (a, b, binding_map) ->
     let%bind list =
-      Set.fold binding_map ~init:(return []) ~f:(fun acc id ->
+      List.fold binding_map ~init:(return []) ~f:(fun acc id ->
         let%bind acc = acc in
         let%bind { name; poly; _ } = lookup_binding_id id in
         let mono = get_mono_from_poly_without_gen poly in
@@ -983,13 +983,12 @@ let rec mem_rep_of_mono : mono -> Mem_rep.abstract state_result_m =
   | Closure (_, _, rep) ->
     let%map list =
       State.Result.all
-        (Set.to_list rep
-         |> List.map ~f:(fun binding_id ->
-           let%bind { name; poly; _ } = lookup_binding_id binding_id in
-           let%bind mono = inst_result poly in
-           let%map m = mem_rep_of_mono mono in
-           let name = name ^ Int.to_string binding_id in
-           name, m))
+      @@ List.map rep ~f:(fun binding_id ->
+        let%bind { name; poly; _ } = lookup_binding_id binding_id in
+        let%bind mono = inst_result poly in
+        let%map m = mem_rep_of_mono mono in
+        let name = name ^ Int.to_string binding_id in
+        name, m)
     in
     Mem_rep.Closed (`Native_struct list)
   | Tuple l ->
@@ -1147,7 +1146,7 @@ let type_type_def
             "type definition has free type variables"
               (user_type : user_type)
               ~vars:
-                (Lowercase.Map.to_alist type_proof.tyvar_map |> List.map ~f:fst
+                (Map.to_alist type_proof.tyvar_map |> List.map ~f:fst
                   : Lowercase.t list)
               (type_name : Lowercase.t)]
     in
@@ -1164,7 +1163,7 @@ let type_type_def
     let ordering = ordering constructor_arg in
     let lhs_ty_vars =
       List.fold ordering ~init:Lowercase.Map.empty ~f:(fun acc key ->
-        Lowercase.Map.add_exn acc ~key ~data:(TyVar (key, Mem_rep.Any key)))
+        Map.add_exn acc ~key ~data:(TyVar (key, Mem_rep.Any key)))
     in
     let mem_rep = Mem_rep.Any "0" in
     let type_proof =
@@ -1190,10 +1189,8 @@ let type_type_def
         ~ordering:(Some ordering)
         type_def
     in
-    let rhs_ty_vars =
-      Lowercase.Map.key_set type_proof'.tyvar_map |> Obj.magic
-    in
-    let lhs_ty_vars = Lowercase.Map.key_set lhs_ty_vars |> Obj.magic in
+    let rhs_ty_vars = Map.key_set type_proof'.tyvar_map |> Obj.magic in
+    let lhs_ty_vars = Map.key_set lhs_ty_vars |> Obj.magic in
     let%map () =
       match Lowercase.Set.equal lhs_ty_vars rhs_ty_vars with
       | true ->
@@ -1237,19 +1234,19 @@ let normalize (poly : poly) =
 let inst_type_proof type_proof =
   let open State.Result.Let_syntax in
   let%map replacement_map =
-    Lowercase.Map.fold
+    Map.fold
       type_proof.tyvar_map
       ~init:(return Lowercase.Map.empty)
       ~f:(fun ~key ~data:_ acc ->
         let%bind acc = acc in
         let%map sym =
-          match Lowercase.Map.find acc key with
+          match Map.find acc key with
           | Some x -> return x
           | None ->
             let%map res = State.map gensym ~f:Result.return in
             TyVar (res, Mem_rep.Any res)
         in
-        Lowercase.Map.set acc ~key ~data:sym)
+        Map.set acc ~key ~data:sym)
   in
   replace_ty_vars_type_proof ~replacement_map type_proof
 ;;
@@ -1265,7 +1262,7 @@ let split_poly_list l =
   let set, monos =
     List.fold l ~init:(Lowercase.Set.empty, []) ~f:(fun (set, monos) poly ->
       let new_vars, mono = split_poly poly in
-      Lowercase.Set.union set new_vars, mono :: monos)
+      Set.union set new_vars, mono :: monos)
   in
   set, List.rev monos
 ;;
@@ -1274,7 +1271,7 @@ let inst_many poly_list =
   let open State.Let_syntax in
   let quantifiers, mono_list = split_poly_list poly_list in
   let%map replacement_map =
-    Lowercase.Set.to_list quantifiers
+    Set.to_list quantifiers
     |> List.map ~f:(fun var ->
       let%map sym = gensym in
       var, TyVar (sym, Mem_rep.Any sym))
@@ -1311,7 +1308,7 @@ let type_of_constructor constructor =
 let occurs_check a mono =
   let open State.Result.Let_syntax in
   let free_vars = free_ty_vars mono in
-  match Lowercase.Set.mem free_vars a with
+  match Set.mem free_vars a with
   | true ->
     State.Result.error
       [%message "occurs check failed" (a : Lowercase.t) (mono : mono)]
@@ -1357,10 +1354,16 @@ let unify_mem_rep m1 m2 =
   on_mem_rep_ufds ~f:(Mem_rep.unify m1 m2)
 ;;
 
+let lookup_and_inst_binding_poly binding_id =
+  let open State.Result.Let_syntax in
+  let%bind { poly; _ } = lookup_binding_id binding_id in
+  inst_result poly
+;;
+
 let rec unify_var cons mono1 x m mono2 =
   let open State.Result.Let_syntax in
   let%bind () = occurs_check x mono2 in
-  let mem_rep = mem_rep_of_mono mono2 in
+  let%bind mem_rep = mem_rep_of_mono mono2 in
   let%bind () = unify_mem_rep m mem_rep in
   let%bind state = State.Result.get in
   let m, _ = Mem_rep.Abstract_ufds.find state.mem_rep_ufds m in
@@ -1388,20 +1391,21 @@ and unify mono1 mono2 =
   | Closure (x1, x2, m1), Closure (y1, y2, m2) ->
     let%bind () = unify x1 y1 in
     let%bind () = unify x2 y2 in
-    let m =
-      Binding_id.Map.merge m1 m2 ~f:(fun ~key:_ -> function
-        | `Left x | `Right x ->
-          Some
-            (State.Result.error
-               [%message "closure mismatch" (x : Lowercase.t * mono)])
-        | `Both ((_, m1), (_, m2)) ->
-          let mem_rep1 = mem_rep_of_mono m1 in
-          let mem_rep2 = mem_rep_of_mono m2 in
-          Some (unify_mem_rep mem_rep1 mem_rep2))
+    let error () =
+      State.Result.error
+        [%message
+          "closure mismatch" (m1 : Binding_id.t list) (m2 : Binding_id.t list)]
     in
-    Binding_id.Map.fold ~init:(return ()) m ~f:(fun ~key:_ ~data acc ->
-      let%bind () = acc in
-      data)
+    (match List.zip m1 m2 with
+     | Unequal_lengths -> error ()
+     | Ok l ->
+       State.Result.all_unit
+       @@ List.map l ~f:(fun (a, b) ->
+         let%bind m1 = lookup_and_inst_binding_poly a in
+         let%bind m2 = lookup_and_inst_binding_poly b in
+         let%bind m1 = mem_rep_of_mono m1 in
+         let%bind m2 = mem_rep_of_mono m2 in
+         unify_mem_rep m1 m2))
   | Tuple l1, Tuple l2 -> unify_lists ~unification_error l1 l2
   | _ -> unification_error ()
 
@@ -1414,9 +1418,9 @@ and unify_type_proof a b =
   let%bind ({ type_id = id2; tyvar_map = rep2; _ } as b) =
     reach_end_type_proof b
   in
-  let monos1 = Lowercase.Map.data rep1 in
+  let monos1 = Map.data rep1 in
   let%bind monos1 = State.Result.all (List.map ~f:reach_end monos1) in
-  let monos2 = Lowercase.Map.data rep2 in
+  let monos2 = Map.data rep2 in
   let%bind monos2 = State.Result.all (List.map ~f:reach_end monos2) in
   match phys_equal id1 id2 with
   | true -> unify_lists ~unification_error monos1 monos2
@@ -1469,9 +1473,9 @@ and unify_less_general_type_proof ~unification_error a b =
   let%bind ({ type_id = id2; tyvar_map = rep2; _ } as b) =
     reach_end_type_proof b
   in
-  let monos1 = Lowercase.Map.data rep1 in
+  let monos1 = Map.data rep1 in
   let%bind monos1 = State.Result.all (List.map ~f:reach_end monos1) in
-  let monos2 = Lowercase.Map.data rep2 in
+  let monos2 = Map.data rep2 in
   let%bind monos2 = State.Result.all (List.map ~f:reach_end monos2) in
   match phys_equal id1 id2 with
   | true -> unify_less_general_lists ~unification_error monos1 monos2
@@ -1581,8 +1585,7 @@ let pop_module_and_add_current =
 let make_free_vars_weak mono =
   let free_vars = free_ty_vars mono in
   let replacement_map =
-    Lowercase.Set.to_map free_vars ~f:(fun x -> Weak (x, Mem_rep.Any x))
-    |> Obj.magic
+    Set.to_map free_vars ~f:(fun x -> Weak (x, Mem_rep.Any x)) |> Obj.magic
   in
   replace_ty_vars ~replacement_map mono
 ;;
@@ -1611,7 +1614,7 @@ and value_restriction_node node =
   | Ast.Constructor _ -> true
   | Ast.Record qualified ->
     let _, l = Qualified.split qualified in
-    Lowercase.Map.exists ~f:value_restriction l
+    Map.exists ~f:value_restriction l
   | Ast.Wrapped qualified ->
     let _, l = Qualified.split qualified in
     value_restriction l
@@ -1651,7 +1654,7 @@ let lookup_in_type_proof mono ~look_for =
   match get_type_proof mono with
   | None -> State.Result.error [%message "can't find type proof" (mono : mono)]
   | Some { tyvar_map; _ } ->
-    (match Lowercase.Map.find tyvar_map look_for with
+    (match Map.find tyvar_map look_for with
      | Some x -> return x
      | None ->
        State.Result.error
@@ -1744,7 +1747,7 @@ let rec gen_binding_ty_vars
     let%bind field_map =
       try
         return
-        @@ Lowercase.Map.merge record field_map ~f:(fun ~key -> function
+        @@ Map.merge record field_map ~f:(fun ~key -> function
           | `Both x -> Some x
           | `Left _ -> raise (Field_left_only key)
           | `Right _ -> raise (Field_right_only key))
@@ -1758,7 +1761,7 @@ let rec gen_binding_ty_vars
           [%message "Field is not present in pattern" (key : Lowercase.t)]
     in
     let%bind vars_list =
-      Lowercase.Map.fold
+      Map.fold
         field_map
         ~init:(State.Result.return [])
         ~f:(fun ~key:_ ~data:(binding, poly) acc ->
@@ -1797,7 +1800,7 @@ let is_plain_function mono =
 ;;
 
 let rec already_bound
-  ?(acc = Binding_id.Map.empty)
+  ?(acc = [])
   ?(shadowed = Lowercase.Set.empty)
   (expr : Ast.expr)
   =
@@ -1853,7 +1856,7 @@ and already_bound_node ~acc ~shadowed (node : Ast.node) =
   | Ast.Var (Qualified.Unqualified s) ->
     let is_shadowed = Set.mem shadowed s in
     (match%map lookup_local_var s with
-     | Some _ when not is_shadowed -> Binding_id.Set.add acc binding_id
+     | Some (_, binding_id) when not is_shadowed -> binding_id :: acc
      | _ -> acc)
   | Ast.Var _ | Ast.Literal _ | Ast.Constructor _ -> return acc
   | Ast.Tuple l ->
@@ -1863,7 +1866,7 @@ and already_bound_node ~acc ~shadowed (node : Ast.node) =
       already_bound ~acc ~shadowed expr)
   | Ast.Record r ->
     let r = Qualified.inner r in
-    Lowercase.Map.fold r ~init:(return acc) ~f:(fun ~key:_ ~data:expr acc ->
+    Map.fold r ~init:(return acc) ~f:(fun ~key:_ ~data:expr acc ->
       let%bind acc = acc in
       already_bound ~acc ~shadowed expr)
   | Ast.Wrapped e ->
@@ -1910,7 +1913,7 @@ let rec type_node node =
     in
     let%bind type_proof = inst_type_proof type_proof in
     let mono_res = Named type_proof in
-    let field_list = Lowercase.Map.to_alist field_map in
+    let field_list = Map.to_alist field_map in
     (* lookup the tyvar in the map thingo in mono_res *)
     let%bind field_mono_map =
       List.map field_list ~f:(fun (field, poly) ->
@@ -1924,20 +1927,20 @@ let rec type_node node =
       >>| Lowercase.Map.of_alist_exn
     in
     let%bind expr_map =
-      Lowercase.Map.fold
+      Map.fold
         record
         ~init:(State.Result.return Lowercase.Map.empty)
         ~f:(fun ~key:field ~data:expr acc ->
           let%bind acc = acc in
           let%bind ((_, mono) as expr) = type_expr expr in
           let%map () =
-            match Lowercase.Map.find field_mono_map field with
+            match Map.find field_mono_map field with
             | None ->
               State.Result.error
                 [%message "Unknown field" (field : Lowercase.t)]
             | Some field_mono -> unify field_mono mono
           in
-          Lowercase.Map.set acc ~key:field ~data:expr)
+          Map.set acc ~key:field ~data:expr)
     in
     let expr_map = Qualified.prepend ~qualifications (Unqualified expr_map) in
     let%map mono = apply_substs mono_res in
@@ -2050,7 +2053,7 @@ and type_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono =
     let%bind field_map =
       try
         return
-        @@ Lowercase.Map.merge record field_map ~f:(fun ~key -> function
+        @@ Map.merge record field_map ~f:(fun ~key -> function
           | `Both x -> Some x
           | `Left _ -> raise (Field_left_only key)
           | `Right _ -> raise (Field_right_only key))
@@ -2064,7 +2067,7 @@ and type_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono =
           [%message "Field is not present in pattern" (key : Lowercase.t)]
     in
     let%bind inner_map, vars_list =
-      Lowercase.Map.fold
+      Map.fold
         field_map
         ~init:(State.Result.return (Lowercase.Map.empty, []))
         ~f:(fun ~key ~data:(binding, poly) acc ->
@@ -2078,7 +2081,7 @@ and type_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono =
             type_binding ~act_on_var ~initial_vars:[] ~binding ~mono
           in
           let%map () = unify mono' mono in
-          let inner_map = Lowercase.Map.set inner_map ~key ~data:inner in
+          let inner_map = Map.set inner_map ~key ~data:inner in
           inner_map, vars :: vars_list)
     in
     let inner_map = Qualified.prepend ~qualifications (Unqualified inner_map) in
@@ -2345,7 +2348,7 @@ and type_expr expr =
     let%bind () = decr_abstraction_level in
     let%bind closed_vars = already_bound body in
     let%map res_mono = apply_substs res_mono in
-    (match Binding_id.Map.is_empty closed_vars with
+    (match List.is_empty closed_vars with
      | true ->
        ( Typed_ast.Lambda (binding, (res_inner, res_mono))
        , Function (var, res_mono) )
@@ -2388,7 +2391,7 @@ let rec unify_module_bindings
   let%bind joined_vars =
     try
       return
-      @@ Lowercase.Map.merge
+      @@ Map.merge
            signature.toplevel_vars
            definition.toplevel_vars
            ~f:(fun ~key -> function
@@ -2401,7 +2404,7 @@ let rec unify_module_bindings
         [%message "Value in signature not in definition" (key : Lowercase.t)]
   in
   let%bind () =
-    Lowercase.Map.fold
+    Map.fold
       joined_vars
       ~init:(return ())
       ~f:(fun ~key:_ ~data:(left, right) acc ->
@@ -2413,7 +2416,7 @@ let rec unify_module_bindings
   let%bind joined_type_constructors =
     try
       return
-      @@ Lowercase.Map.merge
+      @@ Map.merge
            signature.toplevel_type_constructors
            definition.toplevel_type_constructors
            ~f:(fun ~key -> function
@@ -2427,7 +2430,7 @@ let rec unify_module_bindings
           "Type constructor in signature not in definition" (key : Lowercase.t)]
   in
   let%bind type_constructors =
-    Lowercase.Map.fold
+    Map.fold
       joined_type_constructors
       ~init:(return Lowercase.Map.empty)
       ~f:(fun ~key ~data:(left, right) acc ->
@@ -2462,12 +2465,12 @@ let rec unify_module_bindings
               [%message "Types not equal" (u1 : user_type) (u2 : user_type)]
         in
         let%map () = set_type_map ~type_id:p1.type_id r in
-        Lowercase.Map.add_exn ~key ~data:right acc)
+        Map.add_exn ~key ~data:right acc)
   in
   let%bind joined_modules =
     try
       return
-      @@ Uppercase.Map.merge
+      @@ Map.merge
            signature.toplevel_modules
            definition.toplevel_modules
            ~f:(fun ~key -> function
@@ -2480,7 +2483,7 @@ let rec unify_module_bindings
         [%message "Module in signature not in definition" (key : Uppercase.t)]
   in
   let%bind () =
-    Uppercase.Map.fold
+    Map.fold
       joined_modules
       ~init:(return ())
       ~f:(fun ~key:_ ~data:(left, right) acc ->
@@ -2649,7 +2652,7 @@ let rec show_module_bindings
   =
   let open State.Result.Let_syntax in
   let%bind type_strings =
-    Lowercase.Map.to_alist toplevel_type_constructors
+    Map.to_alist toplevel_type_constructors
     |> List.map ~f:(fun (type_name, type_id) ->
       let%bind args, user_type, _ = lookup_type_map type_id in
       let prefix_str =
@@ -2664,7 +2667,7 @@ let rec show_module_bindings
     |> State.Result.all
   in
   let%bind var_strings =
-    Lowercase.Map.to_alist toplevel_vars
+    Map.to_alist toplevel_vars
     |> List.map ~f:(fun (v, poly_list) ->
       let%bind poly, _ =
         match poly_list with
@@ -2678,7 +2681,7 @@ let rec show_module_bindings
     |> State.Result.all
   in
   let%map module_bindings =
-    Uppercase.Map.to_alist toplevel_modules
+    Map.to_alist toplevel_modules
     |> List.map ~f:(fun (name, module_bindings) ->
       let%map module_s = show_module_bindings module_bindings in
       let module_s =
