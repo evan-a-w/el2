@@ -54,3 +54,17 @@ let%expect_test "rec_single_arg_no_closed" =
       ];
   [%expect {| int -> int |}]
 ;;
+
+let%expect_test "two_arg_and_closed_inner" =
+  infer_and_print_mono
+    ~print_state:false
+    ~programs:
+      [ {| let outer = "hi" in
+           let val = fun a ->
+             let y = 1 in
+             fun b ->
+               let _ = y in outer
+           in val |}
+      ];
+  [%expect {| d0 -{string}> c0 -{int|string}> string |}]
+;;
