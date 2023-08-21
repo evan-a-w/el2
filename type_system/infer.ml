@@ -20,10 +20,26 @@ type binding_state =
   }
 [@@deriving sexp, equal, compare, fields]
 
+let append_to_path path uppercase =
+  let rec inner = function
+    | Qualified.Unqualified name ->
+      Qualified.Qualified (name, Unqualified uppercase)
+    | Qualified (name, rest) -> Qualified.Qualified (name, inner rest)
+  in
+  inner path
+;;
+
+let rec pop_path = function
+  | Qualified.Unqualified _ as x -> x
+  | Qualified (name, Unqualified _) -> Qualified.Unqualified name
+  | Qualified (name, rest) -> Qualified.Qualified (name, pop_path rest)
+;;
+
 type state =
   { mono_ufds : Mono_ufds.t
   ; mem_rep_ufds : Mem_rep.Abstract_ufds.t
   ; current_module_binding : Typed_ast.module_
+  ; current_path : Module_path.t
   ; local_vars :
       (poly * binding_id * bool (* rec binding *)) list Lowercase.Map.t
   ; module_history : module_history
@@ -160,12 +176,13 @@ let get_current_module_binding =
   state.current_module_binding
 ;;
 
-let empty_module_bindings = empty_module_bindings Typed_ast.empty_data
+let empty_module_bindings path = empty_module_bindings path Typed_ast.empty_data
 
-let empty_state =
+let empty_state path =
   { mono_ufds = Mono_ufds.empty
   ; mem_rep_ufds = Mem_rep.Abstract_ufds.empty
-  ; current_module_binding = empty_module_bindings
+  ; current_path = path
+  ; current_module_binding = empty_module_bindings path
   ; module_history = { current_name = ""; previous_modules = [] }
   ; symbol_n = 0
   ; binding_id_n = 0
@@ -1543,24 +1560,40 @@ let change_to_module name module_bindings =
       opened_modules = old_module_binding :: old_module_binding.opened_modules
     }
   in
-  State.Result.put { state with current_module_binding; module_history }
+  State.Result.put
+    { state with
+      current_module_binding
+    ; module_history
+    ; current_path = module_bindings.path
+    }
 ;;
 
-let change_to_new_module name = change_to_module name empty_module_bindings
+let change_to_new_module name =
+  let%bind.State.Result state = State.Result.get in
+  change_to_module
+    name
+    (empty_module_bindings (append_to_path state.current_path name))
+;;
 
-let pop_module =
+let pop_module : (string * Typed_ast.module_) state_result_m =
   let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let old_module_binding = state.current_module_binding in
   let { current_name; previous_modules } = state.module_history in
-  let current_module_binding, module_history =
+  let current_module_binding, module_history, current_path =
     match previous_modules with
-    | [] -> empty_module_bindings, { current_name; previous_modules = [] }
+    | [] ->
+      ( empty_module_bindings state.current_path
+      , { current_name; previous_modules = [] }
+      , state.current_path )
     | (name, current_module_binding) :: xs ->
-      current_module_binding, { current_name = name; previous_modules = xs }
+      ( current_module_binding
+      , { current_name = name; previous_modules = xs }
+      , pop_path state.current_path )
   in
   let%map () =
-    State.Result.put { state with current_module_binding; module_history }
+    State.Result.put
+      { state with current_module_binding; module_history; current_path }
   in
   current_name, old_module_binding
 ;;
@@ -2730,9 +2763,9 @@ let rec show_module_bindings
 
 let mono_of_expr e = State.Result.map (type_expr e) ~f:snd
 
-let process_toplevel_list toplevel_list =
+let process_file toplevel_list =
   let open State.Result.Let_syntax in
-  let%bind _ = type_toplevel_list toplevel_list in
+  let%bind toplevels = type_toplevel_list toplevel_list in
   let%map _, module_ = pop_module in
-  module_
+  { module_ with data = Typed_ast.Here toplevels }
 ;;

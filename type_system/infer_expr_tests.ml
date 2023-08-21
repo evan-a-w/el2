@@ -34,7 +34,12 @@ let infer_expr ~programs ~print_state ~print =
     print x
   in
   List.iter programs ~f:(fun program ->
-    match print_state, State.Result.run (action program) ~state:empty_state with
+    match
+      ( print_state
+      , State.Result.run
+          (action program)
+          ~state:(empty_state (Qualified.Unqualified "Test")) )
+    with
     | true, (Ok (), state) -> print_s [%message (state : state)]
     | true, (Error error, state) ->
       print_s [%message (error : Sexp.t) (state : state)]
@@ -225,7 +230,10 @@ let%expect_test "type_def_record" =
     let%bind () = define_types ~type_exprs in
     type_of_type_expr lit
   in
-  let res = State.Result.run action ~state:empty_state |> fst in
+  let res =
+    State.Result.run action ~state:(empty_state (Qualified.Unqualified "Test"))
+    |> fst
+  in
   print_s [%message (res : (mono, Sexp.t) Result.t)];
   [%expect
     {|

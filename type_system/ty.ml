@@ -84,7 +84,8 @@ let rec get_mono_from_poly_without_gen = function
 module Module_path = Qualified.Make (Uppercase)
 
 type 'data module_bindings =
-  { toplevel_vars : (poly * binding_id) list Lowercase.Map.t
+  { path : Uppercase.t Qualified.t
+  ; toplevel_vars : (poly * binding_id) list Lowercase.Map.t
   ; toplevel_records : (poly Lowercase.Map.t * type_proof) Lowercase.Set.Map.t
   ; toplevel_fields :
       (type_proof * [ `Mutable | `Immutable ] * poly) Lowercase.Map.t
@@ -92,6 +93,7 @@ type 'data module_bindings =
   ; toplevel_type_constructors : type_id Lowercase.Map.t
   ; toplevel_modules : 'data module_bindings Uppercase.Map.t
   ; opened_modules : 'data module_bindings List.t
+  ; signature : unit module_bindings option
   ; data : 'data
   }
 [@@deriving sexp, equal, hash, compare, fields]
@@ -126,7 +128,8 @@ let base_type_map =
 ;;
 
 let base_module_bindings empty_data =
-  { toplevel_vars = Lowercase.Map.empty
+  { path = Qualified.Unqualified "Std"
+  ; toplevel_vars = Lowercase.Map.empty
   ; toplevel_fields = Lowercase.Map.empty
   ; toplevel_records = Lowercase.Set.Map.empty
   ; toplevel_constructors = Uppercase.Map.empty
@@ -138,17 +141,20 @@ let base_module_bindings empty_data =
   ; toplevel_modules = Uppercase.Map.empty
   ; opened_modules = []
   ; data = empty_data
+  ; signature = None
   }
 ;;
 
-let empty_module_bindings empty_data =
-  { toplevel_vars = Lowercase.Map.empty
+let empty_module_bindings path empty_data =
+  { path
+  ; toplevel_vars = Lowercase.Map.empty
   ; toplevel_fields = Lowercase.Map.empty
   ; toplevel_records = Lowercase.Set.Map.empty
   ; toplevel_constructors = Uppercase.Map.empty
   ; toplevel_type_constructors = Lowercase.Map.empty
   ; toplevel_modules = Uppercase.Map.empty
   ; opened_modules = [ base_module_bindings empty_data ]
+  ; signature = None
   ; data = empty_data
   }
 ;;
