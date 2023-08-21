@@ -622,5 +622,5 @@ let%expect_test "closure" =
            let val = fun () -> x in
            val |} ];
   [%expect {|
-    unit -> int |}]
+    unit -{int}> int |}]
 ;;

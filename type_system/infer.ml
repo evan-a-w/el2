@@ -480,6 +480,16 @@ let rec show_type_proof { absolute_type_name; ordering; tyvar_map; _ } =
   let type_string = Qualified.show Fn.id absolute_type_name in
   prefix_string ^ type_string
 
+and show_closed_monos closed =
+  let open State.Result.Let_syntax in
+  let%map list =
+    List.fold closed ~init:(return []) ~f:(fun acc (_, mono) ->
+      let%bind acc = acc in
+      let%map s = show_mono mono in
+      s :: acc)
+  in
+  "{" ^ String.concat ~sep:"|" list ^ "}"
+
 and show_mono mono =
   let open State.Result.Let_syntax in
   match mono with
@@ -489,17 +499,8 @@ and show_mono mono =
     let%bind a = show_mono a in
     let%map b = show_mono b in
     a ^ " -> " ^ b
-  | Closure (a, b, binding_map) ->
-    let%bind list =
-      List.fold binding_map ~init:(return []) ~f:(fun acc id ->
-        let%bind acc = acc in
-        let%bind { name; poly; _ } = lookup_binding_id id in
-        let mono = get_mono_from_poly_without_gen poly in
-        let%map s = show_mono mono in
-        let s = [%string "%{name} : %{s}"] in
-        s :: acc)
-    in
-    let list = "{" ^ String.concat ~sep:";" list ^ "}" in
+  | Closure (a, b, closed) ->
+    let%bind list = show_closed_monos closed in
     let%bind a = show_mono a in
     let%map b = show_mono b in
     a ^ [%string " -%{list}> "] ^ b
@@ -609,7 +610,8 @@ let rec map_ty_vars ~f (mono : mono) =
   match mono with
   | TyVar (a, b) -> Option.value (f (a, b)) ~default:mono
   | Weak _ -> mono
-  | Closure (a, b, c) -> Closure (map_ty_vars ~f a, map_ty_vars ~f b, c)
+  | Closure (a, b, c) ->
+    Closure (map_ty_vars ~f a, map_ty_vars ~f b, map_closed_monos ~f c)
   | Function (a, b) -> Function (map_ty_vars ~f a, map_ty_vars ~f b)
   | Tuple l -> Tuple (List.map l ~f:(map_ty_vars ~f))
   | Named type_proof -> Named (map_type_proof ~f type_proof)
@@ -619,6 +621,9 @@ and map_type_proof ~f ({ tyvar_map; _ } as type_proof) =
   { type_proof with
     tyvar_map = Lowercase.Map.map tyvar_map ~f:(map_ty_vars ~f)
   }
+
+and map_closed_monos ~f closed =
+  List.map ~f:(fun (binding_id, mono) -> binding_id, map_ty_vars ~f mono) closed
 ;;
 
 let map_user_type_ty_vars ~f = map_user_type ~f:(map_ty_vars ~f)
@@ -630,7 +635,8 @@ let rec map_ty_vars_m ~f (mono : mono) =
   | Weak _ -> return mono
   | Closure (a, b, c) ->
     let%bind a = map_ty_vars_m ~f a in
-    let%map b = map_ty_vars_m ~f b in
+    let%bind b = map_ty_vars_m ~f b in
+    let%map c = map_closed_monos_m ~f c in
     Closure (a, b, c)
   | Function (a, b) ->
     let%bind a = map_ty_vars_m ~f a in
@@ -658,6 +664,14 @@ and map_type_proof_m ~f ({ tyvar_map; _ } as type_proof) =
         Map.set acc ~key ~data)
   in
   { type_proof with tyvar_map }
+
+and map_closed_monos_m ~f closed =
+  State.Result.all
+  @@ List.map
+       ~f:(fun (binding_id, mono) ->
+         let%map.State.Result mono = map_ty_vars_m ~f mono in
+         binding_id, mono)
+       closed
 ;;
 
 let map_user_type_ty_vars_m ~f = map_user_type_m ~f:(map_ty_vars_m ~f)
@@ -666,7 +680,8 @@ let rec map_weak_vars ~f (mono : mono) =
   match mono with
   | Weak (a, b) -> Option.value (f (a, b)) ~default:mono
   | TyVar _ -> mono
-  | Closure (a, b, c) -> Closure (map_weak_vars ~f a, map_weak_vars ~f b, c)
+  | Closure (a, b, c) ->
+    Closure (map_weak_vars ~f a, map_weak_vars ~f b, map_weak_closed_monos ~f c)
   | Function (a, b) -> Function (map_weak_vars ~f a, map_weak_vars ~f b)
   | Tuple l -> Tuple (List.map l ~f:(map_weak_vars ~f))
   | Reference x -> Reference (map_weak_vars ~f x)
@@ -676,6 +691,11 @@ and map_weak_type_proof ~f ({ tyvar_map; _ } as type_proof) =
   { type_proof with
     tyvar_map = Lowercase.Map.map tyvar_map ~f:(map_weak_vars ~f)
   }
+
+and map_weak_closed_monos ~f closed =
+  List.map
+    ~f:(fun (binding_id, mono) -> binding_id, map_weak_vars ~f mono)
+    closed
 ;;
 
 let map_user_type_weak_vars ~f = map_user_type ~f:(map_weak_vars ~f)
@@ -974,56 +994,43 @@ let inst (poly : poly) : mono state_m =
 
 let inst_result x = State.map (inst x) ~f:Result.return
 
-let rec mem_rep_of_mono : mono -> Mem_rep.abstract state_result_m =
-  let open State.Result.Let_syntax in
-  function
-  | Weak (_, rep) -> return rep
-  | TyVar (_, rep) -> return rep
-  | Function _ -> return @@ Mem_rep.Closed `Reg
+let rec mem_rep_of_mono = function
+  | Weak (_, rep) -> rep
+  | TyVar (_, rep) -> rep
+  | Function _ -> Mem_rep.Closed `Reg
   | Closure (_, _, rep) ->
-    let%map list =
-      State.Result.all
-      @@ List.map rep ~f:(fun binding_id ->
-        let%bind { name; poly; _ } = lookup_binding_id binding_id in
-        let%bind mono = inst_result poly in
-        let%map m = mem_rep_of_mono mono in
-        let name = name ^ Int.to_string binding_id in
+    let list =
+      List.map rep ~f:(fun (binding_id, mono) ->
+        let m = mem_rep_of_mono mono in
+        let name = Int.to_string binding_id in
         name, m)
     in
     Mem_rep.Closed (`Native_struct list)
   | Tuple l ->
-    let%map list =
-      State.Result.all
-      @@ List.mapi l ~f:(fun i x ->
-        let%map m = mem_rep_of_mono x in
+    let list =
+      List.mapi l ~f:(fun i x ->
+        let m = mem_rep_of_mono x in
         [%string "_%{i#Int}"], m)
     in
     Mem_rep.Closed (`Native_struct list)
   | Reference m ->
-    let%map m = mem_rep_of_mono m in
+    let m = mem_rep_of_mono m in
     Mem_rep.Closed (`Pointer m)
-  | Named t -> return t.mem_rep
+  | Named t -> t.mem_rep
 
-and mem_rep_of_user_type : user_type -> Mem_rep.abstract state_result_m =
-  let open State.Result.Let_syntax in
-  function
-  | Abstract x -> return x
+and mem_rep_of_user_type = function
+  | Abstract x -> x
   | Record l ->
-    let%map list =
-      State.Result.all
-      @@ List.map l ~f:(fun (a, (m, _)) ->
-        let%map m = mem_rep_of_mono m in
+    let list =
+      List.map l ~f:(fun (a, (m, _)) ->
+        let m = mem_rep_of_mono m in
         a, m)
     in
     Mem_rep.Closed (`Native_struct list)
   | Enum l ->
-    let%map list =
-      State.Result.all
-      @@ List.map l ~f:(fun (_, m) ->
-        Option.value_map
-          m
-          ~default:(return @@ Mem_rep.Closed `Bits0)
-          ~f:mem_rep_of_mono)
+    let list =
+      List.map l ~f:(fun (_, m) ->
+        Option.value_map m ~default:(Mem_rep.Closed `Bits0) ~f:mem_rep_of_mono)
     in
     Mem_rep.Closed (`Union list)
   | User_mono m -> mem_rep_of_mono m
@@ -1040,8 +1047,8 @@ let type_of_type_def_lit
   let absolute_type_name = absolute_name ~state ~name:type_name in
   match type_def_lit with
   | Ast.Type_def_lit.Type_expr type_expr ->
-    let%bind mono = type_of_type_expr type_expr in
-    let%map mem_rep = mem_rep_of_mono mono in
+    let%map mono = type_of_type_expr type_expr in
+    let mem_rep = mem_rep_of_mono mono in
     let type_proof =
       { type_name
       ; absolute_type_name
@@ -1062,7 +1069,7 @@ let type_of_type_def_lit
         name, (mono, mutability))
       |> State.Result.all
     in
-    let%bind mem_rep = mem_rep_of_user_type (Record record_type) in
+    let mem_rep = mem_rep_of_user_type (Record record_type) in
     let type_proof =
       type_proof_of_monos
         ~type_name
@@ -1093,7 +1100,7 @@ let type_of_type_def_lit
         name, mono)
       |> State.Result.all
     in
-    let%bind mem_rep = mem_rep_of_user_type (Enum enum_type) in
+    let mem_rep = mem_rep_of_user_type (Enum enum_type) in
     let monos = List.filter_map enum_type ~f:(fun (_, mono) -> mono) in
     let type_proof =
       type_proof_of_monos
@@ -1363,7 +1370,7 @@ let lookup_and_inst_binding_poly binding_id =
 let rec unify_var cons mono1 x m mono2 =
   let open State.Result.Let_syntax in
   let%bind () = occurs_check x mono2 in
-  let%bind mem_rep = mem_rep_of_mono mono2 in
+  let mem_rep = mem_rep_of_mono mono2 in
   let%bind () = unify_mem_rep m mem_rep in
   let%bind state = State.Result.get in
   let m, _ = Mem_rep.Abstract_ufds.find state.mem_rep_ufds m in
@@ -1392,19 +1399,17 @@ and unify mono1 mono2 =
     let%bind () = unify x1 y1 in
     let%bind () = unify x2 y2 in
     let error () =
-      State.Result.error
-        [%message
-          "closure mismatch" (m1 : Binding_id.t list) (m2 : Binding_id.t list)]
+      let%bind m1 = show_closed_monos m1 in
+      let%bind m2 = show_closed_monos m2 in
+      State.Result.error [%message "closure mismatch" m1 m2]
     in
     (match List.zip m1 m2 with
      | Unequal_lengths -> error ()
      | Ok l ->
        State.Result.all_unit
-       @@ List.map l ~f:(fun (a, b) ->
-         let%bind m1 = lookup_and_inst_binding_poly a in
-         let%bind m2 = lookup_and_inst_binding_poly b in
-         let%bind m1 = mem_rep_of_mono m1 in
-         let%bind m2 = mem_rep_of_mono m2 in
+       @@ List.map l ~f:(fun ((_, m1), (_, m2)) ->
+         let m1 = mem_rep_of_mono m1 in
+         let m2 = mem_rep_of_mono m2 in
          unify_mem_rep m1 m2))
   | Tuple l1, Tuple l2 -> unify_lists ~unification_error l1 l2
   | _ -> unification_error ()
@@ -2347,6 +2352,13 @@ and type_expr expr =
     let%bind var = apply_substs var in
     let%bind () = decr_abstraction_level in
     let%bind closed_vars = already_bound body in
+    let%bind closed_vars =
+      State.Result.all
+      @@ List.map closed_vars ~f:(fun binding_id ->
+        let%map { poly; _ } = lookup_binding_id binding_id in
+        let mono = get_mono_from_poly_without_gen poly in
+        binding_id, mono)
+    in
     let%map res_mono = apply_substs res_mono in
     (match List.is_empty closed_vars with
      | true ->

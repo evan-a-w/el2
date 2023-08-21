@@ -52,7 +52,7 @@ and mono =
   | TyVar of Lowercase.t * Mem_rep.abstract
   | Function of mono * mono
   (* closures unify with all closures that have an equivalent mem rep and input/return type *)
-  | Closure of mono * mono * Binding_id.t list
+  | Closure of mono * mono * (Binding_id.t * mono) list
   | Tuple of mono list
   | Reference of mono
   | Named of type_proof
