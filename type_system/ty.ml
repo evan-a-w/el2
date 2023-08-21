@@ -15,6 +15,8 @@ let show_type_constructor_arg = function
   | Tuple_arg l -> "(" ^ String.concat ~sep:", " (List.map l ~f:snd) ^ ")"
 ;;
 
+module Binding_id = Id.Make ()
+
 type type_constructor =
   type_constructor_arg option * user_type * type_proof
   (* replace bound variables in type_constructor_arg with new TyVars when using this mono *)
@@ -36,18 +38,21 @@ and type_proof =
   ; ordering : Lowercase.t list option
   ; tyvar_map : mono Lowercase.Map.t
   ; type_id : type_id
+  ; mem_rep : Mem_rep.abstract
   }
 [@@deriving sexp, equal, hash, compare]
 
 and type_id = int [@@deriving sexp, equal, hash, compare]
-and binding_id = int [@@deriving sexp, equal, hash, compare]
+and binding_id = Binding_id.t [@@deriving sexp, equal, hash, compare]
 
 and mono =
   (* name and type args *)
-  | Weak of Lowercase.t
+  | Weak of Lowercase.t * Mem_rep.abstract
   (* keep track of the path and arg for equality *)
-  | TyVar of Lowercase.t
-  | Lambda of mono * mono * bool (* not partial app ie. result of Lambda ast *)
+  | TyVar of Lowercase.t * Mem_rep.abstract
+  | Function of mono * mono
+  (* closures unify with all closures that have an equivalent mem rep and input/return type *)
+  | Closure of mono * mono * (Binding_id.t * mono) list
   | Tuple of mono list
   | Reference of mono
   | Named of type_proof
@@ -60,7 +65,7 @@ and enum_type = (Uppercase.t * mono option) list
 [@@deriving sexp, equal, hash, compare]
 
 and user_type =
-  | Abstract
+  | Abstract of Mem_rep.abstract
   | Record of record_type
   | Enum of enum_type
   | User_mono of mono
@@ -95,27 +100,28 @@ module Absolute_name = Qualified.Make (Lowercase)
 
 let type_id_of_absolute_name = Absolute_name.hash
 
-let make_type_proof (s : Lowercase.t) =
+let make_type_proof (s : Lowercase.t) mem_rep =
   let absolute_type_name = Qualified.Unqualified s in
   { type_name = s
   ; absolute_type_name
   ; ordering = None
   ; tyvar_map = Lowercase.Map.empty
   ; type_id = type_id_of_absolute_name absolute_type_name
+  ; mem_rep = Mem_rep.Closed mem_rep
   }
 ;;
 
-let int_type = make_type_proof "int"
-let float_type = make_type_proof "float"
-let bool_type = make_type_proof "bool"
-let unit_type = make_type_proof "unit"
-let string_type = make_type_proof "string"
-let char_type = make_type_proof "char"
+let int_type = make_type_proof "int" `Bits32
+let float_type = make_type_proof "float" `Bits64
+let bool_type = make_type_proof "bool" `Bits8
+let unit_type = make_type_proof "unit" `Bits0
+let string_type = make_type_proof "string" `Reg
+let char_type = make_type_proof "char" `Bits8
 
 let base_type_map =
   List.map
     [ int_type; float_type; bool_type; unit_type; string_type; char_type ]
-    ~f:(fun t -> t.type_id, (None, Abstract, t))
+    ~f:(fun t -> t.type_id, (None, Abstract t.mem_rep, t))
   |> Int.Map.of_alist_exn
 ;;
 

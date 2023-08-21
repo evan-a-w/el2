@@ -4,7 +4,7 @@ open! Core
 
 module Make () = struct
   module T = struct
-    type t = string [@@deriving sexp, compare, equal, hash]
+    type t = int [@@deriving sexp, compare, equal, hash]
   end
 
   module Map = struct
@@ -20,7 +20,7 @@ module Make () = struct
       Map.fold
         ~init:hash_state
         ~f:(fun ~key ~data hash_state ->
-          [%hash_fold: string * a] hash_state (key, data))
+          [%hash_fold: int * a] hash_state (key, data))
         t
     ;;
   end
@@ -34,7 +34,7 @@ module Make () = struct
         =
         Set.fold
           ~init:hash_state
-          ~f:(fun hash_state key -> [%hash_fold: string] hash_state key)
+          ~f:(fun hash_state key -> [%hash_fold: int] hash_state key)
           t
       ;;
 

@@ -35,9 +35,9 @@ end
 
 module Trie = struct
   module Match_table = Hashtbl.Make (struct
-    type t = Operator_type.t * Match_type.t
-    [@@deriving sexp, compare, equal, hash]
-  end)
+      type t = Operator_type.t * Match_type.t
+      [@@deriving sexp, compare, equal, hash]
+    end)
 
   type node =
     { children : node Char.Table.t
@@ -76,21 +76,19 @@ module Trie = struct
     let rec insert_node node ~chars =
       match chars () with
       | Stdlib.Seq.Nil ->
-        Match_table.add_exn
+        Hashtbl.add_exn
           node.matches
           ~key:(operator_type, match_type)
           ~data:{ binding_power; associativity }
       | Cons (c, chars) ->
-        let child =
-          Char.Table.find_or_add node.children c ~default:create_node
-        in
+        let child = Hashtbl.find_or_add node.children c ~default:create_node in
         insert_node child ~chars
     in
     let chars = Stdlib.String.to_seq operator in
     match chars () with
     | Nil -> ()
     | Cons (c, chars) ->
-      let child = Char.Table.find_or_add t.children c ~default:create_node in
+      let child = Hashtbl.find_or_add t.children c ~default:create_node in
       insert_node child ~chars
   ;;
 
@@ -104,26 +102,24 @@ module Trie = struct
     let rec search_node node ~chars =
       match chars () with
       | Stdlib.Seq.Nil ->
-        (match
-           Match_table.find node.matches (operator_type, Match_type.Full)
-         with
+        (match Hashtbl.find node.matches (operator_type, Match_type.Full) with
          | Some _ as res -> res
-         | None -> Match_table.find node.matches (operator_type, Prefix))
+         | None -> Hashtbl.find node.matches (operator_type, Prefix))
       | Cons (c, chars) ->
         let next =
-          match Char.Table.find node.children c with
+          match Hashtbl.find node.children c with
           | None -> None
           | Some child -> search_node child ~chars
         in
         (match next with
          | Some _ as res -> res
-         | None -> Match_table.find node.matches (operator_type, Prefix))
+         | None -> Hashtbl.find node.matches (operator_type, Prefix))
     in
     let chars = Stdlib.String.to_seq operator in
     match chars () with
     | Nil -> None
     | Cons (c, chars) ->
-      (match Char.Table.find t.children c with
+      (match Hashtbl.find t.children c with
        | None -> None
        | Some child -> search_node child ~chars)
   ;;
