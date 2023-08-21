@@ -24,7 +24,8 @@ type state =
   { mono_ufds : Mono_ufds.t
   ; mem_rep_ufds : Mem_rep.Abstract_ufds.t
   ; current_module_binding : Typed_ast.module_
-  ; local_vars : (poly * binding_id) list Lowercase.Map.t
+  ; local_vars :
+      (poly * binding_id * bool (* rec binding *)) list Lowercase.Map.t
   ; module_history : module_history
   ; symbol_n : int
   ; abstraction_level : int
@@ -219,7 +220,7 @@ let add_module_var ?binding_id name poly =
   State.Result.put { state with current_module_binding; binding_map }
 ;;
 
-let add_local_var ?binding_id name poly =
+let add_local_var ~is_rec ?binding_id name poly =
   let open State.Result.Let_syntax in
   let%bind binding_id =
     match binding_id with
@@ -228,7 +229,7 @@ let add_local_var ?binding_id name poly =
   in
   let%bind state = State.Result.get in
   let local_vars =
-    Map.add_multi state.local_vars ~key:name ~data:(poly, binding_id)
+    Map.add_multi state.local_vars ~key:name ~data:(poly, binding_id, is_rec)
   in
   let binding_map =
     Map.set
@@ -565,7 +566,7 @@ let lookup_var qualified_name : _ state_result_m =
           Map.find module_bindings.toplevel_vars type_name)
     in
     (match res with
-     | Some (x :: _) -> State.Result.return x
+     | Some ((a, b) :: _) -> State.Result.return (a, b, true)
      | None | Some [] ->
        State.Result.error
          [%message
@@ -1789,7 +1790,7 @@ let rec gen_binding_ty_vars
 
 let gen_var var ~(add_var : add_var_t) ~pop_var =
   let open State.Result.Let_syntax in
-  let%bind value, binding_id = lookup_var (Qualified.Unqualified var) in
+  let%bind value, binding_id, _ = lookup_var (Qualified.Unqualified var) in
   let%bind () = pop_var var in
   let%bind mono = inst_result value in
   let%bind mono = apply_substs mono in
@@ -1797,7 +1798,8 @@ let gen_var var ~(add_var : add_var_t) ~pop_var =
   add_var ~binding_id var poly
 ;;
 
-let is_plain_function mono =
+let is_plain_function poly =
+  let mono = mono_of_poly_no_inst poly in
   match%map.State.Result reach_end_mono mono with
   | Function (_, _) -> true
   | Weak _ | TyVar _ | Tuple _ | Reference _ | Named _ | Closure (_, _, _) ->
@@ -1860,9 +1862,12 @@ and already_bound_node ~acc ~shadowed (node : Ast.node) =
   match node with
   | Ast.Var (Qualified.Unqualified s) ->
     let is_shadowed = Set.mem shadowed s in
-    (match%map lookup_local_var s with
-     | Some (_, binding_id) when not is_shadowed -> binding_id :: acc
-     | _ -> acc)
+    (match%bind lookup_local_var s with
+     | Some (poly, binding_id, false) when not is_shadowed ->
+       (match%map is_plain_function poly with
+        | true -> acc
+        | false -> binding_id :: acc)
+     | _ -> return acc)
   | Ast.Var _ | Ast.Literal _ | Ast.Constructor _ -> return acc
   | Ast.Tuple l ->
     let l = Qualified.inner l in
@@ -1889,7 +1894,7 @@ let rec type_node node =
   match node with
   | Ast.Literal literal -> type_literal literal
   | Ast.Var var_name ->
-    let%bind poly, binding_id = lookup_var var_name in
+    let%bind poly, binding_id, _ = lookup_var var_name in
     let%map mono = inst_result poly in
     Typed_ast.(Node (Var (var_name, binding_id))), mono
   | Ast.Tuple qualified_tuple ->
@@ -1956,10 +1961,10 @@ and add_module_var_mono ~generalize ~value_restriction var mono =
   let%bind poly = poly_of_mono ~generalize ~value_restriction mono in
   add_module_var var poly
 
-and add_local_var_mono ~generalize ~value_restriction var mono =
+and add_local_var_mono ~is_rec ~generalize ~value_restriction var mono =
   let open State.Result.Let_syntax in
   let%bind poly = poly_of_mono ~generalize ~value_restriction mono in
-  add_local_var var poly
+  add_local_var ~is_rec var poly
 
 and type_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono =
   let open State.Result.Let_syntax in
@@ -2173,7 +2178,7 @@ and add_rec_bindings l ~(add_var : add_var_t) ~pop_var =
   in
   let%bind () = decr_abstraction_level in
   let act_on_var var mono =
-    let%bind current, _ = lookup_var (Qualified.Unqualified var) in
+    let%bind current, _, _ = lookup_var (Qualified.Unqualified var) in
     let mono' = mono_of_poly_no_inst current in
     let%bind () = unify mono mono' in
     add_var var (Mono mono)
@@ -2301,7 +2306,10 @@ and type_expr expr =
     expr_inner, mono
   | Let_in (Ast.Nonrec (binding, expr1), expr2) ->
     let%bind binding, expr, vars =
-      add_nonrec_bindings ~binding ~expr:expr1 ~add_var_mono:add_local_var_mono
+      add_nonrec_bindings
+        ~binding
+        ~expr:expr1
+        ~add_var_mono:(add_local_var_mono ~is_rec:false)
     in
     let%bind ((_, res_mono) as res_expr) = type_expr expr2 in
     let%bind () = State.Result.all_unit (List.map vars ~f:pop_local_var) in
@@ -2309,7 +2317,10 @@ and type_expr expr =
     Typed_ast.(Let_in (Nonrec (binding, expr), res_expr)), res_mono
   | Let_in (Ast.Rec l, expr2) ->
     let%bind bindings, exprs, vars =
-      add_rec_bindings ~add_var:add_local_var ~pop_var:pop_local_var l
+      add_rec_bindings
+        ~add_var:(add_local_var ~is_rec:true)
+        ~pop_var:pop_local_var
+        l
     in
     let let_each_list = List.zip_exn bindings exprs in
     let%bind ((_, res_mono) as res_expr) = type_expr expr2 in
@@ -2331,7 +2342,7 @@ and type_expr expr =
              ~expr2
              ~generalize:false
              ~value_restriction:false
-             ~add_var_mono:add_local_var_mono
+             ~add_var_mono:(add_local_var_mono ~is_rec:false)
              ~pop_var:pop_local_var))
     in
     let%map mono =
@@ -2355,7 +2366,7 @@ and type_expr expr =
         ~expr2:body
         ~generalize:false
         ~value_restriction:false
-        ~add_var_mono:add_local_var_mono
+        ~add_var_mono:(add_local_var_mono ~is_rec:false)
         ~pop_var:pop_local_var
     in
     let%bind var = apply_substs var in
