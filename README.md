@@ -33,3 +33,6 @@ fun _ ->
   let _ = y in
   "result"
 ```.
+
+Currently values can't be polymorphic over different closure/function types, other than closing over
+polymorphic values.
