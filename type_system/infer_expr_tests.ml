@@ -213,13 +213,6 @@ let%expect_test "let_expr_tag1" =
     (error "Failed to parse (b expr)") |}]
 ;;
 
-(* [%expect *)
-(*   {| *)
-  (*   e0 list -> e0 -> e0 *)
-  (*   e0 list -> e0 -> e0 *)
-  (*   (error ("types failed to unify" "c0 list" int)) *)
-  (*   (error "Failed to parse (b expr)") |}] *)
-
 let%expect_test "type_def_record" =
   let lit =
     Ast.(

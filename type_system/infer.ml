@@ -1599,19 +1599,7 @@ let pop_module : (string * Typed_ast.module_) state_result_m =
 ;;
 
 let pop_module_and_add ~module_bindings =
-  let open State.Result.Let_syntax in
-  let%bind state = State.Result.get in
-  let { current_name; previous_modules } = state.module_history in
-  let%bind current_module_binding, module_history =
-    match previous_modules with
-    | [] -> State.Result.error [%message "No previous modules"]
-    | (name, current_module_binding) :: xs ->
-      return
-        (current_module_binding, { current_name = name; previous_modules = xs })
-  in
-  let%bind () =
-    State.Result.put { state with current_module_binding; module_history }
-  in
+  let%bind.State.Result current_name, _ = pop_module in
   add_module ~name:current_name ~module_bindings
 ;;
 
