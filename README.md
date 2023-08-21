@@ -26,13 +26,15 @@ reason for being unconventional)
 let y = "hiii" in fun _ -> y
 ```
 and
+
 ```
 let x = 1 in
 let y = @x in
 fun _ ->
   let _ = y in
   "result"
-```.
+```
+.
 
 Currently values can't be polymorphic over different closure/function types, other than closing over
 polymorphic values.
