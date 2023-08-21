@@ -2151,12 +2151,21 @@ and add_nonrec_bindings ~binding ~expr ~add_var_mono =
   let%map () = unify mono mono' in
   binding, (inner, mono), vars
 
+and check_rec_rhs expr =
+  match expr with
+  | Ast.Lambda _ -> State.Result.return ()
+  | _ ->
+    State.Result.error
+      [%message
+        "Only functions are allowed in rec bindings" ~got:(expr : Ast.expr)]
+
 and add_rec_bindings l ~(add_var : add_var_t) ~pop_var =
   let open State.Result.Let_syntax in
   let%bind () = incr_abstraction_level in
   let%bind bindings =
     State.Result.all
       (List.map l ~f:(fun (binding, expr) ->
+         let%bind () = check_rec_rhs expr in
          let%map _, b =
            gen_binding_ty_vars ~initial_vars:[] ~binding ~add_var
          in
