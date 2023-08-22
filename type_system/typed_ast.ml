@@ -167,4 +167,88 @@ and module_impl =
 
 let empty_data = Here []
 
+let rec map_let_def_monos_m ~f (let_def : let_def) =
+  let open State.Result.Let_syntax in
+  match let_def with
+  | Rec l ->
+    let%map l = State.Result.all @@ List.map l ~f:(on_each_binding ~f) in
+    Rec l
+  | Nonrec (a, b) ->
+    let%map x = on_each_binding ~f (a, b) in
+    Nonrec x
+
+and on_each_binding ~f (a, b) =
+  let%map.State.Result b = map_expr_monos_m ~f b in
+  a, b
+
+and map_expr_monos_m ~f ((expr_inner, mono) : expr) =
+  let open State.Result.Let_syntax in
+  let%bind mono = f mono in
+  let%map expr_inner =
+    match expr_inner with
+    | Node n ->
+      let%map n = map_node_monos_m ~f n in
+      Node n
+    | If (a, b, c) ->
+      let%bind a = map_expr_monos_m ~f a in
+      let%bind b = map_expr_monos_m ~f b in
+      let%map c = map_expr_monos_m ~f c in
+      If (a, b, c)
+    | Lambda (a, b) ->
+      let%map b = map_expr_monos_m ~f b in
+      Lambda (a, b)
+    | App (a, b) ->
+      let%bind a = map_expr_monos_m ~f a in
+      let%map b = map_expr_monos_m ~f b in
+      App (a, b)
+    | Let_in (l, e) ->
+      let%bind l = map_let_def_monos_m ~f l in
+      let%map e = map_expr_monos_m ~f e in
+      Let_in (l, e)
+    | Ref e ->
+      let%map e = map_expr_monos_m ~f e in
+      Ref e
+    | Deref e ->
+      let%map e = map_expr_monos_m ~f e in
+      Deref e
+    | Field_access (e, s) ->
+      let%map e = map_expr_monos_m ~f e in
+      Field_access (e, s)
+    | Field_set (a, b, c) ->
+      let%bind a = map_expr_monos_m ~f a in
+      let%map c = map_expr_monos_m ~f c in
+      Field_set (a, b, c)
+    | Match (e, binding_list) ->
+      let%bind e = map_expr_monos_m ~f e in
+      let%map binding_list =
+        State.Result.all @@ List.map binding_list ~f:(on_each_binding ~f)
+      in
+      Match (e, binding_list)
+  in
+  expr_inner, mono
+
+and map_node_monos_m ~f (node : node) =
+  let open State.Result.Let_syntax in
+  match node with
+  | Wrapped e ->
+    let%map inner = Qualified.map_m e ~f:(map_expr_monos_m ~f) in
+    Wrapped inner
+  | Tuple l ->
+    let%map inner =
+      Qualified.map_m l ~f:(fun l ->
+        State.Result.all @@ List.map l ~f:(map_expr_monos_m ~f))
+    in
+    Tuple inner
+  | Record m ->
+    let%map m =
+      Qualified.map_m m ~f:(fun m ->
+        Map.fold m ~init:(return Lowercase.Map.empty) ~f:(fun ~key ~data acc ->
+          let%bind acc = acc in
+          let%map data = map_expr_monos_m ~f data in
+          Map.set acc ~key ~data))
+    in
+    Record m
+  | Var (_, _) | Literal _ | Constructor _ -> return node
+;;
+
 (* TODO: pretty print typed ast*)

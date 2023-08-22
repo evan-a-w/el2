@@ -8,7 +8,9 @@ However, the memory model of evanlang2 is much closer to C. This means that func
 must be monomorphized, unlike in OCaml. This also means that higher order functions / partial
 application doesn't work quite as nicely. My current semi-solution for this is that there
 are two types of functions - raw functions (just a function pointer) and closures, and closures
-store along with them information about the memory representation of values it closes over.
+store along with them information about the memory representation of values it closes over. This
+is reasonably similar to C++ and rust which create a unique type for each closure, but it seems
+like it is strictly more flexible.
 
 This means that, for instance, two closures that close over values of the same type can be used in the same place, eg.
 ```
@@ -34,7 +36,6 @@ fun _ ->
   let _ = y in
   "result"
 ```
-.
 
 Currently values can't be polymorphic over different closure/function types, other than closing over
 polymorphic values.

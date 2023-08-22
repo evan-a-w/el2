@@ -20,21 +20,6 @@ type binding_state =
   }
 [@@deriving sexp, equal, compare, fields]
 
-let append_to_path path uppercase =
-  let rec inner = function
-    | Qualified.Unqualified name ->
-      Qualified.Qualified (name, Unqualified uppercase)
-    | Qualified (name, rest) -> Qualified.Qualified (name, inner rest)
-  in
-  inner path
-;;
-
-let rec pop_path = function
-  | Qualified.Unqualified _ as x -> x
-  | Qualified (name, Unqualified _) -> Qualified.Unqualified name
-  | Qualified (name, rest) -> Qualified.Qualified (name, pop_path rest)
-;;
-
 type state =
   { mono_ufds : Mono_ufds.t
   ; mem_rep_ufds : Mem_rep.Abstract_ufds.t
@@ -1572,7 +1557,7 @@ let change_to_new_module name =
   let%bind.State.Result state = State.Result.get in
   change_to_module
     name
-    (empty_module_bindings (append_to_path state.current_path name))
+    (empty_module_bindings (Module_path.append state.current_path name))
 ;;
 
 let pop_module : (string * Typed_ast.module_) state_result_m =
@@ -1589,7 +1574,7 @@ let pop_module : (string * Typed_ast.module_) state_result_m =
     | (name, current_module_binding) :: xs ->
       ( current_module_binding
       , { current_name = name; previous_modules = xs }
-      , pop_path state.current_path )
+      , Module_path.pop state.current_path )
   in
   let%map () =
     State.Result.put
@@ -2642,8 +2627,18 @@ and type_toplevel (toplevel : Ast.toplevel) =
   | Ast.Module_def { module_description; module_def } ->
     type_module ~module_description ~module_def
 
+and substitute_toplevel =
+  let open State.Result.Let_syntax in
+  function
+  | Typed_ast.Type_def _ as x -> return x
+  | Typed_ast.Module_def _ as x -> return x
+  | Typed_ast.Let let_def ->
+    let%map let_def = Typed_ast.map_let_def_monos_m ~f:apply_substs let_def in
+    Typed_ast.Let let_def
+
 and type_toplevel_list (l : Ast.t) =
-  State.Result.all (List.map l ~f:type_toplevel)
+  let%bind.State.Result l = State.Result.all (List.map l ~f:type_toplevel) in
+  State.Result.all @@ List.map l ~f:substitute_toplevel
 ;;
 
 let rec replace_type_name ~type_name (mono : mono) =

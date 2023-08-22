@@ -81,7 +81,24 @@ let rec get_mono_from_poly_without_gen = function
   | Forall (_, p) -> get_mono_from_poly_without_gen p
 ;;
 
-module Module_path = Qualified.Make (Uppercase)
+module Module_path = struct
+  include Qualified.Make (Uppercase)
+
+  let append t uppercase =
+    let rec inner = function
+      | Qualified.Unqualified name ->
+        Qualified.Qualified (name, Unqualified uppercase)
+      | Qualified (name, rest) -> Qualified.Qualified (name, inner rest)
+    in
+    inner t
+  ;;
+
+  let rec pop = function
+    | Qualified.Unqualified _ as x -> x
+    | Qualified (name, Unqualified _) -> Qualified.Unqualified name
+    | Qualified (name, rest) -> Qualified.Qualified (name, pop rest)
+  ;;
+end
 
 type 'data module_bindings =
   { path : Uppercase.t Qualified.t
