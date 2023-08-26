@@ -68,3 +68,37 @@ let%expect_test "two_arg_and_closed_inner" =
       ];
   [%expect {| d0 -{string}> c0 -{int|string}> string |}]
 ;;
+
+let%expect_test "list map" =
+  infer_and_print_mono
+    ~print_state:false
+    ~programs:
+      [ {|
+        let rec map = fun f x ->
+          match x with
+          | Nil -> Nil
+          | Cons (x, xs) -> Cons (f x, map f xs) in
+        map
+        |}
+      ];
+  [%expect {| (m0 -> l0) -> m0 list -> l0 list |}]
+;;
+
+let%expect_test "list map generic" =
+  infer_and_print_mono
+    ~print_state:false
+    ~programs:
+      [ {|
+        let outer = "hi" in
+        let a = fun x -> outer in
+        let b = fun x -> "hi" in
+        let list = Cons (1, Cons (2, Nil)) in
+        let rec map = fun f x ->
+          match x with
+          | Nil -> Nil
+          | Cons (x, xs) -> Cons (f x, map f xs) in
+        (map a list, map b list)
+        |}
+      ];
+  [%expect {| (string list, string list) |}]
+;;

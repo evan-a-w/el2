@@ -499,12 +499,12 @@ and show_mono mono =
   | Weak (s, _) | TyVar (s, _) -> return s
   | Named proof -> show_type_proof proof
   | Function (a, b) ->
-    let%bind a = show_mono a in
+    let%bind a = show_mono_parenthized_functions a in
     let%map b = show_mono b in
     a ^ " -> " ^ b
   | Closure (a, b, closed) ->
     let%bind list = show_closed_monos closed in
-    let%bind a = show_mono a in
+    let%bind a = show_mono_parenthized_functions a in
     let%map b = show_mono b in
     a ^ [%string " -%{list}> "] ^ b
   | Tuple l ->
@@ -513,6 +513,13 @@ and show_mono mono =
   | Reference m ->
     let%map m = show_mono m in
     "@" ^ m
+
+and show_mono_parenthized_functions mono =
+  let open State.Result.Let_syntax in
+  let%map s = show_mono mono in
+  match mono with
+  | Function (_, _) | Closure (_, _, _) -> "(" ^ s ^ ")"
+  | _ -> s
 ;;
 
 let rec split_poly = function
