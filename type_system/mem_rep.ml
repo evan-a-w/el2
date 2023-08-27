@@ -107,13 +107,6 @@ let class_single ~equivalences mem_rep =
     Size_class.Map.add_int equivalences ~key:8 ~data:mem_rep
 ;;
 
-(* | `Union x -> *)
-(*   let max = Uppercase.Map.fold x ~init:None ~f:(fun ~key:_ ~data acc -> *)
-(*       match acc with *)
-(*       | None -> Some data *)
-(*       | Some other -> Size_class.max data other *)
-(*              ) in *)
-
 module Abstract_ufds = Ufds.Make (Abstract)
 
 let find x =
