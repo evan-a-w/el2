@@ -103,3 +103,21 @@ let%expect_test "list map generic over different closures" =
   [%expect
     {| ((a1 -{y0}> z0) -> a1 list -> z0 list, b1 -{b64}> string, c1 -> string, string list, string list) |}]
 ;;
+
+let%expect_test "list map with annotated func not generic" =
+  infer_and_print_mono
+    ~print_state:false
+    ~programs:
+      [ {|
+        let outer = "hi" in
+        let a = fun x -> outer in
+        let b = fun x -> "hi" in
+        let list = Cons (1, Cons (2, Nil)) in
+        let rec map = fun (f : a -> b) x ->
+          match x with
+          | Nil -> Nil
+          | Cons (x, xs) -> Cons (f x, map f xs) in
+        (map a list, map b list)
+        |}
+      ]
+;;
