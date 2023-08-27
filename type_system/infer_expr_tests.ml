@@ -1,9 +1,12 @@
 open! Core
+open! Inference_state
 open! Infer
 open! Ty
 open! Shared
 open! Frontend
+open! Monos
 open! State.Result.Let_syntax
+open! Type_defs
 
 let define_types ~type_exprs =
   let action type_expr =
