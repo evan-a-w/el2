@@ -102,10 +102,9 @@ and unify mono1 mono2 =
   | Function (x1, x2), Function (y1, y2) ->
     let%bind () = unify x1 y1 in
     unify x2 y2
-  | ( Function (x1, x2)
-    , Closure (y1, y2, { closure_mem_rep = Mem_rep.Closed `Bits0; _ }) )
-  | ( Closure (x1, x2, { closure_mem_rep = Mem_rep.Closed `Bits0; _ })
-    , Function (y1, y2) ) ->
+  | Function (x1, x2), Closure (y1, y2, { closure_mem_rep; _ })
+  | Closure (x1, x2, { closure_mem_rep; _ }), Function (y1, y2) ->
+    let%bind () = unify_mem_rep closure_mem_rep (Mem_rep.Closed `Bits0) in
     let%bind () = unify x1 y1 in
     unify x2 y2
   | ( Closure (x1, x2, { closure_mem_rep = m1; _ })
@@ -169,10 +168,11 @@ let rec unify_less_general mono1 mono2 =
   | Function (x1, x2), Function (y1, y2) ->
     let%bind () = unify_less_general x1 y1 in
     unify_less_general x2 y2
-  | ( Function (x1, x2)
-    , Closure (y1, y2, { closure_mem_rep = Mem_rep.Closed `Bits0; _ }) )
-  | ( Closure (x1, x2, { closure_mem_rep = Mem_rep.Closed `Bits0; _ })
-    , Function (y1, y2) ) ->
+  | Function (x1, x2), Closure (y1, y2, { closure_mem_rep; _ })
+  | Closure (x1, x2, { closure_mem_rep; _ }), Function (y1, y2) ->
+    let%bind () =
+      unify_mem_rep_less_general closure_mem_rep (Mem_rep.Closed `Bits0)
+    in
     let%bind () = unify_less_general x1 y1 in
     unify_less_general x2 y2
   | ( Closure (x1, x2, { closure_mem_rep = m1; _ })

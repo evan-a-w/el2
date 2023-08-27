@@ -81,7 +81,7 @@ let%expect_test "list map" =
         map
         |}
       ];
-  [%expect {| (m0 -> l0) -> m0 list -> l0 list |}]
+  [%expect {| (r0 -{p0}> q0) -> r0 list -> q0 list |}]
 ;;
 
 let%expect_test "list map generic" =

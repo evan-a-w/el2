@@ -626,28 +626,19 @@ and type_expr expr =
     let%bind ((_, func_mono) as func_expr) = type_expr func in
     let%bind ((_, arg_mono) as arg_expr) = type_expr arg in
     let%bind res_mono = gen_ty_var in
-    let%bind state = State.Result.get in
-    let non_closed () =
-      let%bind () = unify func_mono (Function (arg_mono, res_mono)) in
-      apply_substs res_mono
+    let%bind sym = State.map ~f:Result.return gensym in
+    let%bind () =
+      unify
+        func_mono
+        (Closure
+           ( arg_mono
+           , res_mono
+           , { closure_mem_rep = Mem_rep.Any sym
+             ; closed_vars = []
+             ; closed_args = []
+             } ))
     in
-    let closed () =
-      match func_mono with
-      | Closure (a, b, _) ->
-        let%bind () = unify a arg_mono in
-        let%bind () = unify b res_mono in
-        apply_substs res_mono
-      | _ -> State.Result.error [%sexp 1]
-    in
-    let%bind res_mono =
-      match%bind.State non_closed () with
-      | Ok res_mono -> return res_mono
-      | Error _ as err ->
-        let%bind () = State.Result.put state in
-        (match%map.State closed () with
-         | Ok _ as x -> x
-         | Error _ -> err)
-    in
+    let%bind res_mono = apply_substs res_mono in
     (Typed_ast.App (func_expr, arg_expr), res_mono) |> substitute
   | Typed (expr, ty) ->
     let%bind expr_inner, mono = type_expr expr in

@@ -31,8 +31,6 @@ let infer_expr ~programs ~print_state ~print =
   let action program : unit state_result_m =
     let%bind () = define_types ~type_exprs in
     let%bind expr = Parser.try_parse Parser.parse_one program |> State.return in
-    (* let%bind expr = replace_user_ty_vars expr in *)
-    (* print_s [%message (expr : Ast.expr)]; *)
     let%bind x = type_expr expr in
     print x
   in
@@ -180,7 +178,7 @@ let%expect_test "let_expr3" =
   infer_and_print_mono
     ~print_state:false
     ~programs:[ {| let x = fun x -> (fun x -> x) (fun x -> x) x in x |} ];
-  [%expect {| f0 -> f0 |}]
+  [%expect {| h0 -> h0 |}]
 ;;
 
 let%expect_test "let_expr_tag1" =
@@ -258,7 +256,9 @@ let%expect_test "last_list_record_occurs" =
     {|
       (error
        ("occurs check failed" (a a0)
-        (mono (Function (TyVar a0 (Any a0)) (TyVar g0 (Any g0)))))) |}]
+        (mono
+         (Closure (TyVar a0 (Any a0)) (TyVar g0 (Any g0))
+          ((closure_mem_rep (Any h0)) (closed_args ()) (closed_vars ())))))) |}]
 ;;
 
 let%expect_test "head nonempty list" =
@@ -274,7 +274,7 @@ let%expect_test "head nonempty list" =
            head |}
       ];
   [%expect {|
-    j0 nonempty_list -> j0 |}]
+    k0 nonempty_list -> k0 |}]
 ;;
 
 let%expect_test "head list value" =
@@ -336,7 +336,7 @@ let%expect_test "recursive last not pointer" =
            in last { value : 1; next : Some { value : 2; next : None } } |}
       ];
   [%expect {|
-    (error ("failed to unify types" "@i0 node" "int node")) |}]
+    (error ("failed to unify types" "@j0 node" "int node")) |}]
 ;;
 
 let%expect_test "type annot1" =
@@ -415,7 +415,7 @@ let%expect_test "rec tail nonempty list" =
            tail |}
       ];
   [%expect {|
-    h0 nonempty_list -> h0 |}]
+    i0 nonempty_list -> i0 |}]
 ;;
 
 let%expect_test "rec tail list" =
@@ -431,7 +431,7 @@ let%expect_test "rec tail list" =
            tail |}
       ];
   [%expect {|
-    k0 list -> k0 option |}]
+    m0 list -> m0 option |}]
 ;;
 
 let%expect_test "rec tail nonempty list" =
@@ -477,7 +477,7 @@ let%expect_test "head nonempty list rec needless" =
            head |}
       ];
   [%expect {|
-    k0 nonempty_list -> k0 |}]
+    l0 nonempty_list -> l0 |}]
 ;;
 
 let%expect_test "record create" =
@@ -529,7 +529,7 @@ let%expect_test "recursive last" =
            in last |}
       ];
   [%expect {|
-      i0 node -> i0 |}]
+      j0 node -> j0 |}]
 ;;
 
 let%expect_test "recursive last value" =
