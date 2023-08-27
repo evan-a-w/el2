@@ -165,7 +165,8 @@ let gen_var var ~(add_var : add_var_t) ~pop_var =
 let is_plain_function poly =
   let mono = mono_of_poly_no_inst poly in
   match%map.State.Result reach_end_mono mono with
-  | Function (_, _) -> true
+  | Function (_, _) | Closure (_, _, { closed_vars = []; closed_args = []; _ })
+    -> true
   | Weak _ | TyVar _ | Tuple _ | Reference _ | Named _ | Closure (_, _, _) ->
     false
 ;;
