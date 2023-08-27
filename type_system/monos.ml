@@ -38,7 +38,7 @@ let rec show_type_proof { absolute_type_name; ordering; tyvar_map; _ } =
   prefix_string ^ type_string
 
 and show_closed_monos { closure_mem_rep; _ } =
-  State.Result.return @@ Mem_rep.show_abstract closure_mem_rep
+  State.Result.return ("{" ^ Mem_rep.show_abstract closure_mem_rep ^ "}")
 (* let open State.Result.Let_syntax in *)
 (* let%map list = *)
 (*   List.fold closed ~init:(return []) ~f:(fun acc (_, mono) -> *)
@@ -146,15 +146,10 @@ let rec mem_rep_of_mono = function
   | TyVar (_, rep) -> rep
   | Function _ -> Mem_rep.Closed `Reg
   | Closure (_, _, { closure_mem_rep; _ }) ->
-    Mem_rep.Closed
-      (`Native_struct [ "fp", Mem_rep.Closed `Reg; "state", closure_mem_rep ])
+    Mem_rep.Closed (`Struct [ Mem_rep.Closed `Reg; closure_mem_rep ])
   | Tuple l ->
-    let list =
-      List.mapi l ~f:(fun i x ->
-        let m = mem_rep_of_mono x in
-        [%string "_%{i#Int}"], m)
-    in
-    Mem_rep.Closed (`Native_struct list)
+    let list = List.map l ~f:mem_rep_of_mono in
+    Mem_rep.Closed (`Struct list)
   | Reference m ->
     let m = mem_rep_of_mono m in
     Mem_rep.Closed (`Pointer m)
@@ -163,12 +158,8 @@ let rec mem_rep_of_mono = function
 and mem_rep_of_user_type = function
   | Abstract x -> x
   | Record l ->
-    let list =
-      List.map l ~f:(fun (a, (m, _)) ->
-        let m = mem_rep_of_mono m in
-        a, m)
-    in
-    Mem_rep.Closed (`Native_struct list)
+    let list = List.map l ~f:(fun (_, (m, _)) -> mem_rep_of_mono m) in
+    Mem_rep.Closed (`Struct list)
   | Enum l ->
     let list =
       List.map l ~f:(fun (_, m) ->

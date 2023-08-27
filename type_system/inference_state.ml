@@ -25,7 +25,8 @@ type state =
   ; current_module_binding : Typed_ast.module_
   ; current_path : Module_path.t
   ; local_vars :
-      (poly * binding_id * bool (* rec binding *)) list Lowercase.Map.t
+      (poly * binding_id * [ `Rec_or_global | `Not ] * [ `Arg | `Not ]) list
+      Lowercase.Map.t
   ; module_history : module_history
   ; symbol_n : int
   ; binding_id_n : int
@@ -196,7 +197,7 @@ let add_module_var ?binding_id name poly =
   State.Result.put { state with current_module_binding; binding_map }
 ;;
 
-let add_local_var ~is_rec ?binding_id name poly =
+let add_local_var ~is_rec ~is_arg ?binding_id name poly =
   let open State.Result.Let_syntax in
   let%bind binding_id =
     match binding_id with
@@ -204,8 +205,21 @@ let add_local_var ~is_rec ?binding_id name poly =
     | Some x -> return x
   in
   let%bind state = State.Result.get in
+  let is_rec =
+    match is_rec with
+    | true -> `Rec_or_global
+    | false -> `Not
+  in
+  let is_arg =
+    match is_arg with
+    | true -> `Arg
+    | false -> `Not
+  in
   let local_vars =
-    Map.add_multi state.local_vars ~key:name ~data:(poly, binding_id, is_rec)
+    Map.add_multi
+      state.local_vars
+      ~key:name
+      ~data:(poly, binding_id, is_rec, is_arg)
   in
   let binding_map =
     Map.set state.binding_map ~key:binding_id ~data:{ poly; name }
@@ -382,7 +396,7 @@ let lookup_var qualified_name : _ state_result_m =
           Map.find module_bindings.toplevel_vars type_name)
     in
     (match res with
-     | Some ((a, b) :: _) -> State.Result.return (a, b, true)
+     | Some ((a, b) :: _) -> State.Result.return (a, b, `Rec_or_global, `Not)
      | None | Some [] ->
        State.Result.error
          [%message
@@ -639,22 +653,9 @@ let rec map_abstract_anys_m
   | Closed (`Pointer m) ->
     let%map m = map_abstract_anys_m ~f m in
     Closed (`Pointer m)
-  | Closed (`Native_struct l) ->
-    let%map l =
-      State.Result.all
-      @@ List.map l ~f:(fun (s, a) ->
-        let%map a = map_abstract_anys_m ~f a in
-        s, a)
-    in
-    Closed (`Native_struct l)
-  | Closed (`C_struct l) ->
-    let%map l =
-      State.Result.all
-      @@ List.map l ~f:(fun (s, a) ->
-        let%map a = map_abstract_anys_m ~f a in
-        s, a)
-    in
-    Closed (`C_struct l)
+  | Closed (`Struct l) ->
+    let%map l = State.Result.all @@ List.map l ~f:(map_abstract_anys_m ~f) in
+    Closed (`Struct l)
   | Closed (`Union l) ->
     let%map l = State.Result.all @@ List.map l ~f:(map_abstract_anys_m ~f) in
     Closed (`Union l)
@@ -676,20 +677,9 @@ let rec map_abstract_anys
   | Closed (`Pointer m) ->
     let m = map_abstract_anys ~f m in
     Closed (`Pointer m)
-  | Closed (`Native_struct l) ->
-    let l =
-      List.map l ~f:(fun (s, a) ->
-        let a = map_abstract_anys ~f a in
-        s, a)
-    in
-    Closed (`Native_struct l)
-  | Closed (`C_struct l) ->
-    let l =
-      List.map l ~f:(fun (s, a) ->
-        let a = map_abstract_anys ~f a in
-        s, a)
-    in
-    Closed (`C_struct l)
+  | Closed (`Struct l) ->
+    let l = List.map l ~f:(map_abstract_anys ~f) in
+    Closed (`Struct l)
   | Closed (`Union l) ->
     let l = List.map l ~f:(map_abstract_anys ~f) in
     Closed (`Union l)

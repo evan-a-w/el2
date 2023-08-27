@@ -34,7 +34,14 @@ let rec type_of_type_expr type_expr : mono state_result_m =
     let%map first = type_of_type_expr first
     and second = type_of_type_expr second in
     Function (first, second)
-  | Closure (_, _, _) -> failwith "TODO"
+  | Closure (a, v, b) ->
+    let%map first = type_of_type_expr a
+    and second = type_of_type_expr b in
+    Closure
+      ( first
+      , second
+      , { closure_mem_rep = Mem_rep.Any v; closed_args = []; closed_vars = [] }
+      )
   | Ast.Type_expr.Single name -> lookup_type name
   | Ast.Type_expr.Multi (first, second) ->
     let%bind constructor_arg, _, type_proof = lookup_type_constructor second in

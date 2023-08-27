@@ -20,14 +20,14 @@ let%expect_test "single_arg_closed_int" =
       [ {| let x = 1 in
            let val = fun () -> x in
            val |} ];
-  [%expect {| unit -{int}> int |}]
+  [%expect {| unit -{b32}> int |}]
 ;;
 
 let%expect_test "two_arg_no_extra" =
   infer_and_print_mono
     ~print_state:false
     ~programs:[ {| let val = fun a b -> a in val |} ];
-  [%expect {| d0 -> c0 -{d0}> d0 |}]
+  [%expect {| d0 -> c0 -> d0 |}]
 ;;
 
 let%expect_test "two_arg_and_closed_outer" =
@@ -38,7 +38,7 @@ let%expect_test "two_arg_and_closed_outer" =
            let val = fun a b -> outer
            in val |}
       ];
-  [%expect {| d0 -{string}> c0 -{string}> string |}]
+  [%expect {| d0 -{b64}> c0 -{b64}> string |}]
 ;;
 
 let%expect_test "rec_single_arg_no_closed" =
@@ -66,7 +66,7 @@ let%expect_test "two_arg_and_closed_inner" =
                let _ = y in outer
            in val |}
       ];
-  [%expect {| d0 -{string}> c0 -{int|string}> string |}]
+  [%expect {| d0 -{b64}> c0 -{&}> string |}]
 ;;
 
 let%expect_test "list map" =

@@ -102,6 +102,12 @@ and unify mono1 mono2 =
   | Function (x1, x2), Function (y1, y2) ->
     let%bind () = unify x1 y1 in
     unify x2 y2
+  | ( Function (x1, x2)
+    , Closure (y1, y2, { closure_mem_rep = Mem_rep.Closed `Bits0; _ }) )
+  | ( Closure (x1, x2, { closure_mem_rep = Mem_rep.Closed `Bits0; _ })
+    , Function (y1, y2) ) ->
+    let%bind () = unify x1 y1 in
+    unify x2 y2
   | ( Closure (x1, x2, { closure_mem_rep = m1; _ })
     , Closure (y1, y2, { closure_mem_rep = m2; _ }) ) ->
     let%bind () = unify x1 y1 in
@@ -160,6 +166,15 @@ let rec unify_less_general mono1 mono2 =
     let%bind () = occurs_check x mono1 in
     State.map (union mono1 mono2) ~f:Result.return
   | Reference x, Reference y -> unify_less_general x y
+  | Function (x1, x2), Function (y1, y2) ->
+    let%bind () = unify_less_general x1 y1 in
+    unify_less_general x2 y2
+  | ( Function (x1, x2)
+    , Closure (y1, y2, { closure_mem_rep = Mem_rep.Closed `Bits0; _ }) )
+  | ( Closure (x1, x2, { closure_mem_rep = Mem_rep.Closed `Bits0; _ })
+    , Function (y1, y2) ) ->
+    let%bind () = unify_less_general x1 y1 in
+    unify_less_general x2 y2
   | ( Closure (x1, x2, { closure_mem_rep = m1; _ })
     , Closure (y1, y2, { closure_mem_rep = m2; _ }) ) ->
     let%bind () = unify_less_general x1 y1 in

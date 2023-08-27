@@ -210,8 +210,8 @@ let%expect_test "let_expr_tag1" =
       ];
   [%expect
     {|
-    e0 list -> e0 -{e0 list}> e0
-    e0 list -> e0 -{e0 list}> e0
+    e0 list -> e0 -> e0
+    e0 list -> e0 -> e0
     (error ("types failed to unify" "c0 list" int))
     (error "Failed to parse (b expr)") |}]
 ;;
@@ -626,5 +626,5 @@ let%expect_test "closure" =
            let val = fun () -> x in
            val |} ];
   [%expect {|
-    unit -{int}> int |}]
+    unit -{b32}> int |}]
 ;;

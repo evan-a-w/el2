@@ -154,7 +154,7 @@ let rec gen_binding_ty_vars
 
 let gen_var var ~(add_var : add_var_t) ~pop_var =
   let open State.Result.Let_syntax in
-  let%bind value, binding_id, _ = lookup_var (Qualified.Unqualified var) in
+  let%bind value, binding_id, _, _ = lookup_var (Qualified.Unqualified var) in
   let%bind () = pop_var var in
   let%bind mono = inst_result value in
   let%bind mono = apply_substs mono in
@@ -227,10 +227,10 @@ and already_bound_node ~acc ~shadowed (node : Ast.node) =
   | Ast.Var (Qualified.Unqualified s) ->
     let is_shadowed = Set.mem shadowed s in
     (match%bind lookup_local_var s with
-     | Some (poly, binding_id, false) when not is_shadowed ->
+     | Some (poly, binding_id, `Not, arg) when not is_shadowed ->
        (match%map is_plain_function poly with
         | true -> acc
-        | false -> binding_id :: acc)
+        | false -> (binding_id, arg) :: acc)
      | _ -> return acc)
   | Ast.Var _ | Ast.Literal _ | Ast.Constructor _ -> return acc
   | Ast.Tuple l ->
@@ -258,7 +258,7 @@ let rec type_node node =
   match node with
   | Ast.Literal literal -> type_literal literal
   | Ast.Var var_name ->
-    let%bind poly, binding_id, _ = lookup_var var_name in
+    let%bind poly, binding_id, _, _ = lookup_var var_name in
     let%map mono = inst_result poly in
     Typed_ast.(Node (Var (var_name, binding_id))), mono
   | Ast.Tuple qualified_tuple ->
@@ -325,10 +325,10 @@ and add_module_var_mono ~generalize ~value_restriction var mono =
   let%bind poly = poly_of_mono ~generalize ~value_restriction mono in
   add_module_var var poly
 
-and add_local_var_mono ~is_rec ~generalize ~value_restriction var mono =
+and add_local_var_mono ~is_rec ~is_arg ~generalize ~value_restriction var mono =
   let open State.Result.Let_syntax in
   let%bind poly = poly_of_mono ~generalize ~value_restriction mono in
-  add_local_var ~is_rec var poly
+  add_local_var ~is_rec ~is_arg var poly
 
 and type_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono =
   let open State.Result.Let_syntax in
@@ -540,7 +540,7 @@ and add_rec_bindings l ~(add_var : add_var_t) ~pop_var =
          b, value_restriction expr))
   in
   let act_on_var var mono =
-    let%bind current, _, _ = lookup_var (Qualified.Unqualified var) in
+    let%bind current, _, _, _ = lookup_var (Qualified.Unqualified var) in
     let mono' = mono_of_poly_no_inst current in
     let%bind () = unify mono mono' in
     add_var var (Mono mono)
@@ -665,7 +665,7 @@ and type_expr expr =
       add_nonrec_bindings
         ~binding
         ~expr:expr1
-        ~add_var_mono:(add_local_var_mono ~is_rec:false)
+        ~add_var_mono:(add_local_var_mono ~is_rec:false ~is_arg:false)
     in
     let%bind ((_, res_mono) as res_expr) = type_expr expr2 in
     let%bind () = State.Result.all_unit (List.map vars ~f:pop_local_var) in
@@ -674,7 +674,7 @@ and type_expr expr =
   | Let_in (Ast.Rec l, expr2) ->
     let%bind bindings, exprs, vars =
       add_rec_bindings
-        ~add_var:(add_local_var ~is_rec:true)
+        ~add_var:(add_local_var ~is_rec:true ~is_arg:false)
         ~pop_var:pop_local_var
         l
     in
@@ -698,7 +698,7 @@ and type_expr expr =
              ~expr2
              ~generalize:false
              ~value_restriction:false
-             ~add_var_mono:(add_local_var_mono ~is_rec:false)
+             ~add_var_mono:(add_local_var_mono ~is_rec:false ~is_arg:false)
              ~pop_var:pop_local_var))
     in
     let%map mono =
@@ -721,17 +721,36 @@ and type_expr expr =
         ~expr2:body
         ~generalize:false
         ~value_restriction:false
-        ~add_var_mono:(add_local_var_mono ~is_rec:false)
+        ~add_var_mono:(add_local_var_mono ~is_rec:false ~is_arg:true)
         ~pop_var:pop_local_var
     in
     let%bind var = apply_substs var in
-    let%bind closed_vars = already_bound body in
-    let%bind closed_vars =
+    let%bind closed = already_bound body in
+    let%bind closed =
       State.Result.all
-      @@ List.map closed_vars ~f:(fun binding_id ->
+      @@ List.map closed ~f:(fun (binding_id, arg) ->
         let%map { poly; _ } = lookup_binding_id binding_id in
         let mono = get_mono_from_poly_without_gen poly in
-        binding_id, mono)
+        binding_id, arg, mono)
+    in
+    let closed_args, closed_vars =
+      List.partition_map closed ~f:(fun (binding_id, arg, mono) ->
+        match arg with
+        | `Arg -> Either.First (binding_id, mono)
+        | `Not -> Either.Second (binding_id, mono))
+    in
+    let closed_arg_mem_reps =
+      List.map closed_args ~f:(fun (_, mono) -> mem_rep_of_mono mono)
+    in
+    let closed_var_mem_reps =
+      List.map closed_vars ~f:(fun (_, mono) -> mem_rep_of_mono mono)
+    in
+    let joined_mem_reps = closed_var_mem_reps @ closed_arg_mem_reps in
+    let closure_mem_rep =
+      match joined_mem_reps with
+      | [] -> Mem_rep.Closed `Bits0
+      | [ x ] -> x
+      | xs -> Mem_rep.Closed (`Struct xs)
     in
     let%map res_mono = apply_substs res_mono in
     (match List.is_empty closed_vars with
@@ -740,7 +759,8 @@ and type_expr expr =
        , Function (var, res_mono) )
      | false ->
        ( Typed_ast.Lambda (binding, (res_inner, res_mono))
-       , Closure (var, res_mono, closed_vars) ))
+       , Closure (var, res_mono, { closed_vars; closed_args; closure_mem_rep })
+       ))
 ;;
 
 let type_let_def (let_def : Ast.let_def) =
