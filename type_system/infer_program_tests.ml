@@ -104,3 +104,24 @@ let%expect_test "program b" =
         	| Pee
     end |}]
 ;;
+
+let program_c =
+  {|
+type has_function = { f : int -> int }
+
+let g = fun { f } -> f |}
+;;
+
+let%expect_test "program c" = run program_c;
+  [%expect {|
+    type has_function = ((f
+      ((Function
+        (Named
+         ((type_name int) (absolute_type_name (Unqualified int)) (ordering ())
+          (tyvar_map ()) (type_id 173207638) (mem_rep (Closed Bits32))))
+        (Named
+         ((type_name int) (absolute_type_name (Unqualified int)) (ordering ())
+          (tyvar_map ()) (type_id 173207638) (mem_rep (Closed Bits32)))))
+       Immutable)))
+
+    let g : has_function -> int -> int |}]

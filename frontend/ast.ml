@@ -16,11 +16,18 @@ module Tuple = struct
   ;;
 end
 
+module Mem_rep = struct
+  type t = string [@@deriving sexp, compare, hash, equal]
+
+  let pprint_t = PPrint.string
+end
+
 module Type_expr = struct
   type t =
     | Pointer of t
     | Single of Lowercase.t Qualified.t
     | Arrow of t * t
+    | Closure of t * Mem_rep.t * t
     | Tuple of t Tuple.t
     | Multi of t * Lowercase.t Qualified.t
   [@@deriving sexp, variants, compare, hash, equal]
@@ -31,6 +38,12 @@ module Type_expr = struct
     | Pointer t -> char '@' ^^ pprint_t t
     | Single x -> Qualified.pprint_t string x
     | Arrow (x, y) -> pprint_t x ^^ string " -> " ^^ pprint_t y
+    | Closure (x, m, y) ->
+      pprint_t x
+      ^^ string " -{"
+      ^^ Mem_rep.pprint_t m
+      ^^ string "}> "
+      ^^ pprint_t y
     | Tuple l -> Tuple.pprint_t pprint_t l
     | Multi (x, y) -> pprint_t x ^^ char ' ' ^^ Qualified.pprint_t string y
   ;;
