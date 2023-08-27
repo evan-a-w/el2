@@ -37,15 +37,16 @@ let rec show_type_proof { absolute_type_name; ordering; tyvar_map; _ } =
   let type_string = Qualified.show Fn.id absolute_type_name in
   prefix_string ^ type_string
 
-and show_closed_monos closed =
-  let open State.Result.Let_syntax in
-  let%map list =
-    List.fold closed ~init:(return []) ~f:(fun acc (_, mono) ->
-      let%bind acc = acc in
-      let%map s = show_mono mono in
-      s :: acc)
-  in
-  "{" ^ String.concat ~sep:"|" list ^ "}"
+and show_closed_monos { closure_mem_rep; _ } =
+  State.Result.return @@ Mem_rep.show_abstract closure_mem_rep
+(* let open State.Result.Let_syntax in *)
+(* let%map list = *)
+(*   List.fold closed ~init:(return []) ~f:(fun acc (_, mono) -> *)
+(*     let%bind acc = acc in *)
+(*     let%map s = show_mono mono in *)
+(*     s :: acc) *)
+(* in *)
+(* "{" ^ String.concat ~sep:"|" list ^ "}" *)
 
 and show_mono mono =
   let open State.Result.Let_syntax in
@@ -140,6 +141,43 @@ let map_user_type user_type ~f =
   map_user_type_m user_type ~f
 ;;
 
+let rec mem_rep_of_mono = function
+  | Weak (_, rep) -> rep
+  | TyVar (_, rep) -> rep
+  | Function _ -> Mem_rep.Closed `Reg
+  | Closure (_, _, { closure_mem_rep; _ }) ->
+    Mem_rep.Closed
+      (`Native_struct [ "fp", Mem_rep.Closed `Reg; "state", closure_mem_rep ])
+  | Tuple l ->
+    let list =
+      List.mapi l ~f:(fun i x ->
+        let m = mem_rep_of_mono x in
+        [%string "_%{i#Int}"], m)
+    in
+    Mem_rep.Closed (`Native_struct list)
+  | Reference m ->
+    let m = mem_rep_of_mono m in
+    Mem_rep.Closed (`Pointer m)
+  | Named t -> t.mem_rep
+
+and mem_rep_of_user_type = function
+  | Abstract x -> x
+  | Record l ->
+    let list =
+      List.map l ~f:(fun (a, (m, _)) ->
+        let m = mem_rep_of_mono m in
+        a, m)
+    in
+    Mem_rep.Closed (`Native_struct list)
+  | Enum l ->
+    let list =
+      List.map l ~f:(fun (_, m) ->
+        Option.value_map m ~default:(Mem_rep.Closed `Bits0) ~f:mem_rep_of_mono)
+    in
+    Mem_rep.Closed (`Union list)
+  | User_mono m -> mem_rep_of_mono m
+;;
+
 let rec map_ty_vars ~f (mono : mono) =
   match mono with
   | TyVar (a, b) -> Option.value (f (a, b)) ~default:mono
@@ -156,8 +194,23 @@ and map_type_proof ~f ({ tyvar_map; _ } as type_proof) =
     tyvar_map = Lowercase.Map.map tyvar_map ~f:(map_ty_vars ~f)
   }
 
-and map_closed_monos ~f closed =
+and map_binding_alist ~f closed =
   List.map ~f:(fun (binding_id, mono) -> binding_id, map_ty_vars ~f mono) closed
+
+and map_closed_monos
+  ~f
+  ({ closed_args; closed_vars; closure_mem_rep } : closure_info)
+  =
+  let closure_mem_rep =
+    map_abstract_anys closure_mem_rep ~f:(fun s ->
+      let mem_rep = Mem_rep.Any s in
+      match f (s, mem_rep) with
+      | None -> mem_rep
+      | Some mono -> mem_rep_of_mono mono)
+  in
+  let closed_args = map_binding_alist ~f closed_args in
+  let closed_vars = map_binding_alist ~f closed_vars in
+  { closure_mem_rep; closed_args; closed_vars }
 ;;
 
 let map_user_type_ty_vars ~f = map_user_type ~f:(map_ty_vars ~f)
@@ -199,13 +252,29 @@ and map_type_proof_m ~f ({ tyvar_map; _ } as type_proof) =
   in
   { type_proof with tyvar_map }
 
-and map_closed_monos_m ~f closed =
+and map_binding_alist_m ~f closed =
   State.Result.all
   @@ List.map
        ~f:(fun (binding_id, mono) ->
          let%map.State.Result mono = map_ty_vars_m ~f mono in
          binding_id, mono)
        closed
+
+and map_closed_monos_m
+  ~f
+  ({ closed_args; closed_vars; closure_mem_rep } : closure_info)
+  =
+  let open State.Result.Let_syntax in
+  let%bind closure_mem_rep =
+    map_abstract_anys_m closure_mem_rep ~f:(fun s ->
+      let mem_rep = Mem_rep.Any s in
+      match%map.State f (s, mem_rep) with
+      | Error _ -> Ok mem_rep
+      | Ok mono -> Ok (mem_rep_of_mono mono))
+  in
+  let%bind closed_args = map_binding_alist_m ~f closed_args in
+  let%map closed_vars = map_binding_alist_m ~f closed_vars in
+  { closure_mem_rep; closed_args; closed_vars }
 ;;
 
 let map_user_type_ty_vars_m ~f = map_user_type_m ~f:(map_ty_vars_m ~f)
@@ -226,10 +295,25 @@ and map_weak_type_proof ~f ({ tyvar_map; _ } as type_proof) =
     tyvar_map = Lowercase.Map.map tyvar_map ~f:(map_weak_vars ~f)
   }
 
-and map_weak_closed_monos ~f closed =
+and map_weak_binding_alist ~f closed =
   List.map
     ~f:(fun (binding_id, mono) -> binding_id, map_weak_vars ~f mono)
     closed
+
+and map_weak_closed_monos
+  ~f
+  ({ closed_args; closed_vars; closure_mem_rep } : closure_info)
+  =
+  let closure_mem_rep =
+    map_abstract_anys closure_mem_rep ~f:(fun s ->
+      let mem_rep = Mem_rep.Any s in
+      match f (s, mem_rep) with
+      | None -> mem_rep
+      | Some mono -> mem_rep_of_mono mono)
+  in
+  let closed_args = map_binding_alist ~f closed_args in
+  let closed_vars = map_binding_alist ~f closed_vars in
+  { closure_mem_rep; closed_args; closed_vars }
 ;;
 
 let map_user_type_weak_vars ~f = map_user_type ~f:(map_weak_vars ~f)
@@ -318,48 +402,6 @@ let inst (poly : poly) : mono state_m =
 ;;
 
 let inst_result x = State.map (inst x) ~f:Result.return
-
-let rec mem_rep_of_mono = function
-  | Weak (_, rep) -> rep
-  | TyVar (_, rep) -> rep
-  | Function _ -> Mem_rep.Closed `Reg
-  | Closure (_, _, rep) ->
-    let list =
-      List.map rep ~f:(fun (binding_id, mono) ->
-        let m = mem_rep_of_mono mono in
-        let name = Int.to_string binding_id in
-        name, m)
-    in
-    Mem_rep.Closed (`Native_struct list)
-  | Tuple l ->
-    let list =
-      List.mapi l ~f:(fun i x ->
-        let m = mem_rep_of_mono x in
-        [%string "_%{i#Int}"], m)
-    in
-    Mem_rep.Closed (`Native_struct list)
-  | Reference m ->
-    let m = mem_rep_of_mono m in
-    Mem_rep.Closed (`Pointer m)
-  | Named t -> t.mem_rep
-
-and mem_rep_of_user_type = function
-  | Abstract x -> x
-  | Record l ->
-    let list =
-      List.map l ~f:(fun (a, (m, _)) ->
-        let m = mem_rep_of_mono m in
-        a, m)
-    in
-    Mem_rep.Closed (`Native_struct list)
-  | Enum l ->
-    let list =
-      List.map l ~f:(fun (_, m) ->
-        Option.value_map m ~default:(Mem_rep.Closed `Bits0) ~f:mem_rep_of_mono)
-    in
-    Mem_rep.Closed (`Union list)
-  | User_mono m -> mem_rep_of_mono m
-;;
 
 let normalize (poly : poly) =
   let count = ref 0 in

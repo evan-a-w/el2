@@ -58,12 +58,15 @@ let reach_end_mono (mono : mono) =
   | mono -> State.Result.return mono
 ;;
 
-let unify_mem_rep m1 m2 =
+let unify_mem_rep' f m1 m2 =
   let open State.Result.Let_syntax in
   let%bind m1 = on_mem_rep_ufds ~f:(Mem_rep.find m1) in
   let%bind m2 = on_mem_rep_ufds ~f:(Mem_rep.find m2) in
-  on_mem_rep_ufds ~f:(Mem_rep.unify m1 m2)
+  on_mem_rep_ufds ~f:(f m1 m2)
 ;;
+
+let unify_mem_rep = unify_mem_rep' Mem_rep.unify
+let unify_mem_rep_less_general = unify_mem_rep' Mem_rep.unify_less_general
 
 let lookup_and_inst_binding_poly binding_id =
   let open State.Result.Let_syntax in
@@ -99,22 +102,11 @@ and unify mono1 mono2 =
   | Function (x1, x2), Function (y1, y2) ->
     let%bind () = unify x1 y1 in
     unify x2 y2
-  | Closure (x1, x2, m1), Closure (y1, y2, m2) ->
+  | ( Closure (x1, x2, { closure_mem_rep = m1; _ })
+    , Closure (y1, y2, { closure_mem_rep = m2; _ }) ) ->
     let%bind () = unify x1 y1 in
     let%bind () = unify x2 y2 in
-    let error () =
-      let%bind m1 = show_closed_monos m1 in
-      let%bind m2 = show_closed_monos m2 in
-      State.Result.error [%message "closure mismatch" m1 m2]
-    in
-    (match List.zip m1 m2 with
-     | Unequal_lengths -> error ()
-     | Ok l ->
-       State.Result.all_unit
-       @@ List.map l ~f:(fun ((_, m1), (_, m2)) ->
-         let m1 = mem_rep_of_mono m1 in
-         let m2 = mem_rep_of_mono m2 in
-         unify_mem_rep m1 m2))
+    unify_mem_rep m1 m2
   | Tuple l1, Tuple l2 -> unify_lists ~unification_error l1 l2
   | _ -> unification_error ()
 
@@ -168,9 +160,11 @@ let rec unify_less_general mono1 mono2 =
     let%bind () = occurs_check x mono1 in
     State.map (union mono1 mono2) ~f:Result.return
   | Reference x, Reference y -> unify_less_general x y
-  | Closure (x1, x2, _), Closure (y1, y2, _) ->
+  | ( Closure (x1, x2, { closure_mem_rep = m1; _ })
+    , Closure (y1, y2, { closure_mem_rep = m2; _ }) ) ->
     let%bind () = unify_less_general x1 y1 in
-    unify_less_general x2 y2
+    let%bind () = unify_less_general x2 y2 in
+    unify_mem_rep_less_general m1 m2
   | Tuple l1, Tuple l2 -> unify_less_general_lists ~unification_error l1 l2
   | _ -> unification_error ()
 

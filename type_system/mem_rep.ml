@@ -57,6 +57,17 @@ end
 
 include T
 
+let show_abstract (abstract : abstract) =
+  match abstract with
+  | Any s -> s
+  | Closed `Bits0 -> "b0"
+  | Closed `Bits8 | Closed `Bits16 | Closed `Bits32 -> "b32"
+  | Closed `Bits64 | Closed `Reg | Closed (`Pointer _) -> "b64"
+  | Closed (`Native_struct _) -> "..."
+  | Closed (`C_struct _) -> "..."
+  | Closed (`Union _) -> "|..."
+;;
+
 type single_mem_rep = abstract single [@@deriving sexp, equal, hash, compare]
 
 (* I don't think i need this at this point!!!! *)
@@ -168,6 +179,62 @@ and unify_mem_rep (x : mem_rep) (y : mem_rep) =
     let%bind y = State.Result.all @@ List.map ~f:find y in
     (match List.zip x y with
      | Ok l -> State.Result.all_unit @@ List.map l ~f:(fun (x, y) -> unify x y)
+     | Unequal_lengths -> unification_error ())
+  | _ -> unification_error ()
+;;
+
+let rec unify_less_general x y =
+  let open State.Result.Let_syntax in
+  let%bind x = find x in
+  let%bind y = find y in
+  if phys_equal x y
+  then return ()
+  else (
+    match x, y with
+    | Closed x, Closed y -> unify_mem_rep_less_general x y
+    | (Any _ as v), (Any _ as o) | (Closed _ as o), (Any _ as v) -> union v o
+    | _ ->
+      State.Result.error
+        [%message "Unification error" (x : abstract) (y : abstract)])
+
+and unify_mem_rep_less_general (x : mem_rep) (y : mem_rep) =
+  let unification_error () =
+    State.Result.error
+      [%message "Unification error" (x : mem_rep) (y : mem_rep)]
+  in
+  let open State.Result.Let_syntax in
+  match x, y with
+  | `Bits0, `Bits0 -> return ()
+  | `Bits8, `Bits8 -> return ()
+  | `Bits16, `Bits16 -> return ()
+  | `Bits32, `Bits32 -> return ()
+  | (`Bits64 | `Reg | `Pointer (_ : Abstract.t)), (`Bits64 | `Reg | `Pointer _)
+    -> return ()
+  | `Union x, `Union y ->
+    let%bind x = State.Result.all @@ List.map ~f:find x in
+    let%bind y = State.Result.all @@ List.map ~f:find y in
+    (match List.zip x y with
+     | Ok l ->
+       State.Result.all_unit
+       @@ List.map l ~f:(fun (x, y) -> unify_less_general x y)
+     | Unequal_lengths -> unification_error ())
+  | `Native_struct x, `Native_struct y ->
+    let%bind x = State.Result.all @@ List.map ~f:(fun (_, x) -> find x) x in
+    let%bind y = State.Result.all @@ List.map ~f:(fun (_, x) -> find x) y in
+    let%bind y = State.Result.all @@ List.map ~f:find y in
+    (match List.zip x y with
+     | Ok l ->
+       State.Result.all_unit
+       @@ List.map l ~f:(fun (x, y) -> unify_less_general x y)
+     | Unequal_lengths -> unification_error ())
+  | `C_struct x, `C_struct y ->
+    let%bind x = State.Result.all @@ List.map ~f:(fun (_, x) -> find x) x in
+    let%bind y = State.Result.all @@ List.map ~f:(fun (_, x) -> find x) y in
+    let%bind y = State.Result.all @@ List.map ~f:find y in
+    (match List.zip x y with
+     | Ok l ->
+       State.Result.all_unit
+       @@ List.map l ~f:(fun (x, y) -> unify_less_general x y)
      | Unequal_lengths -> unification_error ())
   | _ -> unification_error ()
 ;;

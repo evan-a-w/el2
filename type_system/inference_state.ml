@@ -621,3 +621,76 @@ let pop_module_and_add_current =
   let%bind state = State.Result.get in
   pop_module_and_add ~module_bindings:state.current_module_binding
 ;;
+
+let rec map_abstract_anys_m
+  (abstract : Mem_rep.abstract)
+  ~(f : string -> Mem_rep.abstract state_result_m)
+  =
+  let open State.Result.Let_syntax in
+  let open Mem_rep in
+  match abstract with
+  | Any s -> f s
+  | Closed `Bits8
+  | Closed `Bits16
+  | Closed `Bits64
+  | Closed `Bits0
+  | Closed `Bits32
+  | Closed `Reg -> return abstract
+  | Closed (`Pointer m) ->
+    let%map m = map_abstract_anys_m ~f m in
+    Closed (`Pointer m)
+  | Closed (`Native_struct l) ->
+    let%map l =
+      State.Result.all
+      @@ List.map l ~f:(fun (s, a) ->
+        let%map a = map_abstract_anys_m ~f a in
+        s, a)
+    in
+    Closed (`Native_struct l)
+  | Closed (`C_struct l) ->
+    let%map l =
+      State.Result.all
+      @@ List.map l ~f:(fun (s, a) ->
+        let%map a = map_abstract_anys_m ~f a in
+        s, a)
+    in
+    Closed (`C_struct l)
+  | Closed (`Union l) ->
+    let%map l = State.Result.all @@ List.map l ~f:(map_abstract_anys_m ~f) in
+    Closed (`Union l)
+;;
+
+let rec map_abstract_anys
+  (abstract : Mem_rep.abstract)
+  ~(f : string -> Mem_rep.abstract)
+  =
+  let open Mem_rep in
+  match abstract with
+  | Any s -> f s
+  | Closed `Bits8
+  | Closed `Bits16
+  | Closed `Bits64
+  | Closed `Bits0
+  | Closed `Bits32
+  | Closed `Reg -> abstract
+  | Closed (`Pointer m) ->
+    let m = map_abstract_anys ~f m in
+    Closed (`Pointer m)
+  | Closed (`Native_struct l) ->
+    let l =
+      List.map l ~f:(fun (s, a) ->
+        let a = map_abstract_anys ~f a in
+        s, a)
+    in
+    Closed (`Native_struct l)
+  | Closed (`C_struct l) ->
+    let l =
+      List.map l ~f:(fun (s, a) ->
+        let a = map_abstract_anys ~f a in
+        s, a)
+    in
+    Closed (`C_struct l)
+  | Closed (`Union l) ->
+    let l = List.map l ~f:(map_abstract_anys ~f) in
+    Closed (`Union l)
+;;
