@@ -84,7 +84,7 @@ let%expect_test "list map" =
   [%expect {| (r0 -{p0}> q0) -> r0 list -> q0 list |}]
 ;;
 
-let%expect_test "list map generic" =
+let%expect_test "list map generic over different closures" =
   infer_and_print_mono
     ~print_state:false
     ~programs:
@@ -97,8 +97,9 @@ let%expect_test "list map generic" =
           match x with
           | Nil -> Nil
           | Cons (x, xs) -> Cons (f x, map f xs) in
-        (map a list, map b list)
+        (map, a, b, map a list, map b list)
         |}
       ];
-  [%expect {| (string list, string list) |}]
+  [%expect
+    {| ((a1 -{y0}> z0) -> a1 list -> z0 list, b1 -{b64}> string, c1 -> string, string list, string list) |}]
 ;;
