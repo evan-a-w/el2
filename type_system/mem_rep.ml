@@ -2,21 +2,19 @@ open! Core
 open! Shared
 open! Frontend
 
-type 'a single =
+type single =
   [ `Bits0
   | `Bits8
   | `Bits16
   | `Bits32
   | `Bits64
-  | (* For now these are 64 bits *)
-    `Reg
-  | `Pointer of 'a
+  | `Reg
   ]
 [@@deriving sexp, equal, hash, compare]
 
 module rec T : sig
   type mem_rep =
-    [ abstract single
+    [ single
     | `Union of Abstract.t list
     | `Struct of abstract list
     ]
@@ -28,7 +26,7 @@ module rec T : sig
   [@@deriving sexp, equal, hash, compare]
 end = struct
   type mem_rep =
-    [ abstract single
+    [ single
     | `Union of Abstract.t list
     | `Struct of abstract list
     ]
@@ -60,12 +58,10 @@ let show_abstract (abstract : abstract) =
   | Any s -> s
   | Closed `Bits0 -> "b0"
   | Closed `Bits8 | Closed `Bits16 | Closed `Bits32 -> "b32"
-  | Closed `Bits64 | Closed `Reg | Closed (`Pointer _) -> "b64"
+  | Closed `Bits64 | Closed `Reg -> "b64"
   | Closed (`Struct _) -> "&"
   | Closed (`Union _) -> "|"
 ;;
-
-type single_mem_rep = abstract single [@@deriving sexp, equal, hash, compare]
 
 (* I don't think i need this at this point!!!! *)
 module Size_class = struct
@@ -155,8 +151,7 @@ and unify_mem_rep (x : mem_rep) (y : mem_rep) =
   | `Bits8, `Bits8 -> return ()
   | `Bits16, `Bits16 -> return ()
   | `Bits32, `Bits32 -> return ()
-  | (`Bits64 | `Reg | `Pointer (_ : Abstract.t)), (`Bits64 | `Reg | `Pointer _)
-    -> return ()
+  | (`Bits64 | `Reg), (`Bits64 | `Reg) -> return ()
   | `Union x, `Union y ->
     let%bind x = State.Result.all @@ List.map ~f:find x in
     let%bind y = State.Result.all @@ List.map ~f:find y in
@@ -215,8 +210,7 @@ and unify_mem_rep_less_general (x : mem_rep) (y : mem_rep) =
   | `Bits8, `Bits8 -> return ()
   | `Bits16, `Bits16 -> return ()
   | `Bits32, `Bits32 -> return ()
-  | (`Bits64 | `Reg | `Pointer (_ : Abstract.t)), (`Bits64 | `Reg | `Pointer _)
-    -> return ()
+  | (`Bits64 | `Reg), (`Bits64 | `Reg) -> return ()
   | `Union x, `Union y ->
     let%bind x = State.Result.all @@ List.map ~f:find x in
     let%bind y = State.Result.all @@ List.map ~f:find y in

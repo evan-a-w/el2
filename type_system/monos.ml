@@ -150,9 +150,7 @@ let rec mem_rep_of_mono = function
   | Tuple l ->
     let list = List.map l ~f:mem_rep_of_mono in
     Mem_rep.Closed (`Struct list)
-  | Reference m ->
-    let m = mem_rep_of_mono m in
-    Mem_rep.Closed (`Pointer m)
+  | Reference _ -> Mem_rep.Closed `Reg
   | Named t -> t.mem_rep
 
 and mem_rep_of_user_type = function

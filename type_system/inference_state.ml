@@ -650,9 +650,6 @@ let rec map_abstract_anys_m
   | Closed `Bits0
   | Closed `Bits32
   | Closed `Reg -> return abstract
-  | Closed (`Pointer m) ->
-    let%map m = map_abstract_anys_m ~f m in
-    Closed (`Pointer m)
   | Closed (`Struct l) ->
     let%map l = State.Result.all @@ List.map l ~f:(map_abstract_anys_m ~f) in
     Closed (`Struct l)
@@ -674,9 +671,6 @@ let rec map_abstract_anys
   | Closed `Bits0
   | Closed `Bits32
   | Closed `Reg -> abstract
-  | Closed (`Pointer m) ->
-    let m = map_abstract_anys ~f m in
-    Closed (`Pointer m)
   | Closed (`Struct l) ->
     let l = List.map l ~f:(map_abstract_anys ~f) in
     Closed (`Struct l)
