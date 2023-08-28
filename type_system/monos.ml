@@ -53,14 +53,7 @@ and show_mono mono =
   match mono with
   | Weak (s, _) | TyVar (s, _) -> return s
   | Named proof -> show_type_proof proof
-  | Function (a, b)
-  | Closure
-      ( a
-      , b
-      , { closed_vars = []
-        ; closed_args = []
-        ; closure_mem_rep = Mem_rep.Closed `Bits0
-        } ) ->
+  | Function (a, b) | Closure (a, b, { closed_vars = []; _ }) ->
     let%bind a = show_mono_parenthized_functions a in
     let%map b = show_mono b in
     a ^ " -> " ^ b

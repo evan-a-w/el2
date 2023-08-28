@@ -744,32 +744,15 @@ and type_expr expr =
       | [ x ] -> x
       | xs -> Mem_rep.Closed (`Struct xs)
     in
-    (* let%map res_mono = apply_substs res_mono in *)
-    (* (match List.is_empty closed_vars with *)
-    (*  | true -> *)
-    (*    ( Typed_ast.Lambda (binding, (res_inner, res_mono)) *)
-    (*    , Function (var, res_mono) ) *)
-    (*  | false -> *)
-    (*    ( Typed_ast.Lambda (binding, (res_inner, res_mono)) *)
-    (*    , Closure (var, res_mono, { closed_vars; closed_args; closure_mem_rep }) *)
-    (*    )) *)
-    let%bind res_mono = apply_substs res_mono in
+    let%map res_mono = apply_substs res_mono in
     (match List.is_empty closed_vars with
      | true ->
-       let%map sym = State.map ~f:Result.return gensym in
        ( Typed_ast.Lambda (binding, (res_inner, res_mono))
-       , Closure
-           ( var
-           , res_mono
-           , { closure_mem_rep = Mem_rep.Any sym
-             ; closed_args = []
-             ; closed_vars = []
-             } ) )
+       , Function (var, res_mono) )
      | false ->
-       return
-       @@ ( Typed_ast.Lambda (binding, (res_inner, res_mono))
-          , Closure
-              (var, res_mono, { closed_vars; closed_args; closure_mem_rep }) ))
+       ( Typed_ast.Lambda (binding, (res_inner, res_mono))
+       , Closure (var, res_mono, { closed_vars; closed_args; closure_mem_rep })
+       ))
 ;;
 
 let type_let_def (let_def : Ast.let_def) =

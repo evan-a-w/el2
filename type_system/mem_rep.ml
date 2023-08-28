@@ -142,7 +142,7 @@ let rec unify x y =
   else (
     match x, y with
     | Closed x, Closed y -> unify_mem_rep x y
-    | (Any _ as v), o | o, (Any _ as v) -> union v o)
+    | (Any _ as v), o | o, (Any _ as v) -> union o v)
 
 and unify_mem_rep (x : mem_rep) (y : mem_rep) =
   let unification_error () =
@@ -173,6 +173,23 @@ and unify_mem_rep (x : mem_rep) (y : mem_rep) =
   | _ -> unification_error ()
 ;;
 
+let%expect_test "unify_mem_rep" =
+  let s =
+    let open State.Result.Let_syntax in
+    let a = Any "a" in
+    let b = Any "b" in
+    let c = Closed `Bits0 in
+    let d = Closed `Bits32 in
+    let%bind () = unify a b in
+    let%bind () = unify b c in
+    unify a d
+  in
+  let res, _ = State.Result.run s ~state:Abstract_ufds.empty in
+  print_s [%sexp (res : (unit, Sexp.t) Result.t)];
+  [%expect {|
+    (Error ("Unification error" (x Bits0) (y Bits32))) |}]
+;;
+
 let rec unify_less_general x y =
   let open State.Result.Let_syntax in
   let%bind x = find x in
@@ -182,7 +199,7 @@ let rec unify_less_general x y =
   else (
     match x, y with
     | Closed x, Closed y -> unify_mem_rep_less_general x y
-    | (Any _ as v), (Any _ as o) | (Closed _ as o), (Any _ as v) -> union v o
+    | (Any _ as v), (Any _ as o) | (Closed _ as o), (Any _ as v) -> union o v
     | _ ->
       State.Result.error
         [%message "Unification error" (x : abstract) (y : abstract)])

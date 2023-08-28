@@ -81,7 +81,7 @@ let%expect_test "list map" =
         map
         |}
       ];
-  [%expect {| (r0 -{p0}> q0) -> r0 list -> q0 list |}]
+  [%expect {| (r0 -> q0) -> r0 list -> q0 list |}]
 ;;
 
 let%expect_test "list map generic over different closures" =
@@ -101,7 +101,7 @@ let%expect_test "list map generic over different closures" =
         |}
       ];
   [%expect
-    {| ((a1 -{y0}> z0) -> a1 list -> z0 list, b1 -{b64}> string, c1 -> string, string list, string list) |}]
+    {| ((a1 -> z0) -> a1 list -> z0 list, b1 -{b64}> string, c1 -> string, string list, string list) |}]
 ;;
 
 let%expect_test "list map with annotated func not generic" =
@@ -119,5 +119,6 @@ let%expect_test "list map with annotated func not generic" =
           | Cons (x, xs) -> Cons (f x, map f xs) in
         (map a list, map b list)
         |}
-      ]
+      ];
+  [%expect {| (error ("Unification error" (x Reg) (y Bits0))) |}]
 ;;
