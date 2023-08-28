@@ -20,14 +20,14 @@ let%expect_test "single_arg_closed_int" =
       [ {| let x = 1 in
            let val = fun () -> x in
            val |} ];
-  [%expect {| unit -{int}> int |}]
+  [%expect {| unit -{b32}> int |}]
 ;;
 
 let%expect_test "two_arg_no_extra" =
   infer_and_print_mono
     ~print_state:false
     ~programs:[ {| let val = fun a b -> a in val |} ];
-  [%expect {| d0 -> c0 -{d0}> d0 |}]
+  [%expect {| d0 -> c0 -> d0 |}]
 ;;
 
 let%expect_test "two_arg_and_closed_outer" =
@@ -38,7 +38,7 @@ let%expect_test "two_arg_and_closed_outer" =
            let val = fun a b -> outer
            in val |}
       ];
-  [%expect {| d0 -{string}> c0 -{string}> string |}]
+  [%expect {| d0 -{b64}> c0 -{b64}> string |}]
 ;;
 
 let%expect_test "rec_single_arg_no_closed" =
@@ -66,7 +66,7 @@ let%expect_test "two_arg_and_closed_inner" =
                let _ = y in outer
            in val |}
       ];
-  [%expect {| d0 -{string}> c0 -{int|string}> string |}]
+  [%expect {| d0 -{b64}> c0 -{&}> string |}]
 ;;
 
 let%expect_test "list map" =
@@ -81,10 +81,10 @@ let%expect_test "list map" =
         map
         |}
       ];
-  [%expect {| (m0 -> l0) -> m0 list -> l0 list |}]
+  [%expect {| (r0 -> q0) -> r0 list -> q0 list |}]
 ;;
 
-let%expect_test "list map generic" =
+let%expect_test "list map generic over different closures" =
   infer_and_print_mono
     ~print_state:false
     ~programs:
@@ -97,8 +97,28 @@ let%expect_test "list map generic" =
           match x with
           | Nil -> Nil
           | Cons (x, xs) -> Cons (f x, map f xs) in
+        (map, a, b, map a list, map b list)
+        |}
+      ];
+  [%expect
+    {| ((a1 -> z0) -> a1 list -> z0 list, b1 -{b64}> string, c1 -> string, string list, string list) |}]
+;;
+
+let%expect_test "list map with annotated func not generic" =
+  infer_and_print_mono
+    ~print_state:false
+    ~programs:
+      [ {|
+        let outer = "hi" in
+        let a = fun x -> outer in
+        let b = fun x -> "hi" in
+        let list = Cons (1, Cons (2, Nil)) in
+        let rec map = fun (f : a -> b) x ->
+          match x with
+          | Nil -> Nil
+          | Cons (x, xs) -> Cons (f x, map f xs) in
         (map a list, map b list)
         |}
       ];
-  [%expect {| (string list, string list) |}]
+  [%expect {| (error ("Unification error" (x Reg) (y Bits0))) |}]
 ;;

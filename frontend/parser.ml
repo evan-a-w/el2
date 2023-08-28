@@ -31,6 +31,8 @@ let uppercase_p =
   | got -> error [%message "Expected symbol" (got : Token.t)]
 ;;
 
+let mem_rep_p = lowercase_p
+
 let rec identifier_p () : String.t parser =
   let%bind token = next in
   match token with
@@ -120,7 +122,8 @@ let single_type_expr_p = qualified_p (identifier_p ()) >>| Ast.Type_expr.single
 let rec type_expr_no_arrow_p () : Ast.Type_expr.t parser =
   multi_type_expr_p () <|> type_expr_no_spaces_p ()
 
-and type_expr_p () = arrow_type_expr_p () <|> type_expr_no_arrow_p ()
+and type_expr_p () =
+  arrow_type_expr_p () <|> closure_type_expr_p () <|> type_expr_no_arrow_p ()
 
 and multi_type_expr_p () : Ast.Type_expr.t parser =
   let%bind first = type_expr_no_spaces_p () in
@@ -138,6 +141,16 @@ and arrow_type_expr_p () =
   let%bind () = eat_token Token.Arrow in
   let%map second = type_expr_p () in
   Ast.Type_expr.Arrow (first, second)
+
+and closure_type_expr_p () =
+  let%bind first = type_expr_no_arrow_p () in
+  let%bind () = eat_token @@ Token.Symbol "-" in
+  let%bind () = eat_token Token.LBrace in
+  let%bind mem_rep = mem_rep_p in
+  let%bind () = eat_token Token.RBrace in
+  let%bind () = eat_token @@ Token.Symbol ">" in
+  let%map second = type_expr_p () in
+  Ast.Type_expr.Closure (first, mem_rep, second)
 
 and paren_type_expr_p () =
   let%bind () = eat_token Token.LParen in

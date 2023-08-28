@@ -38,6 +38,15 @@ let%expect_test "type_expr_multi2" =
        (Unqualified d)))) |}]
 ;;
 
+let%expect_test "type_expr_function" =
+  print_type_expr ~program:"a -> b";
+  [%expect
+    {| (ast (Ok (Arrow (Single (Unqualified a)) (Single (Unqualified b))))) |}]
+;;
+
+let%expect_test "type_expr_closure" = print_type_expr ~program:"a -{a}> b";
+  [%expect {| (ast (Ok (Closure (Single (Unqualified a)) a (Single (Unqualified b))))) |}]
+
 let test_parse_one ~program =
   let tokens = Result.ok_or_failwith (Lexer.lex ~program) in
   let ast, tokens = run parse_one ~tokens in

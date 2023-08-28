@@ -1,8 +1,10 @@
 open! Core
 open! Infer
+open! Inference_state
 open! Shared
 open! Frontend
 open! State.Result.Let_syntax
+open! Monos
 
 let run program =
   let action =
@@ -101,4 +103,29 @@ let%expect_test "program b" =
         type t =
         	| Pee
     end |}]
+;;
+
+let program_c =
+  {|
+type a has_closure = { f : int -{a}> int }
+
+let g = fun { f } -> f |}
+;;
+
+let%expect_test "program c" =
+  run program_c;
+  [%expect
+    {|
+    type a has_closure = ((f
+      ((Closure
+        (Named
+         ((type_name int) (absolute_type_name (Unqualified int)) (ordering ())
+          (tyvar_map ()) (type_id 173207638) (mem_rep (Closed Bits32))))
+        (Named
+         ((type_name int) (absolute_type_name (Unqualified int)) (ordering ())
+          (tyvar_map ()) (type_id 173207638) (mem_rep (Closed Bits32))))
+        ((closure_mem_rep (Any a)) (closed_args ()) (closed_vars ())))
+       Immutable)))
+
+    let g : a has_closure -> int -> int |}]
 ;;

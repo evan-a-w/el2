@@ -52,10 +52,17 @@ and mono =
   | TyVar of Lowercase.t * Mem_rep.abstract
   | Function of mono * mono
   (* closures unify with all closures that have an equivalent mem rep and input/return type *)
-  | Closure of mono * mono * (Binding_id.t * mono) list
+  | Closure of mono * mono * closure_info
   | Tuple of mono list
   | Reference of mono
   | Named of type_proof
+[@@deriving sexp, equal, hash, compare]
+
+and closure_info =
+  { closure_mem_rep : Mem_rep.abstract
+  ; closed_args : (Binding_id.t * mono) list
+  ; closed_vars : (Binding_id.t * mono) list
+  }
 [@@deriving sexp, equal, hash, compare]
 
 and record_type = (Lowercase.t * (mono * [ `Mutable | `Immutable ])) list

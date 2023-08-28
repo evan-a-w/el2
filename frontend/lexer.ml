@@ -170,7 +170,7 @@ let lex ~program =
 
 let%expect_test "lex" =
   let program =
-    "let x = 1 in x -> hi weqwe'eq 31231230 123123 penis match | ,"
+    "let x = 1 in x -> hi weqwe'eq 31231230 123123 penis match | , a -{a}> b"
   in
   let lexed = lex ~program |> Result.map ~f:Sequence.to_list in
   print_s [%sexp (lexed : (Token.t List.t, String.t) Result.t)];
@@ -179,5 +179,6 @@ let%expect_test "lex" =
     (Ok
      ((Keyword let) (Symbol x) (Symbol =) (Int 1) (Keyword in) (Symbol x) Arrow
       (Symbol hi) (Symbol weqwe'eq) (Int 31231230) (Int 123123) (Symbol penis)
-      (Keyword match) Pipe Comma)) |}]
+      (Keyword match) Pipe Comma (Symbol a) (Symbol -) LBrace (Symbol a) RBrace
+      (Symbol >) (Symbol b))) |}]
 ;;
