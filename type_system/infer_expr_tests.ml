@@ -257,7 +257,7 @@ let%expect_test "last_list_record_occurs" =
       (error
        ("occurs check failed" (a a0)
         (mono
-         (Closure (TyVar a0 (Any a0)) (TyVar g0 (Any g0))
+         (Closure (TyVar a0) (TyVar g0)
           ((closure_mem_rep (Any h0)) (closed_args ()) (closed_vars ())))))) |}]
 ;;
 

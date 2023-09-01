@@ -47,9 +47,9 @@ and binding_id = Binding_id.t [@@deriving sexp, equal, hash, compare]
 
 and mono =
   (* name and type args *)
-  | Weak of Lowercase.t * Mem_rep.abstract
+  | Weak of Lowercase.t
   (* keep track of the path and arg for equality *)
-  | TyVar of Lowercase.t * Mem_rep.abstract
+  | TyVar of Lowercase.t
   | Function of mono * mono
   (* closures unify with all closures that have an equivalent mem rep and input/return type *)
   | Closure of mono * mono * closure_info

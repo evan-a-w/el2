@@ -138,7 +138,7 @@ let rec gen_binding_ty_vars
           let%bind vars_list = acc in
           let mono = mono_of_poly_no_inst poly in
           let%bind mono =
-            map_ty_vars_m mono ~f:(fun (v, _) ->
+            map_ty_vars_m mono ~f:(fun v ->
               lookup_in_type_proof mono_searched ~look_for:v)
           in
           let%bind mono', vars =
@@ -290,7 +290,7 @@ let rec type_node node =
       List.map field_list ~f:(fun (field, poly) ->
         let mono = mono_of_poly_no_inst poly in
         let%map mono =
-          map_ty_vars_m mono ~f:(fun (v, _) ->
+          map_ty_vars_m mono ~f:(fun v ->
             lookup_in_type_proof mono_res ~look_for:v)
         in
         field, mono)
@@ -442,7 +442,7 @@ and type_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono =
           let%bind inner_map, vars_list = acc in
           let mono = mono_of_poly_no_inst poly in
           let%bind mono =
-            map_ty_vars_m mono ~f:(fun (v, _) ->
+            map_ty_vars_m mono ~f:(fun v ->
               lookup_in_type_proof mono_searched ~look_for:v)
           in
           let%bind inner, mono', vars =

@@ -51,7 +51,7 @@ and show_closed_monos { closure_mem_rep; _ } =
 and show_mono mono =
   let open State.Result.Let_syntax in
   match mono with
-  | Weak (s, _) | TyVar (s, _) -> return s
+  | Weak s | TyVar s -> return s
   | Named proof -> show_type_proof proof
   | Function (a, b) | Closure (a, b, { closed_vars = []; _ }) ->
     let%bind a = show_mono_parenthized_functions a in
@@ -142,8 +142,8 @@ let map_user_type user_type ~f =
 ;;
 
 let rec mem_rep_of_mono = function
-  | Weak (_, rep) -> rep
-  | TyVar (_, rep) -> rep
+  | Weak s -> Mem_rep.Any s
+  | TyVar s -> Mem_rep.Any s
   | Function _ -> Mem_rep.Closed `Reg
   | Closure (_, _, { closure_mem_rep; _ }) ->
     Mem_rep.Closed (`Struct [ Mem_rep.Closed `Reg; closure_mem_rep ])
@@ -169,7 +169,7 @@ and mem_rep_of_user_type = function
 
 let rec map_ty_vars ~f (mono : mono) =
   match mono with
-  | TyVar (a, b) -> Option.value (f (a, b)) ~default:mono
+  | TyVar a -> Option.value (f a) ~default:mono
   | Weak _ -> mono
   | Closure (a, b, c) ->
     Closure (map_ty_vars ~f a, map_ty_vars ~f b, map_closed_monos ~f c)
@@ -192,9 +192,8 @@ and map_closed_monos
   =
   let closure_mem_rep =
     map_abstract_anys closure_mem_rep ~f:(fun s ->
-      let mem_rep = Mem_rep.Any s in
-      match f (s, mem_rep) with
-      | None -> mem_rep
+      match f s with
+      | None -> Mem_rep.Any s
       | Some mono -> mem_rep_of_mono mono)
   in
   let closed_args = map_binding_alist ~f closed_args in
@@ -207,7 +206,7 @@ let map_user_type_ty_vars ~f = map_user_type ~f:(map_ty_vars ~f)
 let rec map_ty_vars_m ~f (mono : mono) =
   let open State.Result.Let_syntax in
   match mono with
-  | TyVar (a, b) -> f (a, b)
+  | TyVar a -> f a
   | Weak _ -> return mono
   | Closure (a, b, c) ->
     let%bind a = map_ty_vars_m ~f a in
@@ -256,9 +255,8 @@ and map_closed_monos_m
   let open State.Result.Let_syntax in
   let%bind closure_mem_rep =
     map_abstract_anys_m closure_mem_rep ~f:(fun s ->
-      let mem_rep = Mem_rep.Any s in
-      match%map.State f (s, mem_rep) with
-      | Error _ -> Ok mem_rep
+      match%map.State f s with
+      | Error _ -> Ok (Mem_rep.Any s)
       | Ok mono -> Ok (mem_rep_of_mono mono))
   in
   let%bind closed_args = map_binding_alist_m ~f closed_args in
@@ -270,7 +268,7 @@ let map_user_type_ty_vars_m ~f = map_user_type_m ~f:(map_ty_vars_m ~f)
 
 let rec map_weak_vars ~f (mono : mono) =
   match mono with
-  | Weak (a, b) -> Option.value (f (a, b)) ~default:mono
+  | Weak a -> Option.value (f a) ~default:mono
   | TyVar _ -> mono
   | Closure (a, b, c) ->
     Closure (map_weak_vars ~f a, map_weak_vars ~f b, map_weak_closed_monos ~f c)
@@ -295,9 +293,8 @@ and map_weak_closed_monos
   =
   let closure_mem_rep =
     map_abstract_anys closure_mem_rep ~f:(fun s ->
-      let mem_rep = Mem_rep.Any s in
-      match f (s, mem_rep) with
-      | None -> mem_rep
+      match f s with
+      | None -> Mem_rep.Any s
       | Some mono -> mem_rep_of_mono mono)
   in
   let closed_args = map_binding_alist ~f closed_args in
@@ -306,7 +303,7 @@ and map_weak_closed_monos
 ;;
 
 let map_user_type_weak_vars ~f = map_user_type ~f:(map_weak_vars ~f)
-let make_weak mono = map_ty_vars mono ~f:(fun (a, b) -> Some (Weak (a, b)))
+let make_weak mono = map_ty_vars mono ~f:(fun a -> Some (Weak a))
 
 let iter_ty_vars ~f mono =
   ignore
@@ -324,29 +321,29 @@ let iter_weak_vars ~f mono =
 
 let free_ty_vars mono =
   let set = ref Lowercase.Set.empty in
-  iter_ty_vars mono ~f:(fun (x, _) -> set := Set.add !set x);
+  iter_ty_vars mono ~f:(fun x -> set := Set.add !set x);
   !set
 ;;
 
 let free_ty_vars_list monos =
   let set = ref Lowercase.Set.empty in
   List.iter monos ~f:(fun mono ->
-    iter_ty_vars mono ~f:(fun (x, _) -> set := Set.add !set x));
+    iter_ty_vars mono ~f:(fun x -> set := Set.add !set x));
   !set
 ;;
 
 let free_weak_vars mono =
   let set = ref Lowercase.Set.empty in
-  iter_weak_vars mono ~f:(fun (x, _) -> set := Set.add !set x);
+  iter_weak_vars mono ~f:(fun x -> set := Set.add !set x);
   !set
 ;;
 
 let replace_ty_vars ~replacement_map =
-  map_ty_vars ~f:(fun (x, _) -> Map.find replacement_map x)
+  map_ty_vars ~f:(fun x -> Map.find replacement_map x)
 ;;
 
 let replace_ty_vars_type_proof ~replacement_map =
-  map_type_proof ~f:(fun (x, _) -> Map.find replacement_map x)
+  map_type_proof ~f:(fun x -> Map.find replacement_map x)
 ;;
 
 let no_free_vars poly =
@@ -382,9 +379,7 @@ let inst (poly : poly) : mono state_m =
     | Mono x -> return (replace_ty_vars ~replacement_map x)
     | Forall (a, poly) ->
       let%bind sym = gensym in
-      let replacement_map =
-        Map.set replacement_map ~key:a ~data:(TyVar (sym, Mem_rep.Any sym))
-      in
+      let replacement_map = Map.set replacement_map ~key:a ~data:(TyVar sym) in
       inner ~replacement_map poly
   in
   inner ~replacement_map:Lowercase.Map.empty poly
@@ -407,9 +402,7 @@ let normalize (poly : poly) =
     | Mono x -> Mono (replace_ty_vars ~replacement_map x)
     | Forall (a, poly) ->
       let rep = get_var () in
-      let replacement_map =
-        Map.set replacement_map ~key:a ~data:(TyVar (rep, Mem_rep.Any rep))
-      in
+      let replacement_map = Map.set replacement_map ~key:a ~data:(TyVar rep) in
       Forall (rep, inner ~replacement_map poly)
   in
   inner ~replacement_map:Lowercase.Map.empty poly
@@ -428,7 +421,7 @@ let inst_type_proof type_proof =
           | Some x -> return x
           | None ->
             let%map res = State.map gensym ~f:Result.return in
-            TyVar (res, Mem_rep.Any res)
+            TyVar res
         in
         Map.set acc ~key ~data:sym)
   in
@@ -451,7 +444,7 @@ let inst_many poly_list =
     Set.to_list quantifiers
     |> List.map ~f:(fun var ->
       let%map sym = gensym in
-      var, TyVar (sym, Mem_rep.Any sym))
+      var, TyVar sym)
     |> State.all
     >>| Lowercase.Map.of_alist_exn
   in
@@ -485,7 +478,7 @@ let type_of_constructor constructor =
 let make_free_vars_weak mono =
   let free_vars = free_ty_vars mono in
   let replacement_map =
-    Set.to_map free_vars ~f:(fun x -> Weak (x, Mem_rep.Any x)) |> Obj.magic
+    Set.to_map free_vars ~f:(fun x -> Weak x) |> Obj.magic
   in
   replace_ty_vars ~replacement_map mono
 ;;
@@ -500,13 +493,13 @@ let poly_of_mono mono ~generalize ~value_restriction =
 let apply_substs mono =
   let%map.State state = State.get in
   let mono =
-    map_ty_vars mono ~f:(fun (a, b) ->
-      let mono, _ = Mono_ufds.find state.mono_ufds (TyVar (a, b)) in
+    map_ty_vars mono ~f:(fun a ->
+      let mono, _ = Mono_ufds.find state.mono_ufds (TyVar a) in
       Some mono)
   in
   Ok
-    (map_weak_vars mono ~f:(fun (a, b) ->
-       let mono, _ = Mono_ufds.find state.mono_ufds (Weak (a, b)) in
+    (map_weak_vars mono ~f:(fun a ->
+       let mono, _ = Mono_ufds.find state.mono_ufds (Weak a) in
        Some mono))
 ;;
 
@@ -531,7 +524,7 @@ let rec mono_of_poly_no_inst poly =
 
 let gen_ty_var : _ state_result_m =
   let%map.State sym = gensym in
-  Ok (TyVar (sym, Mem_rep.Any sym))
+  Ok (TyVar sym)
 ;;
 
 let substitute (inner, mono) =
@@ -564,8 +557,8 @@ let rec show_mono_def (mono : mono) =
        (match%bind show_user_type user_type with
         | Some s -> return s
         | None -> show_mono mono))
-  | Weak (s, _) -> return [%string "weak %{s}"]
-  | TyVar (s, _) -> return s
+  | Weak s -> return [%string "weak %{s}"]
+  | TyVar s -> return s
   | Closure _ | Function _ | Tuple _ | Reference _ -> show_mono mono
 
 and show_user_type (user_type : user_type) =

@@ -347,7 +347,7 @@ let lookup_type ?(type_var = true) qualified_name =
   let type_var_fn = if type_var then Option.some else Fn.const None in
   let type_var_type =
     match qualifications with
-    | [] -> type_var_fn (TyVar (type_name, Mem_rep.Any type_name))
+    | [] -> type_var_fn (TyVar type_name)
     | _ -> None
   in
   let%bind res =

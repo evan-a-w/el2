@@ -18,7 +18,7 @@ let ordering constructor_arg =
 
 let tyvar_map ordering =
   List.fold ordering ~init:Lowercase.Map.empty ~f:(fun acc tyvar ->
-    Map.add_exn acc ~key:tyvar ~data:(TyVar (tyvar, Mem_rep.Any tyvar)))
+    Map.add_exn acc ~key:tyvar ~data:(TyVar tyvar))
 ;;
 
 let rec type_of_type_expr type_expr : mono state_result_m =
@@ -95,7 +95,7 @@ let type_proof_of_monos
   in
   let tyvar_map =
     Set.fold free_var_set ~init:Lowercase.Map.empty ~f:(fun acc x ->
-      Map.add_exn acc ~key:x ~data:(TyVar (x, Mem_rep.Any x)))
+      Map.add_exn acc ~key:x ~data:(TyVar x))
   in
   { type_name; absolute_type_name; tyvar_map; ordering; type_id; mem_rep }
 ;;
@@ -119,7 +119,7 @@ let type_of_type_def_lit
       ; tyvar_map =
           free_ty_vars mono
           |> Set.fold ~init:Lowercase.Map.empty ~f:(fun acc x ->
-            Map.add_exn ~key:x ~data:(TyVar (x, Mem_rep.Any x)) acc)
+            Map.add_exn ~key:x ~data:(TyVar x) acc)
       ; ordering
       ; type_id
       ; mem_rep
@@ -228,7 +228,7 @@ let type_type_def
     let ordering = ordering constructor_arg in
     let lhs_ty_vars =
       List.fold ordering ~init:Lowercase.Map.empty ~f:(fun acc key ->
-        Map.add_exn acc ~key ~data:(TyVar (key, Mem_rep.Any key)))
+        Map.add_exn acc ~key ~data:(TyVar key))
     in
     let mem_rep = Mem_rep.Any "0" in
     let type_proof =
