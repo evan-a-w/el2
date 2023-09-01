@@ -492,15 +492,12 @@ let poly_of_mono mono ~generalize ~value_restriction =
 
 let apply_substs mono =
   let%map.State state = State.get in
-  let mono =
-    map_ty_vars mono ~f:(fun a ->
-      let mono, _ = Mono_ufds.find state.mono_ufds (TyVar a) in
-      Some mono)
+  let inner make a =
+    let mono, _ = Mono_ufds.find state.mono_ufds (make a) in
+    Some mono
   in
-  Ok
-    (map_weak_vars mono ~f:(fun a ->
-       let mono, _ = Mono_ufds.find state.mono_ufds (Weak a) in
-       Some mono))
+  let mono = map_ty_vars mono ~f:(inner (fun x -> TyVar x)) in
+  Ok (map_weak_vars mono ~f:(inner (fun x -> Weak x)))
 ;;
 
 let lookup_in_type_proof mono ~look_for =
