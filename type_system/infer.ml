@@ -6,6 +6,7 @@ open! Inference_state
 open! Type_defs
 open! Monos
 open! Unify
+open! State.Result.Let_syntax
 
 let rec value_restriction expr =
   match expr with
@@ -49,7 +50,6 @@ let rec gen_binding_ty_vars
   ~(add_var : add_var_t)
   : (mono * Lowercase.t list) state_result_m
   =
-  let open State.Result.Let_syntax in
   match binding with
   | Ast.Binding.Literal l ->
     let mono = Typed_ast.Literal.mono_of_t l in
@@ -153,7 +153,6 @@ let rec gen_binding_ty_vars
 ;;
 
 let gen_var var ~(add_var : add_var_t) ~pop_var =
-  let open State.Result.Let_syntax in
   let%bind value, binding_id, _, _ = lookup_var (Qualified.Unqualified var) in
   let%bind () = pop_var var in
   let%bind mono = inst_result value in
@@ -176,7 +175,6 @@ let rec already_bound
   ?(shadowed = Lowercase.Set.empty)
   (expr : Ast.expr)
   =
-  let open State.Result.Let_syntax in
   match expr with
   | Ast.Node n -> already_bound_node ~acc ~shadowed n
   | Ast.If (a, b, c) ->
@@ -223,7 +221,6 @@ let rec already_bound
         already_bound ~acc ~shadowed expr)
 
 and already_bound_node ~acc ~shadowed (node : Ast.node) =
-  let open State.Result.Let_syntax in
   match node with
   | Ast.Var (Qualified.Unqualified s) ->
     let is_shadowed = Set.mem shadowed s in
@@ -255,7 +252,6 @@ and add_shadowed ~shadowed ~binding =
 ;;
 
 let rec type_node node =
-  let open State.Result.Let_syntax in
   match node with
   | Ast.Literal literal -> type_literal literal
   | Ast.Var var_name ->
@@ -322,17 +318,14 @@ let rec type_node node =
     Typed_ast.(Node (Record expr_map)), mono
 
 and add_module_var_mono ~generalize ~value_restriction var mono =
-  let open State.Result.Let_syntax in
   let%bind poly = poly_of_mono ~generalize ~value_restriction mono in
   add_module_var var poly
 
 and add_local_var_mono ~is_rec ~is_arg ~generalize ~value_restriction var mono =
-  let open State.Result.Let_syntax in
   let%bind poly = poly_of_mono ~generalize ~value_restriction mono in
   add_local_var ~is_rec ~is_arg var poly
 
 and type_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono =
-  let open State.Result.Let_syntax in
   match binding with
   | Ast.Binding.Literal l ->
     let%bind _, binding_mono = type_literal l in
@@ -475,7 +468,6 @@ and let_each_of_binding_typed
   ~add_var_mono
   ~pop_var
   =
-  let open State.Result.Let_syntax in
   let act_on_var = add_var_mono ~generalize ~value_restriction in
   let%bind binding, mono, vars =
     type_binding ~act_on_var ~initial_vars:[] ~binding ~mono:mono1
@@ -493,7 +485,6 @@ and mono_of_binding
   ~add_var_mono
   ~pop_var
   =
-  let open State.Result.Let_syntax in
   let value_restriction = value_restriction expr1 in
   let%bind inner, mono1 = type_expr expr1 in
   let%bind mono1 = apply_substs mono1 in
@@ -510,7 +501,6 @@ and mono_of_binding
   binding, (inner, mono)
 
 and add_nonrec_bindings ~binding ~expr ~add_var_mono =
-  let open State.Result.Let_syntax in
   let value_restriction = value_restriction expr in
   let%bind inner, mono = type_expr expr in
   let%bind mono = apply_substs mono in
@@ -530,7 +520,6 @@ and check_rec_rhs expr =
         "Only functions are allowed in rec bindings" ~got:(expr : Ast.expr)]
 
 and add_rec_bindings l ~(add_var : add_var_t) ~pop_var =
-  let open State.Result.Let_syntax in
   let%bind bindings =
     State.Result.all
       (List.map l ~f:(fun (binding, expr) ->
@@ -568,7 +557,6 @@ and add_rec_bindings l ~(add_var : add_var_t) ~pop_var =
   typed_bindings, exprs, List.concat [ vars_list; bindings ]
 
 and type_field expr field ~mut =
-  let open State.Result.Let_syntax in
   let%bind type_proof, muta, poly = lookup_field field in
   let%bind () =
     match mut, muta with
@@ -593,7 +581,6 @@ and type_field expr field ~mut =
   mono, (inner, expr_mono)
 
 and type_expr expr =
-  let open State.Result.Let_syntax in
   match expr with
   | Ast.Node node -> type_node node >>= substitute
   | Ref expr ->
@@ -756,7 +743,6 @@ and type_expr expr =
 ;;
 
 let type_let_def (let_def : Ast.let_def) =
-  let open State.Result.Let_syntax in
   let%bind res =
     match let_def with
     | Ast.Rec l ->
@@ -777,7 +763,6 @@ let type_let_def (let_def : Ast.let_def) =
 ;;
 
 let rec process_module_named (name : Uppercase.t Qualified.t) =
-  let open State.Result.Let_syntax in
   let qualifications = Qualified.full_qualifications name in
   let%bind module_bindings = find_module_binding qualifications in
   let module_bindings =
@@ -786,7 +771,6 @@ let rec process_module_named (name : Uppercase.t Qualified.t) =
   set_current_module_binding module_bindings
 
 and process_struct (toplevels : Ast.toplevel list) =
-  let open State.Result.Let_syntax in
   let%bind toplevels =
     State.Result.all @@ List.map ~f:type_toplevel toplevels
   in
@@ -824,7 +808,6 @@ and type_module
   ~(module_description : Ast.module_sig option Ast.module_description)
   ~(module_def : Ast.module_def)
   =
-  let open State.Result.Let_syntax in
   let%bind () = change_to_new_module module_description.module_name in
   match module_description with
   | { module_name; functor_args = []; module_sig } ->
@@ -863,7 +846,6 @@ and type_toplevel_type (toplevel_type : Ast.toplevel_type) =
   | Ast.Sig_type_def _ -> failwith "TODO"
 
 and type_toplevel (toplevel : Ast.toplevel) =
-  let open State.Result.Let_syntax in
   match toplevel with
   | Ast.Type_def type_def -> type_type_def type_def
   | Ast.Let let_def ->
@@ -872,9 +854,7 @@ and type_toplevel (toplevel : Ast.toplevel) =
   | Ast.Module_def { module_description; module_def } ->
     type_module ~module_description ~module_def
 
-and substitute_toplevel =
-  let open State.Result.Let_syntax in
-  function
+and substitute_toplevel = function
   | Typed_ast.Type_def _ as x -> return x
   | Typed_ast.Module_def _ as x -> return x
   | Typed_ast.Let let_def ->
@@ -889,7 +869,6 @@ and type_toplevel_list (l : Ast.t) =
 let mono_of_expr e = State.Result.map (type_expr e) ~f:snd
 
 let process_file toplevel_list =
-  let open State.Result.Let_syntax in
   let%bind toplevels = type_toplevel_list toplevel_list in
   let%map _, module_ = pop_module in
   { module_ with data = Typed_ast.Here toplevels }

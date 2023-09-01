@@ -5,8 +5,7 @@ module Module_path = Ty.Module_path
 
 (* Typed_ast.expr but with
    1. Exhaustiveness checking on match statements (TODO)
-   2. Breaking match statements into if statements
-   (/ maybe switches or simplified matches?) (TODO)
+   2. Breaking match statements into if statements and switches (same as c switches) (TODO)
    3. Unpacking pattern matching into multiple bindings, where each is
    just a Lowercase.t (TODO) *)
 
@@ -36,6 +35,12 @@ and let_def =
 
 and expr = expr_inner * Ty.mono [@@deriving sexp, equal, hash, compare]
 
+and switch_case =
+  | Type of Uppercase.t * Ty.mono
+  | Int of int
+  | Default
+[@@deriving sexp, equal, hash, compare]
+
 and expr_inner =
   | Node of node
   | If of expr * expr * expr
@@ -46,5 +51,5 @@ and expr_inner =
   | Deref of expr
   | Field_access of expr * Lowercase.t Qualified.t
   | Field_set of (expr * Lowercase.t Qualified.t * expr)
-  | Match of expr * (binding * expr) list
+  | Switch of expr * (switch_case * expr) list
 [@@deriving sexp, equal, hash, compare]

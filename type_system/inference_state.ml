@@ -2,6 +2,7 @@ open! Core
 open! Shared
 open! Frontend
 open! Ty
+open! State.Result.Let_syntax
 
 module Mono_ufds = Ufds.Make (struct
     type t = mono [@@deriving sexp, equal, hash, compare]
@@ -36,7 +37,6 @@ type state =
 [@@deriving sexp, equal, compare, fields]
 
 let on_mem_rep_ufds ~(f : ('a, Sexp.t, Mem_rep.Abstract_ufds.t) State.Result.t) =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let res, mem_rep_ufds = f state.mem_rep_ufds in
   match res with
@@ -54,7 +54,6 @@ let lookup_binding_id binding_id =
 ;;
 
 let add_module ~name ~module_bindings =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let current_module_binding = state.current_module_binding in
   let current_module_binding =
@@ -73,7 +72,6 @@ type 'a state_m = ('a, state) State.t [@@deriving sexp]
 type 'a state_result_m = ('a, Sexp.t, state) State.Result.t [@@deriving sexp]
 
 let get_binding_id =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let res = state.binding_id_n in
   let%map () = State.Result.put { state with binding_id_n = res + 1 } in
@@ -81,7 +79,6 @@ let get_binding_id =
 ;;
 
 let add_type_constructor arg name user_type type_proof =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let data = arg, user_type, type_proof in
   let type_id = type_proof.type_id in
@@ -112,7 +109,6 @@ let add_type_constructor arg name user_type type_proof =
 ;;
 
 let set_type_constructor arg name user_type type_proof =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let data = arg, user_type, type_proof in
   let type_id = type_proof.type_id in
@@ -167,7 +163,6 @@ let gensym : string state_m =
 ;;
 
 let print_ufds_map : unit state_result_m =
-  let open State.Result.Let_syntax in
   let%map state = State.Result.get in
   print_s [%message (state.mono_ufds : Mono_ufds.t)]
 ;;
@@ -175,7 +170,6 @@ let print_ufds_map : unit state_result_m =
 let add_type = add_type_constructor None
 
 let add_module_var ?binding_id name poly =
-  let open State.Result.Let_syntax in
   let%bind binding_id =
     match binding_id with
     | None -> get_binding_id
@@ -198,7 +192,6 @@ let add_module_var ?binding_id name poly =
 ;;
 
 let add_local_var ~is_rec ~is_arg ?binding_id name poly =
-  let open State.Result.Let_syntax in
   let%bind binding_id =
     match binding_id with
     | None -> get_binding_id
@@ -312,7 +305,6 @@ let find_module_binding qualifications =
 ;;
 
 let lookup_type_map type_id =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   match Map.find state.type_map type_id with
   | Some x -> State.Result.return x
@@ -320,7 +312,6 @@ let lookup_type_map type_id =
 ;;
 
 let lookup_type_constructor qualified_name =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let qualifications, type_name = Qualified.split qualified_name in
   let res =
@@ -338,7 +329,6 @@ let lookup_type_constructor qualified_name =
 ;;
 
 let add_to_type_map ~type_id type_constructor =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   match Map.add state.type_map ~key:type_id ~data:type_constructor with
   | `Ok type_map -> State.Result.put { state with type_map }
@@ -353,7 +343,6 @@ let set_type_map ~type_id type_constructor =
 ;;
 
 let lookup_type ?(type_var = true) qualified_name =
-  let open State.Result.Let_syntax in
   let qualifications, type_name = Qualified.split qualified_name in
   let type_var_fn = if type_var then Option.some else Fn.const None in
   let type_var_type =
@@ -374,7 +363,6 @@ let lookup_type ?(type_var = true) qualified_name =
 ;;
 
 let lookup_local_var name =
-  let open State.Result.Let_syntax in
   let%map state = State.Result.get in
   match Map.find state.local_vars name with
   | Some (x :: _) -> Some x
@@ -382,7 +370,6 @@ let lookup_local_var name =
 ;;
 
 let lookup_var qualified_name : _ state_result_m =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let qualifications, type_name = Qualified.split qualified_name in
   match qualifications, Map.find state.local_vars type_name with
@@ -404,7 +391,6 @@ let lookup_var qualified_name : _ state_result_m =
 ;;
 
 let add_constructor name arg result =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   match
     Map.add
@@ -424,7 +410,6 @@ let add_constructor name arg result =
 ;;
 
 let add_field field poly =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   match
     Map.add state.current_module_binding.toplevel_fields ~key:field ~data:poly
@@ -440,7 +425,6 @@ let add_field field poly =
 ;;
 
 let add_record field_map type_proof : _ state_result_m =
-  let open State.Result.Let_syntax in
   let%bind field_set =
     Map.fold
       field_map
@@ -470,7 +454,6 @@ let add_record field_map type_proof : _ state_result_m =
 ;;
 
 let lookup_record qualified_map =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let qualifications, map = Qualified.split qualified_map in
   let fields =
@@ -492,7 +475,6 @@ let lookup_record qualified_map =
 ;;
 
 let lookup_constructor qualified_constructor =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let qualifications, name = Qualified.split qualified_constructor in
   let res =
@@ -510,7 +492,6 @@ let lookup_constructor qualified_constructor =
 ;;
 
 let lookup_field qualified_name =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let qualifications, name = Qualified.split qualified_name in
   let res =
@@ -548,7 +529,6 @@ let set_ordering (mono : mono) ~ordering =
 ;;
 
 let open_module (qualifications : Qualified.qualifications) =
-  let open State.Result.Let_syntax in
   let%bind ({ current_module_binding; _ } as state) = State.Result.get in
   let%bind module_bindings = find_module_binding qualifications in
   let current_module_binding =
@@ -560,7 +540,6 @@ let open_module (qualifications : Qualified.qualifications) =
 ;;
 
 let pop_opened_module =
-  let open State.Result.Let_syntax in
   let%bind ({ current_module_binding; _ } as state) = State.Result.get in
   let opened_modules =
     match current_module_binding.opened_modules with
@@ -572,7 +551,6 @@ let pop_opened_module =
 ;;
 
 let change_to_module name module_bindings =
-  let open State.Result.Let_syntax in
   let%bind ({ current_module_binding = old_module_binding; _ } as state) =
     State.Result.get
   in
@@ -603,7 +581,6 @@ let change_to_new_module name =
 ;;
 
 let pop_module : (string * Typed_ast.module_) state_result_m =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   let old_module_binding = state.current_module_binding in
   let { current_name; previous_modules } = state.module_history in
@@ -631,7 +608,6 @@ let pop_module_and_add ~module_bindings =
 ;;
 
 let pop_module_and_add_current =
-  let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
   pop_module_and_add ~module_bindings:state.current_module_binding
 ;;
@@ -640,7 +616,6 @@ let rec map_abstract_anys_m
   (abstract : Mem_rep.abstract)
   ~(f : string -> Mem_rep.abstract state_result_m)
   =
-  let open State.Result.Let_syntax in
   let open Mem_rep in
   match abstract with
   | Any s -> f s
