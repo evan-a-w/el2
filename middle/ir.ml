@@ -25,7 +25,9 @@ type node =
   | Wrapped of expr Qualified.t
 [@@deriving sexp, equal, hash, compare]
 
-and binding = Lowercase.t [@@deriving sexp, equal, hash, compare]
+and binding = Lowercase.t * Ty.binding_id
+[@@deriving sexp, equal, hash, compare]
+
 and let_each = binding * expr [@@deriving sexp, equal, hash, compare]
 
 and let_def =
@@ -35,12 +37,6 @@ and let_def =
 
 and expr = expr_inner * Ty.mono [@@deriving sexp, equal, hash, compare]
 
-and switch_case =
-  | Type of Uppercase.t * Ty.mono
-  | Int of int
-  | Default
-[@@deriving sexp, equal, hash, compare]
-
 and expr_inner =
   | Node of node
   | If of expr * expr * expr
@@ -49,7 +45,10 @@ and expr_inner =
   | Let_in of let_def * expr
   | Ref of expr
   | Deref of expr
-  | Field_access of expr * Lowercase.t Qualified.t
-  | Field_set of (expr * Lowercase.t Qualified.t * expr)
-  | Switch of expr * (switch_case * expr) list
+  | Numbered_field_access of expr * int * Ty.mono
+  | Union_check of expr * Uppercase.t * Ty.enum_type
+  (* translates to if later down the line *)
+  | Union_access of expr * Uppercase.t * Ty.enum_type
+  | Field_access of expr * Lowercase.t * Ty.record_type
+  | Field_set of (expr * Lowercase.t * Ty.record_type * expr)
 [@@deriving sexp, equal, hash, compare]

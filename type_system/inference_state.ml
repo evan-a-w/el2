@@ -188,7 +188,10 @@ let add_module_var ?binding_id name poly =
   let binding_map =
     Map.set state.binding_map ~key:binding_id ~data:{ poly; name }
   in
-  State.Result.put { state with current_module_binding; binding_map }
+  let%map () =
+    State.Result.put { state with current_module_binding; binding_map }
+  in
+  binding_id
 ;;
 
 let add_local_var ~is_rec ~is_arg ?binding_id name poly =
@@ -217,7 +220,8 @@ let add_local_var ~is_rec ~is_arg ?binding_id name poly =
   let binding_map =
     Map.set state.binding_map ~key:binding_id ~data:{ poly; name }
   in
-  State.Result.put { state with local_vars; binding_map }
+  let%map () = State.Result.put { state with local_vars; binding_map } in
+  binding_id
 ;;
 
 let pop_local_var name =

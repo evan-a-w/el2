@@ -43,12 +43,12 @@ type node =
 [@@deriving sexp, equal, hash, compare]
 
 and binding =
-  | Name_binding of Lowercase.t
+  | Name_binding of Lowercase.t * Ty.binding_id
   | Constructor_binding of Uppercase.t Qualified.t * binding option
   | Literal_binding of Literal.t
   | Record_binding of binding Lowercase.Map.t Qualified.t
   | Tuple_binding of binding list Qualified.t
-  | Renamed_binding of binding * Lowercase.t
+  | Renamed_binding of binding * Lowercase.t * Ty.binding_id
   | Reference_binding of binding
 [@@deriving sexp, equal, hash, compare]
 
@@ -77,20 +77,20 @@ and expr_inner =
 let expr_of_literal x = Node (Literal x), Literal.mono_of_t x
 
 let map_binding_inner ~f = function
-  | Name_binding x -> Name_binding x
+  | Name_binding _ as res -> res
   | Constructor_binding (x, y) -> Constructor_binding (x, Option.map ~f y)
-  | Literal_binding x -> Literal_binding x
+  | Literal_binding _ as res -> res
   | Record_binding x ->
     Record_binding (Qualified.map x ~f:(Lowercase.Map.map ~f))
   | Tuple_binding x -> Tuple_binding (Qualified.map x ~f:(List.map ~f))
-  | Renamed_binding (x, y) -> Renamed_binding (f x, y)
+  | Renamed_binding (x, y, z) -> Renamed_binding (f x, y, z)
   | Reference_binding x -> Reference_binding (f x)
 ;;
 
 let map_binding_inner_m ~f =
   let open State.Result.Let_syntax in
   function
-  | Name_binding x -> return @@ Name_binding x
+  | Name_binding _ as res -> return res
   | Constructor_binding (x, y) ->
     let%map y =
       match y with
@@ -117,9 +117,9 @@ let map_binding_inner_m ~f =
       Qualified.map_m x ~f:(fun l -> State.Result.all @@ List.map l ~f)
     in
     Tuple_binding list
-  | Renamed_binding (x, y) ->
+  | Renamed_binding (x, y, z) ->
     let%map x = f x in
-    Renamed_binding (x, y)
+    Renamed_binding (x, y, z)
   | Reference_binding x ->
     let%map x = f x in
     Reference_binding x

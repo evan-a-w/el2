@@ -42,7 +42,8 @@ let type_literal literal =
   State.Result.return @@ Typed_ast.expr_of_literal literal
 ;;
 
-type add_var_t = ?binding_id:type_id -> string -> poly -> unit state_result_m
+type add_var_t =
+  ?binding_id:binding_id -> string -> poly -> binding_id state_result_m
 
 let rec gen_binding_ty_vars
   ~initial_vars
@@ -57,7 +58,7 @@ let rec gen_binding_ty_vars
   | Ast.Binding.Name var ->
     let%bind ty_var = gen_ty_var in
     let poly = Mono ty_var in
-    let%map () = add_var var poly in
+    let%map _ = add_var var poly in
     ty_var, var :: initial_vars
   | Ast.Binding.Constructor (constructor, rest) ->
     let%bind mono_arg, mono_res = inst_constructor constructor in
@@ -94,7 +95,7 @@ let rec gen_binding_ty_vars
     Reference mono, vars
   | Ast.Binding.Renamed (binding, var) ->
     let%bind mono, vars = gen_binding_ty_vars ~initial_vars ~binding ~add_var in
-    let%map () = add_var var (Mono mono) in
+    let%map _ = add_var var (Mono mono) in
     mono, var :: vars
   | Ast.Binding.Tuple qualified ->
     let qualifications, tuple = Qualified.split qualified in
@@ -334,8 +335,8 @@ and type_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono =
   | Ast.Binding.Name var ->
     (* let%bind poly = poly_of_mono ~generalize ~value_restriction mono in *)
     (* let%map () = act_on_var var poly in *)
-    let%map () = act_on_var var mono in
-    Typed_ast.Name_binding var, mono, var :: initial_vars
+    let%map id = act_on_var var mono in
+    Typed_ast.Name_binding (var, id), mono, var :: initial_vars
   | Ast.Binding.Constructor (constructor, rest) ->
     let%bind mono_arg, mono_res = inst_constructor constructor in
     (match rest, mono_arg with
@@ -375,8 +376,8 @@ and type_binding ~act_on_var ~initial_vars ~(binding : Ast.Binding.t) ~mono =
     let%bind res, mono, vars =
       type_binding ~act_on_var ~initial_vars ~binding ~mono
     in
-    let%map () = act_on_var var mono in
-    Typed_ast.Renamed_binding (res, var), mono, var :: vars
+    let%map id = act_on_var var mono in
+    Typed_ast.Renamed_binding (res, var, id), mono, var :: vars
   | Ast.Binding.Pointer binding ->
     let%bind ty_var = gen_ty_var in
     let%bind () = unify (Reference ty_var) mono in
@@ -549,7 +550,10 @@ and add_rec_bindings l ~(add_var : add_var_t) ~pop_var =
     List.map bindings ~f:(fun (inner, v) ->
       match v with
       | false ->
-        State.Result.all_unit (List.map inner ~f:(gen_var ~add_var ~pop_var))
+        State.Result.all_unit
+          (List.map inner ~f:(fun s ->
+             let%map _ = gen_var ~add_var ~pop_var s in
+             ()))
       | true -> return ())
     |> State.Result.all_unit
   in

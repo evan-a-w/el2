@@ -22,7 +22,7 @@ let rec transform_inner
     Ir.If (a, b, c)
   | Typed_ast.Lambda (b, e) ->
     let%bind e = transform_expr ~state e in
-    let%map b = transform_bindings ~state b in
+    let%map b = transform_binding ~state b in
     Ir.Lambda (b, e)
   | Typed_ast.App (a, b) ->
     let%bind a = transform_expr ~state a in
@@ -48,7 +48,20 @@ let rec transform_inner
   | Typed_ast.Match (e, cases) -> transform_cases ~state e cases
 
 and transform_node ~state:_ _node = failwith "TODO"
-and transform_bindings ~state:_ _bindings = failwith "TODO"
+
+and transform_binding ~state:_ binding rhs =
+  let inner acc binding =
+    match binding with
+    | Typed_ast.Name_binding (s, id) -> (s, id), acc, rhs
+    | Typed_ast.Constructor_binding (cons, rest) -> failwith "TODO"
+    | Typed_ast.Literal_binding _
+    | Typed_ast.Record_binding _
+    | Typed_ast.Tuple_binding _
+    | Typed_ast.Renamed_binding (_, _, _)
+    | Typed_ast.Reference_binding _ -> failwith "TODO"
+  in
+  inner [] binding
+
 and transform_let_def ~state:_ _let_def = failwith "TODO"
 and transform_cases ~state:_ _e _cases = failwith "TODO"
 
