@@ -34,7 +34,10 @@ module Literal = struct
 end
 
 type node =
-  | Var of Lowercase.t Qualified.t * Ty.binding_id
+  | Var of
+      Lowercase.t Qualified.t
+      * Ty.binding_id
+      * Ty.mono Lowercase.Map.t (* map for instantiated tyvars *)
   | Literal of Literal.t
   | Tuple of expr list Qualified.t
   | Constructor of Uppercase.t Qualified.t
@@ -44,9 +47,11 @@ type node =
 
 and binding =
   | Name_binding of Lowercase.t * Ty.binding_id
-  | Constructor_binding of Uppercase.t Qualified.t * binding option
+  | Constructor_binding of
+      Uppercase.t Qualified.t * Ty.type_proof * Ty.enum_type * binding option
   | Literal_binding of Literal.t
-  | Record_binding of binding Lowercase.Map.t Qualified.t
+  | Record_binding of
+      binding Lowercase.Map.t Qualified.t * Ty.type_proof * Ty.record_type
   | Tuple_binding of binding list Qualified.t
   | Renamed_binding of binding * Lowercase.t * Ty.binding_id
   | Reference_binding of binding
