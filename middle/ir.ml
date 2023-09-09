@@ -16,8 +16,9 @@ type binding_loc =
 
 type node =
   | Var of
-      (* name that maps directly to the binding *)
-      Lowercase.t * Ty.binding_id
+      Lowercase.t (* name that maps directly to the binding *)
+      * Ty.binding_id
+      * Ty.mono Lowercase.Map.t (* map for instantiated tyvars *)
   | Literal of Typed_ast.Literal.t
   | Tuple of expr list Qualified.t
   | Constructor of Uppercase.t Qualified.t
@@ -25,7 +26,7 @@ type node =
   | Wrapped of expr Qualified.t
 [@@deriving sexp, equal, hash, compare]
 
-and binding = Lowercase.t * Ty.binding_id
+and binding = Lowercase.t * Ty.binding_id * Ty.mono
 [@@deriving sexp, equal, hash, compare]
 
 and let_each = binding * expr [@@deriving sexp, equal, hash, compare]
