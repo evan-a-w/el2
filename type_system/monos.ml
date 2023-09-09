@@ -524,10 +524,7 @@ let gen_ty_var : _ state_result_m =
   Ok (TyVar sym)
 ;;
 
-let substitute (inner, mono) =
-  let%map.State.Result mono = apply_substs mono in
-  inner, mono
-;;
+let substitute = Typed_ast.map_expr_monos_m ~f:apply_substs
 
 let rec replace_type_name ~type_name (mono : mono) =
   match mono with

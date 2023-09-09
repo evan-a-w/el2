@@ -45,18 +45,17 @@ type node =
   | Wrapped of expr Qualified.t
 [@@deriving sexp, equal, hash, compare]
 
-and binding =
+and binding_inner =
   | Name_binding of Lowercase.t * Ty.binding_id
-  | Constructor_binding of
-      Uppercase.t Qualified.t * Ty.type_proof * Ty.enum_type * binding option
+  | Constructor_binding of Uppercase.t Qualified.t * binding option
   | Literal_binding of Literal.t
-  | Record_binding of
-      binding Lowercase.Map.t Qualified.t * Ty.type_proof * Ty.record_type
+  | Record_binding of binding Lowercase.Map.t Qualified.t
   | Tuple_binding of binding list Qualified.t
   | Renamed_binding of binding * Lowercase.t * Ty.binding_id
   | Reference_binding of binding
 [@@deriving sexp, equal, hash, compare]
 
+and binding = binding_inner * Ty.mono [@@deriving sexp, equal, hash, compare]
 and let_each = binding * expr [@@deriving sexp, equal, hash, compare]
 
 and let_def =
@@ -183,8 +182,51 @@ let rec map_let_def_monos_m ~f (let_def : let_def) =
     Nonrec x
 
 and on_each_binding ~f (a, b) =
+  let open State.Result.Let_syntax in
+  let%bind a = map_binding_monos_m ~f a in
   let%map.State.Result b = map_expr_monos_m ~f b in
   a, b
+
+and map_binding_monos_m ~f (b, m) =
+  let open State.Result.Let_syntax in
+  let%bind m = f m in
+  let%map b = map_binding_inner_monos_m ~f b in
+  b, m
+
+and map_binding_inner_monos_m ~f b =
+  let open State.Result.Let_syntax in
+  match b with
+  | Name_binding (_, _) | Literal_binding _ -> return b
+  | Reference_binding b ->
+    let%map b = map_binding_monos_m ~f b in
+    Reference_binding b
+  | Constructor_binding (a, b) ->
+    let%map b =
+      match b with
+      | None -> return None
+      | Some x ->
+        let%map x = map_binding_monos_m ~f x in
+        Some x
+    in
+    Constructor_binding (a, b)
+  | Record_binding r ->
+    let%map r =
+      Qualified.map_m r ~f:(fun r ->
+        Map.fold ~init:(return Lowercase.Map.empty) r ~f:(fun ~key ~data acc ->
+          let%bind acc = acc in
+          let%map data = map_binding_monos_m ~f data in
+          Map.set acc ~key ~data))
+    in
+    Record_binding r
+  | Tuple_binding l ->
+    let%map l =
+      Qualified.map_m l ~f:(fun l ->
+        State.Result.all @@ List.map l ~f:(map_binding_monos_m ~f))
+    in
+    Tuple_binding l
+  | Renamed_binding (b, s, i) ->
+    let%map b = map_binding_monos_m ~f b in
+    Renamed_binding (b, s, i)
 
 and map_expr_monos_m ~f ((expr_inner, mono) : expr) =
   let open State.Result.Let_syntax in
@@ -253,7 +295,15 @@ and map_node_monos_m ~f (node : node) =
           Map.set acc ~key ~data))
     in
     Record m
-  | Var (_, _) | Literal _ | Constructor _ -> return node
+  | Var (a, b, m) ->
+    let%map m =
+      Map.fold m ~init:(return Lowercase.Map.empty) ~f:(fun ~key ~data acc ->
+        let%bind acc = acc in
+        let%map data = f data in
+        Map.set acc ~key ~data)
+    in
+    Var (a, b, m)
+  | Literal _ | Constructor _ -> return node
 ;;
 
 (* TODO: pretty print typed ast*)
