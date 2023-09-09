@@ -372,11 +372,11 @@ let gen (mono : mono) : poly state_m =
   |> State.return
 ;;
 
-let inst (poly : poly) : mono state_m =
+let inst (poly : poly) : (mono * mono Lowercase.Map.t) state_m =
   let open State.Let_syntax in
   let rec inner ~replacement_map poly =
     match poly with
-    | Mono x -> return (replace_ty_vars ~replacement_map x)
+    | Mono x -> return (replace_ty_vars ~replacement_map x, replacement_map)
     | Forall (a, poly) ->
       let%bind sym = gensym in
       let replacement_map = Map.set replacement_map ~key:a ~data:(TyVar sym) in
