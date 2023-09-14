@@ -88,6 +88,7 @@ let type_proof_of_monos
   monos
   type_id
   ~mem_rep
+  ~user_type
   =
   let free_var_set =
     List.fold monos ~init:Lowercase.Set.empty ~f:(fun acc mono ->
@@ -97,7 +98,14 @@ let type_proof_of_monos
     Set.fold free_var_set ~init:Lowercase.Map.empty ~f:(fun acc x ->
       Map.add_exn acc ~key:x ~data:(TyVar x))
   in
-  { type_name; absolute_type_name; tyvar_map; ordering; type_id; mem_rep }
+  { type_name
+  ; absolute_type_name
+  ; tyvar_map
+  ; ordering
+  ; type_id
+  ; mem_rep
+  ; user_type
+  }
 ;;
 
 let type_of_type_def_lit
@@ -115,6 +123,7 @@ let type_of_type_def_lit
     let mem_rep = mem_rep_of_mono mono in
     let type_proof =
       { type_name
+      ; user_type = User_mono mono
       ; absolute_type_name
       ; tyvar_map =
           free_ty_vars mono
@@ -125,7 +134,7 @@ let type_of_type_def_lit
       ; mem_rep
       }
     in
-    type_proof, User_mono mono
+    type_proof
   | Ast.Type_def_lit.Record l ->
     let%bind record_type =
       List.map l ~f:(fun (name, (type_expr, mutability)) ->
@@ -134,6 +143,7 @@ let type_of_type_def_lit
       |> State.Result.all
     in
     let mem_rep = mem_rep_of_user_type (Record record_type) in
+    let user_type = Record record_type in
     let type_proof =
       type_proof_of_monos
         ~type_name
@@ -142,8 +152,8 @@ let type_of_type_def_lit
         ~mem_rep
         (List.map record_type ~f:(Fn.compose fst snd))
         type_id
+        ~user_type
     in
-    let user_type = Record record_type in
     let%bind polys =
       State.Result.all
         (List.map record_type ~f:(fun (field, (mono, mut)) ->
@@ -152,7 +162,7 @@ let type_of_type_def_lit
     in
     let field_map = Lowercase.Map.of_alist_exn polys in
     let%map () = add_record field_map type_proof in
-    type_proof, user_type
+    type_proof
   | Ast.Type_def_lit.Enum l ->
     let%bind enum_type =
       List.map l ~f:(fun (name, type_expr) ->
@@ -166,6 +176,7 @@ let type_of_type_def_lit
     in
     let mem_rep = mem_rep_of_user_type (Enum enum_type) in
     let monos = List.filter_map enum_type ~f:(fun (_, mono) -> mono) in
+    let user_type = Enum enum_type in
     let type_proof =
       type_proof_of_monos
         ~type_name
@@ -174,8 +185,8 @@ let type_of_type_def_lit
         monos
         type_id
         ~mem_rep
+        ~user_type
     in
-    let user_type = Enum enum_type in
     let%map () =
       State.Result.all_unit
       @@ List.map enum_type ~f:(fun (x, mono_option) ->
@@ -186,7 +197,7 @@ let type_of_type_def_lit
         in
         add_constructor x poly_option type_proof)
     in
-    type_proof, user_type
+    type_proof
 ;;
 
 let type_type_def
@@ -195,80 +206,65 @@ let type_type_def
   =
   let open State.Result.Let_syntax in
   let%bind state = State.Result.get in
-  match type_binding with
-  | Ast.Type_binding.Mono type_name ->
-    let absolute_type_name = absolute_name ~state ~name:type_name in
-    let type_id = type_id_of_absolute_name absolute_type_name in
-    let%bind type_proof, user_type =
-      type_of_type_def_lit ~type_name ~type_id ~ordering:None type_def
-    in
-    let%map () =
-      match Map.length type_proof.tyvar_map with
-      | 0 -> add_type type_name user_type type_proof
-      | _ ->
-        State.Result.error
-          [%message
-            "type definition has free type variables"
-              (user_type : user_type)
-              ~vars:
-                (Map.to_alist type_proof.tyvar_map |> List.map ~f:fst
-                  : Lowercase.t list)
-              (type_name : Lowercase.t)]
-    in
-    Typed_ast.(
-      Type_def Type_def.{ type_binding; type_def = user_type; type_proof })
-  | Ast.Type_binding.Poly (arg, type_name) ->
-    let absolute_type_name = absolute_name ~state ~name:type_name in
-    let type_id = type_id_of_absolute_name absolute_type_name in
-    let constructor_arg =
-      match arg with
-      | Ast.Type_binding.Single (v, l) -> Some (Single_arg (v, l))
-      | Ast.Type_binding.Tuple l -> Some (Tuple_arg l)
-    in
-    let ordering = ordering constructor_arg in
-    let lhs_ty_vars =
-      List.fold ordering ~init:Lowercase.Map.empty ~f:(fun acc key ->
-        Map.add_exn acc ~key ~data:(TyVar key))
-    in
-    let mem_rep = Mem_rep.Any "0" in
-    let type_proof =
-      { type_name
-      ; absolute_type_name
-      ; ordering = Some ordering
-      ; type_id
-      ; tyvar_map = lhs_ty_vars
-      ; mem_rep
-      }
-    in
-    let%bind () =
-      add_type_constructor
-        constructor_arg
-        type_name
-        (Abstract mem_rep)
-        type_proof
-    in
-    let%bind type_proof', user_type =
-      type_of_type_def_lit
-        ~type_name
-        ~type_id
-        ~ordering:(Some ordering)
-        type_def
-    in
-    let rhs_ty_vars = Map.key_set type_proof'.tyvar_map |> Obj.magic in
-    let lhs_ty_vars = Map.key_set lhs_ty_vars |> Obj.magic in
-    let%map () =
-      match Lowercase.Set.equal lhs_ty_vars rhs_ty_vars with
-      | true ->
-        set_type_constructor constructor_arg type_name user_type type_proof
-      | false ->
-        State.Result.error
-          [%message
-            "Type vars not equal in type def"
-              (type_name : Lowercase.t)
-              (type_proof : type_proof)
-              (lhs_ty_vars : Lowercase.Set.t)
-              (rhs_ty_vars : Lowercase.Set.t)]
-    in
-    Typed_ast.(
-      Type_def Type_def.{ type_binding; type_def = user_type; type_proof })
+  let arg, type_name =
+    match type_binding with
+    | Ast.Type_binding.Mono type_name -> None, type_name
+    | Ast.Type_binding.Poly (arg, type_name) -> Some arg, type_name
+  in
+  let absolute_type_name = absolute_name ~state ~name:type_name in
+  let type_id = type_id_of_absolute_name absolute_type_name in
+  let constructor_arg =
+    match arg with
+    | Some (Ast.Type_binding.Single (v, l)) -> Some (Single_arg (v, l))
+    | Some (Ast.Type_binding.Tuple l) -> Some (Tuple_arg l)
+    | None -> None
+  in
+  let ordering = ordering constructor_arg in
+  let lhs_ty_vars =
+    List.fold ordering ~init:Lowercase.Map.empty ~f:(fun acc key ->
+      Map.add_exn acc ~key ~data:(TyVar key))
+  in
+  let mem_rep = Mem_rep.Any "0" in
+  let type_proof =
+    { type_name
+    ; absolute_type_name
+    ; ordering = Some ordering
+    ; type_id
+    ; tyvar_map = lhs_ty_vars
+    ; mem_rep
+    ; user_type = Ty.Abstract mem_rep (* Placeholder *)
+    }
+  in
+  let%bind () =
+    add_type_constructor constructor_arg type_name (Abstract mem_rep) type_proof
+  in
+  let%bind type_proof' =
+    type_of_type_def_lit ~type_name ~type_id ~ordering:(Some ordering) type_def
+  in
+  (* let f (mem_rep : Mem_rep.abstract) =
+    match mem_rep with
+    | Mem_rep.Any "0" ->
+      State.Result.error [%message "Requires indirection in type" type_name]
+    | _ -> return mem_rep
+  in *)
+  let { user_type; _ } = type_proof' in
+  let mem_rep = mem_rep_of_user_type user_type in
+  let type_proof = { type_proof with user_type; mem_rep } in
+  let rhs_ty_vars = Map.key_set type_proof'.tyvar_map |> Obj.magic in
+  let lhs_ty_vars = Map.key_set lhs_ty_vars |> Obj.magic in
+  let%map () =
+    match Lowercase.Set.equal lhs_ty_vars rhs_ty_vars with
+    | true ->
+      set_type_constructor constructor_arg type_name user_type type_proof
+    | false ->
+      State.Result.error
+        [%message
+          "Type vars not equal in type def"
+            (type_name : Lowercase.t)
+            (type_proof : type_proof)
+            (lhs_ty_vars : Lowercase.Set.t)
+            (rhs_ty_vars : Lowercase.Set.t)]
+  in
+  Typed_ast.(
+    Type_def Type_def.{ type_binding; type_def = user_type; type_proof })
 ;;

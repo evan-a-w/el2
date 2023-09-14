@@ -39,6 +39,7 @@ and type_proof =
   ; tyvar_map : mono Lowercase.Map.t
   ; type_id : type_id
   ; mem_rep : Mem_rep.abstract
+  ; user_type : user_type
   }
 [@@deriving sexp, equal, hash, compare]
 
@@ -129,6 +130,7 @@ let type_id_of_absolute_name = Absolute_name.hash
 let make_type_proof (s : Lowercase.t) mem_rep =
   let absolute_type_name = Qualified.Unqualified s in
   { type_name = s
+  ; user_type = Abstract (Mem_rep.Closed mem_rep)
   ; absolute_type_name
   ; ordering = None
   ; tyvar_map = Lowercase.Map.empty
