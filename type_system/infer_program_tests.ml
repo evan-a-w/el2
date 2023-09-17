@@ -120,10 +120,12 @@ let%expect_test "program c" =
       ((Closure
         (Named
          ((type_name int) (absolute_type_name (Unqualified int)) (ordering ())
-          (tyvar_map ()) (type_id 173207638) (mem_rep (Closed Bits32))))
+          (tyvar_map ()) (type_id 173207638) (mem_rep (Closed Bits32))
+          (user_type (Abstract (Closed Bits32)))))
         (Named
          ((type_name int) (absolute_type_name (Unqualified int)) (ordering ())
-          (tyvar_map ()) (type_id 173207638) (mem_rep (Closed Bits32))))
+          (tyvar_map ()) (type_id 173207638) (mem_rep (Closed Bits32))
+          (user_type (Abstract (Closed Bits32)))))
         ((closure_mem_rep (Any a)) (closed_args ()) (closed_vars ())))
        Immutable)))
 

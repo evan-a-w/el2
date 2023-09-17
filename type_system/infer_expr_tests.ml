@@ -239,8 +239,10 @@ let%expect_test "type_def_record" =
          ((a
            (Named
             ((type_name int) (absolute_type_name (Unqualified int)) (ordering ())
-             (tyvar_map ()) (type_id 173207638) (mem_rep (Closed Bits32)))))))
-        (type_id 156654405) (mem_rep (Any 0)))))) |}]
+             (tyvar_map ()) (type_id 173207638) (mem_rep (Closed Bits32))
+             (user_type (Abstract (Closed Bits32))))))))
+        (type_id 156654405) (mem_rep (Any 0))
+        (user_type (Abstract (Closed Bits0))))))) |}]
 ;;
 
 let%expect_test "last_list_record_occurs" =
@@ -257,7 +259,7 @@ let%expect_test "last_list_record_occurs" =
       (error
        ("occurs check failed" (a a0)
         (mono
-         (Closure (TyVar a0 (Any a0)) (TyVar g0 (Any g0))
+         (Closure (TyVar a0) (TyVar g0)
           ((closure_mem_rep (Any h0)) (closed_args ()) (closed_vars ())))))) |}]
 ;;
 

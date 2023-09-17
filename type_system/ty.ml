@@ -39,6 +39,7 @@ and type_proof =
   ; tyvar_map : mono Lowercase.Map.t
   ; type_id : type_id
   ; mem_rep : Mem_rep.abstract
+  ; user_type : user_type
   }
 [@@deriving sexp, equal, hash, compare]
 
@@ -47,9 +48,9 @@ and binding_id = Binding_id.t [@@deriving sexp, equal, hash, compare]
 
 and mono =
   (* name and type args *)
-  | Weak of Lowercase.t * Mem_rep.abstract
+  | Weak of Lowercase.t
   (* keep track of the path and arg for equality *)
-  | TyVar of Lowercase.t * Mem_rep.abstract
+  | TyVar of Lowercase.t
   | Function of mono * mono
   (* closures unify with all closures that have an equivalent mem rep and input/return type *)
   | Closure of mono * mono * closure_info
@@ -129,6 +130,7 @@ let type_id_of_absolute_name = Absolute_name.hash
 let make_type_proof (s : Lowercase.t) mem_rep =
   let absolute_type_name = Qualified.Unqualified s in
   { type_name = s
+  ; user_type = Abstract (Mem_rep.Closed mem_rep)
   ; absolute_type_name
   ; ordering = None
   ; tyvar_map = Lowercase.Map.empty

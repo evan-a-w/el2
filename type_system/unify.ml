@@ -74,14 +74,14 @@ let lookup_and_inst_binding_poly binding_id =
   inst_result poly
 ;;
 
-let rec unify_var cons mono1 x m mono2 =
+let rec unify_var make mono1 x mono2 =
   let open State.Result.Let_syntax in
   let%bind () = occurs_check x mono2 in
+  let%bind state = State.Result.get in
+  let m, _ = Mem_rep.Abstract_ufds.find state.mem_rep_ufds (Mem_rep.Any x) in
   let mem_rep = mem_rep_of_mono mono2 in
   let%bind () = unify_mem_rep m mem_rep in
-  let%bind state = State.Result.get in
-  let m, _ = Mem_rep.Abstract_ufds.find state.mem_rep_ufds m in
-  let new_tyvar = cons x m in
+  let new_tyvar = make x in
   let%bind () = State.map (union new_tyvar mono1) ~f:Result.return in
   State.map (union mono2 new_tyvar) ~f:Result.return
 
@@ -92,12 +92,12 @@ and unify mono1 mono2 =
   let unification_error () = unification_error mono1 mono2 in
   match mono1, mono2 with
   | Named p1, Named p2 -> unify_type_proof p1 p2
-  | TyVar (x, _), TyVar (y, _) when String.equal x y -> State.Result.return ()
-  | TyVar (x, m), _ -> unify_var (fun x y -> TyVar (x, y)) mono1 x m mono2
-  | _, TyVar (x, m) -> unify_var (fun x y -> TyVar (x, y)) mono2 x m mono1
-  | Weak (x, _), Weak (y, _) when String.equal x y -> State.Result.return ()
-  | Weak (x, m), _ -> unify_var (fun x y -> Weak (x, y)) mono1 x m mono2
-  | _, Weak (x, m) -> unify_var (fun x y -> Weak (x, y)) mono2 x m mono1
+  | TyVar x, TyVar y when String.equal x y -> State.Result.return ()
+  | TyVar x, _ -> unify_var (fun x -> TyVar x) mono1 x mono2
+  | _, TyVar x -> unify_var (fun x -> TyVar x) mono2 x mono1
+  | Weak x, Weak y when String.equal x y -> State.Result.return ()
+  | Weak x, _ -> unify_var (fun x -> Weak x) mono1 x mono2
+  | _, Weak x -> unify_var (fun x -> Weak x) mono2 x mono1
   | Reference x, Reference y -> unify x y
   | Function (x1, x2), Function (y1, y2) ->
     let%bind () = unify x1 y1 in
@@ -154,14 +154,14 @@ let rec unify_less_general mono1 mono2 =
   let unification_error () = unification_error mono1 mono2 in
   match mono1, mono2 with
   | Named p1, Named p2 -> unify_less_general_type_proof ~unification_error p1 p2
-  | TyVar (x, _), TyVar (y, _) when String.equal x y -> State.Result.return ()
+  | TyVar x, TyVar y when String.equal x y -> State.Result.return ()
   | TyVar _, _ -> unification_error ()
-  | _, TyVar (x, _) ->
+  | _, TyVar x ->
     let%bind () = occurs_check x mono1 in
     State.map (union mono1 mono2) ~f:Result.return
-  | Weak (x, _), Weak (y, _) when String.equal x y -> State.Result.return ()
+  | Weak x, Weak y when String.equal x y -> State.Result.return ()
   | Weak _, _ -> unification_error ()
-  | _, Weak (x, _) ->
+  | _, Weak x ->
     let%bind () = occurs_check x mono1 in
     State.map (union mono1 mono2) ~f:Result.return
   | Reference x, Reference y -> unify_less_general x y
