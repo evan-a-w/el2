@@ -77,4 +77,23 @@ module Result = struct
       let bind = bind
       let map = `Define_using_bind
     end)
+
+  module Map = struct
+    let fold map ~init ~f =
+      let open Let_syntax in
+      Map.fold map ~init ~f:(fun ~key ~data acc ->
+        let%bind acc = acc in
+        f ~key ~data acc)
+    ;;
+
+    let map map ~empty ~f =
+      let open Let_syntax in
+      let f ~key ~data acc =
+        let%map data = f data in
+        Map.set acc ~key ~data in
+      Map.fold map ~init:(return empty) ~f:(fun ~key ~data acc ->
+        let%bind acc = acc in
+        f ~key ~data acc)
+    ;;
+  end
 end

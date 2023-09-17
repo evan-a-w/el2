@@ -200,7 +200,7 @@ let ast_tags_p : Ast.Ast_tags.t parser =
   in
   let tag =
     List.fold list ~init:Ast.Ast_tags.empty ~f:(fun acc (key, data) ->
-      Map.change acc key ~f:(fun _ -> Some data))
+      Core.Map.change acc key ~f:(fun _ -> Some data))
   in
   return tag
 ;;
@@ -245,7 +245,7 @@ let tag_list_p : Ast.Value_tag.t parser =
       | `Type_expr type_expr -> { acc with type_expr = Some type_expr }
       | `Mode mode -> { acc with mode = Some mode }
       | `Other (key, data) ->
-        { acc with ast_tags = Map.add_exn acc.ast_tags ~key ~data })
+        { acc with ast_tags = Core.Map.add_exn acc.ast_tags ~key ~data })
   in
   return tag
 ;;

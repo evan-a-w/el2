@@ -88,4 +88,18 @@ module Result : sig
   val ignore_m : ('a, 'd, 'e) t -> (unit, 'd, 'e) t
   val all : ('a, 'd, 'e) t list -> ('a list, 'd, 'e) t
   val all_unit : (unit, 'd, 'e) t list -> (unit, 'd, 'e) t
+
+  module Map : sig
+    val fold
+      :  ('a, 'b, 'c) Base.Map.t
+      -> init:('res, 'error, 'state) t
+      -> f:(key:'a -> data:'b -> 'res -> ('res, 'error, 'state) t)
+      -> ('res, 'error, 'state) t
+
+    val map
+      :  ('a, 'b, 'c) Base.Map.t
+      -> empty:('a, 'd, 'c) Base.Map.t
+      -> f:('b -> ('d, 'error, 'state) t)
+      -> (('a, 'd, 'c) Base.Map.t, 'error, 'state) t
+  end
 end
