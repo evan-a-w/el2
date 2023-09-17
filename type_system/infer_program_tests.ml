@@ -129,3 +129,4 @@ let%expect_test "program c" =
 
     let g : a has_closure -> int -> int |}]
 ;;
+(* closure type var isn't printed when its generic, this is really int -{a}> int *)

@@ -15,12 +15,12 @@ let bind x ~f state =
 let modify f state = (), f state
 
 include Monad.Make2 (struct
-  type nonrec ('a, 'state) t = ('a, 'state) t
+    type nonrec ('a, 'state) t = ('a, 'state) t
 
-  let return = return
-  let bind = bind
-  let map = `Define_using_bind
-end)
+    let return = return
+    let bind = bind
+    let map = `Define_using_bind
+  end)
 
 module Result = struct
   type nonrec ('a, 'error, 'state) t = (('a, 'error) Result.t, 'state) t
@@ -71,10 +71,10 @@ module Result = struct
   ;;
 
   include Monad.Make3 (struct
-    type nonrec ('go, 'stop, 'state) t = ('go, 'stop, 'state) t
+      type nonrec ('go, 'stop, 'state) t = ('go, 'stop, 'state) t
 
-    let return = return
-    let bind = bind
-    let map = `Define_using_bind
-  end)
+      let return = return
+      let bind = bind
+      let map = `Define_using_bind
+    end)
 end
