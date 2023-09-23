@@ -191,11 +191,11 @@ let empty_module_bindings path empty_data =
 let rec map_free_vars mono ~weak_f ~ty_var_f =
   let go = map_free_vars ~weak_f ~ty_var_f in
   match (mono : mono) with
-  | Weak (s, r) | Ty_var (s, r) ->
+  | Weak (_, _) | Ty_var (_, _) ->
     let mono = condense mono in
     (match mono with
-     | Weak (s, _) -> weak_f s
-     | Ty_var (s, _) -> ty_var_f s
+     | Weak (s, r) -> weak_f (s, r)
+     | Ty_var (s, r) -> ty_var_f (s, r)
      | _ -> mono)
   | Function (a, b) -> Function (go a, go b)
   | Closure (a, b, i) ->
@@ -208,5 +208,12 @@ let rec map_free_vars mono ~weak_f ~ty_var_f =
 and map_free_vars_closure_info { closed_args; closed_vars } ~weak_f ~ty_var_f =
   let go = List.map ~f:(Tuple2.map_snd ~f:(map_free_vars ~weak_f ~ty_var_f)) in
   { closed_args = go closed_args; closed_vars = go closed_vars }
-and map_free_vars_type_proof type_proof ~weak_f ~ty_var_f = failwith "TODO"
-and map_free_vars_user_type user_type  ~weak_f ~ty_var_f = failwith "TODO"
+
+and map_free_vars_type_proof type_proof ~weak_f ~ty_var_f =
+  { type_proof with
+    tyvar_map =
+      Map.map type_proof.tyvar_map ~f:(map_free_vars ~ty_var_f ~weak_f)
+  ; user_type = map_free_vars_user_type type_proof.user_type ~weak_f ~ty_var_f
+  }
+
+and map_free_vars_user_type user_type ~weak_f ~ty_var_f = failwith "TODO"
