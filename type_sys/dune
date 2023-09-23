@@ -1,0 +1,6 @@
+(library
+ (name type_sys)
+ (libraries core frontend shared)
+ (preprocess
+  (pps ppx_jane))
+ (inline_tests))
