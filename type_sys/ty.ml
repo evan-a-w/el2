@@ -194,8 +194,8 @@ let rec map_free_vars mono ~weak_f ~ty_var_f =
   | Weak (_, _) | Ty_var (_, _) ->
     let mono = condense mono in
     (match mono with
-     | Weak (s, r) -> weak_f (s, r)
-     | Ty_var (s, r) -> ty_var_f (s, r)
+     | Weak (s, r) -> weak_f mono (s, r)
+     | Ty_var (s, r) -> ty_var_f mono (s, r)
      | _ -> mono)
   | Function (a, b) -> Function (go a, go b)
   | Closure (a, b, i) ->
@@ -216,4 +216,29 @@ and map_free_vars_type_proof type_proof ~weak_f ~ty_var_f =
   ; user_type = map_free_vars_user_type type_proof.user_type ~weak_f ~ty_var_f
   }
 
-and map_free_vars_user_type user_type ~weak_f ~ty_var_f = failwith "TODO"
+and map_free_vars_user_type user_type ~weak_f ~ty_var_f =
+  match user_type with
+  | Base _ -> user_type
+  | Record l ->
+    Record
+      (List.map l ~f:(fun (a, (m, c)) ->
+         a, (map_free_vars m ~weak_f ~ty_var_f, c)))
+  | Enum l ->
+    Enum
+      (List.map
+         l
+         ~f:
+           (Tuple2.map_snd ~f:(Option.map ~f:(map_free_vars ~weak_f ~ty_var_f))))
+  | User_mono m -> User_mono (map_free_vars ~weak_f ~ty_var_f m)
+;;
+
+let free_ty_vars mono =
+  let set = ref String.Set.empty in
+  let weak_f mono _ = mono in
+  let ty_var_f mono (s, _) =
+    set := Set.add !set s;
+    mono
+  in
+  let _ = map_free_vars mono ~weak_f ~ty_var_f in
+  !set
+;;
