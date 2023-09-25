@@ -45,11 +45,18 @@ and binding_state =
   }
 [@@deriving sexp, equal, compare, fields]
 
+and ty_var = {
+    ty_var : string;
+    equiv_mono : mono ref;
+    equiv_mem_rep : Mem_rep.t ref
+  }
+[@@deriving sexp, equal, compare]
+
 and mono =
   (* name and type args *)
-  | Weak of Lowercase.t * mono ref
+  | Weak of ty_var
   (* keep track of the path and arg for equality *)
-  | Ty_var of Lowercase.t * mono ref
+  | Ty_var of ty_var
   | Function of mono * mono
   (* closures unify with all closures that have an equivalent mem rep and input/return type *)
   | Closure of mono * mono * closure_info
@@ -84,12 +91,12 @@ and poly =
 
 let rec condense mono =
   match mono with
-  | Weak (_, r) | Ty_var (_, r) ->
-    if phys_equal mono !r
+  | Weak { equiv_mono; _ } | Ty_var { equiv_mono; _ } ->
+    if phys_equal mono !equiv_mono
     then mono
     else (
-      let mono' = condense !r in
-      r := mono';
+      let mono' = condense !equiv_mono in
+      equiv_mono := mono';
       mono')
   | _ -> mono
 ;;
@@ -191,11 +198,11 @@ let empty_module_bindings path empty_data =
 let rec map_free_vars mono ~weak_f ~ty_var_f =
   let go = map_free_vars ~weak_f ~ty_var_f in
   match (mono : mono) with
-  | Weak (_, _) | Ty_var (_, _) ->
+  | Weak _ | Ty_var _ ->
     let mono = condense mono in
     (match mono with
-     | Weak (s, r) -> weak_f mono (s, r)
-     | Ty_var (s, r) -> ty_var_f mono (s, r)
+     | Weak ty_var -> weak_f mono ty_var
+     | Ty_var ty_var -> ty_var_f mono ty_var
      | _ -> mono)
   | Function (a, b) -> Function (go a, go b)
   | Closure (a, b, i) ->
@@ -235,7 +242,7 @@ and map_free_vars_user_type user_type ~weak_f ~ty_var_f =
 let free_ty_vars mono =
   let set = ref String.Set.empty in
   let weak_f mono _ = mono in
-  let ty_var_f mono (s, _) =
+  let ty_var_f mono { ty_var = s; _ } =
     set := Set.add !set s;
     mono
   in

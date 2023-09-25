@@ -14,13 +14,23 @@ type base =
 module T = struct
   type t =
     [ base
-    | `Union of t list
-    | `Struct of t list
+    | `Var of string * t ref
     ]
-  [@@deriving sexp, equal, hash, compare]
+  [@@deriving sexp, equal, compare]
 end
 
 module Set = Set.Make (T)
 module Map = Map.Make (T)
-
 include T
+
+let rec condense t =
+  match t with
+  | `Var (_, r) ->
+    if phys_equal t !r
+    then t
+    else (
+      let t' = condense !r in
+      r := t';
+      t')
+  | _ -> t
+;;
