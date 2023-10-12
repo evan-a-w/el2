@@ -31,23 +31,6 @@ type state =
   }
 [@@deriving sexp, equal, compare, fields]
 
-let on_mem_rep_ufds ~(f : ('a, Sexp.t, Mem_rep.Abstract_ufds.t) State.Result.t) =
-  let%bind state = State.Result.get in
-  let res, mem_rep_ufds = f state.mem_rep_ufds in
-  match res with
-  | Error e -> State.Result.error e
-  | Ok res ->
-    let%map () = State.Result.put { state with mem_rep_ufds } in
-    res
-;;
-
-let lookup_binding_id binding_id =
-  let%bind.State.Result state = State.Result.get in
-  match Map.find state.binding_map binding_id with
-  | Some x -> State.Result.return x
-  | None -> State.Result.error [%message "Binding not found" (binding_id : int)]
-;;
-
 let add_module ~name ~module_bindings =
   let%bind state = State.Result.get in
   let current_module_binding = state.current_module_binding in
@@ -60,11 +43,8 @@ let add_module ~name ~module_bindings =
           ~data:module_bindings
     }
   in
-  State.Result.put { state with current_module_binding }
+  state.current_module_binding <- current_module_binding
 ;;
-
-type 'a state_m = ('a, state) State.t [@@deriving sexp]
-type 'a state_result_m = ('a, Sexp.t, state) State.Result.t [@@deriving sexp]
 
 let get_binding_id =
   let%bind state = State.Result.get in
