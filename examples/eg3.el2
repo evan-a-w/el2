@@ -1,2 +1,4 @@
+[* right now this is a highly sad textual include, like C
+   #include, but it also only includes a file one time *]
 $include(eg1.el2)
 $include(eg1.el2)
