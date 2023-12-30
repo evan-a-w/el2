@@ -1,4 +1,4 @@
-A simple language that aims to blend OCaml and C.
+A simple (and incomplete) language that aims to blend OCaml and C.
 
 My original idea was for a C like language with a module system like OCaml,
 allowing for code reuse. I also enjoy the type system of OCaml, so evanlang2
