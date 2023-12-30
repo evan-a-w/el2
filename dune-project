@@ -1,6 +1,6 @@
-(lang dune 3.8)
+(lang dune 3.10)
 
-(name lep)
+(name el2)
 
 (generate_opam_files true)
 
@@ -15,11 +15,13 @@
 
 (documentation https://url/to/documentation)
 
+(using menhir 2.1)
+
 (package
- (name lep)
+ (name el2)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml dune core angstrom pprint)
+ (depends ocaml dune core menhir ppx_deriving zarith pprint)
  (tags
   (topics "to describe" your project)))
 
