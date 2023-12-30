@@ -4,7 +4,7 @@ My original idea was for a C like language with a module system like OCaml,
 allowing for code reuse. I also enjoy the type system of OCaml, so evanlang2
 has a Hindley-Milner type system with full type inference, as well as sum types.
 
-Currently, the module system is unimplemented - the language is basically (a less complete) C with type inference.
+Currently, the module system is unimplemented - the language is basically (a less complete) C with type inference and some other nice stuff like the order of declarations not being important.
 In fact, it even compiles to C (though I hope to use LLVM in the future).
 
 Usage:
