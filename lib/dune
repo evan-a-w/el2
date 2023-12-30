@@ -1,12 +1,13 @@
 (menhir
  (modules parser)
- (flags (:standard --explain)))
-
+ (flags
+  (:standard --explain)))
 
 (ocamllex lexer)
 
 (library
  (name el2)
- (preprocess (pps ppx_jane ppx_deriving.show))
+ (preprocess
+  (pps ppx_jane ppx_deriving.show))
  (inline_tests)
- (libraries core ppx_deriving menhirLib zarith pprint))
+ (libraries core ppx_deriving menhirLib zarith pprint re core_unix))

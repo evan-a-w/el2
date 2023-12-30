@@ -14,6 +14,8 @@ let frac = '.' digit+
 let exp = ['e' 'E'] ['-' '+']? digit+
 let float = digit* frac? exp?
 
+let dollar = '$'
+
 let white = [' ' '\t']+
 let newline = '\r' | '\n' | "\r\n"
 let id = ['a'-'z' '_'] ['a'-'z' 'A'-'Z' '0'-'9' '_']*

@@ -21,7 +21,7 @@
  (name el2)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml dune core menhir ppx_deriving zarith pprint)
+ (depends ocaml dune core menhir ppx_deriving zarith pprint re)
  (tags
   (topics "to describe" your project)))
 

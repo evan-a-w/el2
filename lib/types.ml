@@ -361,10 +361,10 @@ let%expect_test "recursive_types_sexp" =
   print_s [%sexp (user_type_b' : user_type)];
   [%expect
     {|
-    (A () ((Alias (User () (B () ((Alias (User () A))))))))
-    (B () ((Alias (User () (A () ((Alias (User () B))))))))
-    (A () ((Alias (User () (B () ((Alias (User () A))))))))
-    (B () ((Alias (User () (A () ((Alias (User () B)))))))) |}];
+    (A () ((Alias (User () (Insted (B () ((Alias (User () (Insted A))))))))))
+    (B () ((Alias (User () (Insted (A () ((Alias (User () (Insted B))))))))))
+    (A () ((Alias (User () (Insted (B () ((Alias (User () (Insted A))))))))))
+    (B () ((Alias (User () (Insted (A () ((Alias (User () (Insted B)))))))))) |}];
   assert (0 = compare_user_type user_type_a user_type_a');
   assert (0 <> compare_user_type user_type_a user_type_b)
 ;;

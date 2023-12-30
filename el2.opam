@@ -17,6 +17,7 @@ depends: [
   "ppx_deriving"
   "zarith"
   "pprint"
+  "re"
   "odoc" {with-doc}
 ]
 build: [
