@@ -30,7 +30,7 @@ type list(a) :=
 [* type without any type args *]
 type unused_data := { unused_data : unit }
 
-[* declares a function that is linked already *]
+[* declares a function that is linked already (in the C standard library) *]
 implicit_extern print_endline : &char -> c_int = "puts"
 
 let do_nothing(a) := ()
