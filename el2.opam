@@ -11,9 +11,11 @@ doc: "https://url/to/documentation"
 bug-reports: "https://github.com/username/reponame/issues"
 depends: [
   "ocaml"
-  "dune" {>= "3.8"}
+  "dune" {>= "3.10"}
   "core"
-  "angstrom"
+  "menhir"
+  "ppx_deriving"
+  "zarith"
   "pprint"
   "odoc" {with-doc}
 ]

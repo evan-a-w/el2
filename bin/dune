@@ -1,4 +1,4 @@
 (executable
- (public_name evanlang2)
+ (public_name el2)
  (name main)
- (libraries frontend))
+ (libraries el2 core core_unix.command_unix))

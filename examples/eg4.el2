@@ -1,0 +1,19 @@
+let is_even(x) :=
+  match x with
+  | 0 -> true
+  | _ -> is_odd(x - 1)
+
+let is_odd(x) :=
+  match x with
+  | 0 -> false
+  | 1 -> true
+  | _ -> is_even(x - 1)
+
+let a := {
+  let (a, _) := (1, 2);
+  a
+}
+
+let (c, d) := (1, 2)
+
+let b := a

@@ -1,0 +1,47 @@
+let add (a, b) := a + b
+
+(* can annotate types inside the := thingo, copied from joeblowdagamer *)
+let add2 (a, b) : (int, int) -> int = a + b
+
+(* toplevel things need to be compile time constants *)
+let x := 1
+
+let add_5(x) : int -> int =
+    let res := x + 5; res
+
+let index_arr(arr) :=
+    arr[5] = 10
+
+type struct(a) := {
+   field1 : int;
+   field2 : a;
+   field3 : (a, int)
+}
+
+type option(a) :=
+  | Some (a)
+  | None
+
+type option2(a, b) :=
+  | Some (a -> int, b)
+  | None
+
+let add_option_if_not_1(x) :=
+  match x with
+  | Some (1) -> None
+  | Some (x, y) -> Some (x + 1)
+  | Some (1, &(#struct { field1 })) -> Some (x + 1)
+  | None -> Some (1)
+
+(* name of type after # for tingos *)
+let struct := #struct { field1 = tang; field2 = tang2; field3 = (tang3, 5) }
+
+let unpack_struct(x) :=
+  let #struct { field1; field2 = _; field3 = _ } := x; field1
+
+(* pointers *)
+
+let x := 1
+let pointer_x : &int = &x
+let value_x : int = *pointer_x
+  
