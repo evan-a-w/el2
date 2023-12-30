@@ -28,31 +28,15 @@ let parse_and_do ~f lexbuf =
 ;;
 
 let rec do_stuff ~f filename () =
-  let dir = Filename.dirname filename in
-  let inx = In_channel.create filename in
+  let (dir, filename) = Filename.split filename in
   Core_unix.chdir dir;
   let buf = Buffer.create 1024 in
   let seen_files = String.Hash_set.create () in
-  In_channel.iter_lines inx ~f:(fun s ->
-    let rex = Re.Pcre.regexp {|\$([a-zA-Z][a-zA-Z0-9]*)\((.*)\)|} in
-    try
-      let group = Re.Pcre.exec ~rex s in
-      match Re.Group.get group 1 with
-      | "include" ->
-        let filename = Re.Group.get group 2 in
-        (match Hash_set.mem seen_files filename with
-         | true -> ()
-         | false ->
-           Hash_set.add seen_files filename;
-           on_file ~seen_files buf filename)
-      | _ -> failwith [%string {| unknown directive: %{s} |}]
-    with
-    | Not_found [@warning "-3"] -> Buffer.add_string buf s);
+  on_file ~seen_files buf filename;
   let string = Buffer.contents buf in
   let lexbuf = Lexing.from_string string in
   lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = filename };
-  parse_and_do ~f lexbuf;
-  In_channel.close inx
+  parse_and_do ~f lexbuf
 
 and on_file ~seen_files buf filename =
   In_channel.with_file filename ~f:(fun inx ->
@@ -61,10 +45,16 @@ and on_file ~seen_files buf filename =
       try
         let group = Re.Pcre.exec ~rex s in
         match Re.Group.get group 1 with
-        | "include" -> Re.Group.get group 2 |> on_file ~seen_files buf
+        | "include" ->
+          let filename = Re.Group.get group 2 in
+          (match Hash_set.mem seen_files filename with
+           | true -> ()
+           | false ->
+             Hash_set.add seen_files filename;
+             on_file ~seen_files buf filename)
         | _ -> failwith [%string {| unknown directive: %{s} |}]
       with
-      | _ -> Buffer.add_string buf s))
+      | (Not_found [@warning "-3"]) -> Buffer.add_string buf s))
 ;;
 
 let print_ast ast =
