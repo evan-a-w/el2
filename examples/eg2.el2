@@ -1,3 +1,9 @@
+[* mutual recursion is chilling
+   and order of functions does not matter
+*]
+
+let main() := is_odd(1) && is_even(2)
+
 let is_even(x) :=
   match x with
   | 0 -> true
@@ -8,5 +14,3 @@ let is_odd(x) :=
   | 0 -> false
   | 1 -> true
   | _ -> is_even(x - 1)
-
-let main() := is_odd(1) && is_even(2)
