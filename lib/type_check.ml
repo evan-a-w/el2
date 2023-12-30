@@ -2,8 +2,6 @@ open! Core
 open! Ast
 open! Types
 
-let deeb_counter = ref 0
-
 type unification_error =
   | Failed_to_match of
       { sub : unification_error

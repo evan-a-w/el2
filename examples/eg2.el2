@@ -1,45 +1,12 @@
-let Some (1) := *((1, 2)(2))(3)
+let is_even(x) :=
+  match x with
+  | 0 -> true
+  | _ -> is_odd(x - 1)
 
-let x(a, b) := &a.field1.field2
-let x := (&a.field1).field2
+let is_odd(x) :=
+  match x with
+  | 0 -> false
+  | 1 -> true
+  | _ -> is_even(x - 1)
 
-let x := *a[*x(10)]
-
-let y := if true then f(b) else &c
-
-let y := *(if true then f(b) else &c) = 0
-
-let y := let a := b; a
-
-let y : a = {
-    let a := { b };
-    a;
-    1;
-    2
-}
-
-type struct(a) := {
-   field1 : type1;
-   field2 : a;
-   field3 : (a, int)
-}
-
-type option(a) :=
-  | Some (a)
-  | None
-
-type option2(a, b) :=
-  | Some (a(b), &b, c -> d -> e)
-  | None (int -> int)
-
-let y : a = -{
-    let a := { b };
-    a;
-    1;
-    2
-}[0]
-
-let y := 4 + 3 * 2 + -3[0] + 4.field * 5 + Opt(5, 5)
-
-let main(argc, argv) := {
-}
+let main() := is_odd(1) && is_even(2)

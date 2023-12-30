@@ -1,47 +1,68 @@
-let add (a, b) := a + b
+[*
+  this is a comment
+*]
 
-(* can annotate types inside the := thingo, copied from joeblowdagamer *)
-let add2 (a, b) : (int, int) -> int = a + b
+[* sum type/enum taking a type variable 'a' *]
+type option(a) :=
+  | Some(a)
+  | None
 
-(* toplevel things need to be compile time constants *)
-let x := 1
+[* product type/struct, also with a variable *]
+type list(a) :=
+  { data : a;
+    next : option(&(list(a)))
+  }
 
-let add_5(x) : int -> int =
-    let res := x + 5; res
+[* type without any type args *]
+type unused_data := { unused_data : unit }
 
-let index_arr(arr) :=
-    arr[5] = 10
+[* declares a function that is linked already *]
+implicit_extern print_endline : &char -> c_int = "puts"
 
-type struct(a) := {
-   field1 : int;
-   field2 : a;
-   field3 : (a, int)
+let do_nothing(a) := ()
+
+let option_iter(a, f) := {
+  [* pattern matching *]
+  match a with
+  | Some(a) -> f(a)
+  | None -> ()
 }
 
-type option(a) :=
-  | Some (a)
-  | None
+let list_option_iter(
+  a,
+  [* can optionally declare the type of arguments *]
+  f : &char -> c_int
+) := {
 
-type option2(a, b) :=
-  | Some (a -> int, b)
-  | None
+  option_iter(a, do_nothing);
 
-let add_option_if_not_1(x) :=
-  match x with
-  | Some (1) -> None
-  | Some (x, y) -> Some (x + 1)
-  | Some (1, &(#struct { field1 })) -> Some (x + 1)
-  | None -> Some (1)
+  match a with
+  | None -> ()
+  | Some(a) -> {
+        [* deref, same as C *]
+        f((*a).data);
 
-(* name of type after # for tingos *)
-let struct := #struct { field1 = tang; field2 = tang2; field3 = (tang3, 5) }
+        [* postfix deref, equivalent to the above *]
+        f(a^.data);
 
-let unpack_struct(x) :=
-  let #struct { field1; field2 = _; field3 = _ } := x; field1
+	list_option_iter(a^.next, f)
+    }
+}
 
-(* pointers *)
+let main() : [* optional type declaration of return type *] i64 = {
+  let first := #list {
+    data : "first";
+    next : None
+  };
 
-let x := 1
-let pointer_x : &int = &x
-let value_x : int = *pointer_x
-  
+  [* type declarations can be used in the same way in functions *]
+  let second : list(&char) = #list {
+    data : "second";
+    next : Some(&first)
+  };
+
+  let unused := second.next;
+
+  list_option_iter(Some(&second), print_endline);
+  0
+}

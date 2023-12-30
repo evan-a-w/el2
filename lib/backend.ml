@@ -297,14 +297,14 @@ and add_equal name =
   | "" -> ""
   | _ -> name ^ " = "
 
+and nameify name ~expr =
+  match fst expr, snd expr |> reach_end with
+  | _, `Unit | `Assert (`Bool false, _), _ -> ""
+  | _ -> name
+
 and define_inner_val_with_name ~state ~buf ~name expr =
-  let mono = snd expr in
+  let name = nameify name ~expr in
   let expr = expr_to_string ~state ~buf ~expr in
-  let name =
-    match reach_end mono with
-    | `Unit -> ""
-    | _ -> name
-  in
   Bigbuffer.add_string buf [%string {| %{add_equal name}%{expr}; |}];
   name
 
@@ -350,12 +350,10 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
      | true -> [%string {| (%{a}).%{typ_no_struct}_%{i#Int} |}]
      | false -> failwith "tuple access out of bounds")
   | `Assign (a, b) ->
-    (match snd a |> reach_end with
-     | `Unit -> expr_to_string ~state ~expr:b ~buf
-     | _ ->
-       let a = expr_to_string ~state ~expr:a ~buf in
-       let b = expr_to_string ~state ~expr:b ~buf in
-       [%string {| %{a} = %{b} |}])
+    let a = expr_to_string ~state ~expr:a ~buf in
+    let a = nameify a ~expr:b in
+    let b = expr_to_string ~state ~expr:b ~buf in
+    [%string {| %{add_equal a}%{b}; |}]
   | `Glob_var (name, inst_map) ->
     let var = Hashtbl.find_exn state.input.glob_vars name in
     var_to_string ~state ~inst_map var
@@ -459,12 +457,14 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
         declare_inner_val ~state ~buf ~name ~mono;
         name
     in
+    let b_name = nameify name ~expr:b in
+    let c_name = nameify name ~expr:c in
     let a = expr_to_string ~state ~buf ~expr:a in
     Bigbuffer.add_string buf [%string {| if (%{a}) { |}];
     let b = expr_to_string ~state ~buf ~expr:b in
-    Bigbuffer.add_string buf [%string {| %{add_equal name}%{b};} else { |}];
+    Bigbuffer.add_string buf [%string {| %{add_equal b_name}%{b};} else { |}];
     let c = expr_to_string ~state ~buf ~expr:c in
-    Bigbuffer.add_string buf [%string {| %{add_equal name}%{c};} |}];
+    Bigbuffer.add_string buf [%string {| %{add_equal c_name}%{c};} |}];
     name
   | `Assert e -> [%string {| assert(%{expr_to_string ~state ~buf ~expr:e}) |}]
 ;;

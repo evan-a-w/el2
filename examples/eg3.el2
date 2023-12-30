@@ -1,10 +1,2 @@
-type option(a) :=
-  | Some(a)
-  | None
-  
-
-let id(a) := match a with | Some(a) -> Some(a) | None -> None
-
-let int_option_unwrap(a) := match id(a) with | Some(a) -> a | None -> 0
-
-let float_option_unwrap(a) := match id(a) with | Some(a) -> a | None -> 0.0
+$include(eg1.el2)
+$include(eg1.el2)

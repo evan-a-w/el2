@@ -28,7 +28,7 @@ let parse_and_do ~f lexbuf =
 ;;
 
 let rec do_stuff ~f filename () =
-  let (dir, filename) = Filename.split filename in
+  let dir, filename = Filename.split filename in
   Core_unix.chdir dir;
   let buf = Buffer.create 1024 in
   let seen_files = String.Hash_set.create () in
@@ -54,7 +54,9 @@ and on_file ~seen_files buf filename =
              on_file ~seen_files buf filename)
         | _ -> failwith [%string {| unknown directive: %{s} |}]
       with
-      | (Not_found [@warning "-3"]) -> Buffer.add_string buf s))
+      | (Not_found [@warning "-3"]) ->
+        Buffer.add_string buf s;
+        Buffer.add_char buf '\n'))
 ;;
 
 let print_ast ast =
