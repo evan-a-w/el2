@@ -6,7 +6,6 @@ implicit_extern free : &unit -> unit = "free"
 implicit_extern strcpy : (&char, &char) -> &char = "strcpy"
 implicit_extern strlen : &char -> i64 = "strlen"
 
-
 implicit_extern memset : (&unit, c_int, i64) -> unit = "memset"
 implicit_extern memcpy : (&unit, &unit, i64) -> unit = "memcpy"
 
