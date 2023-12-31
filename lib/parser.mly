@@ -15,6 +15,7 @@
 %token TRUE FALSE
 %token <char> CHAR
 %token LET TYPE EXTERN IMPLICIT_EXTERN
+%token UNSAFE_CAST
 
 %left EQUALS
 %right OR
@@ -159,6 +160,8 @@ expr_no_whitespace:
 expr_ops:
   | e = expr_no_whitespace
     { e }
+  | UNSAFE_CAST; LPAREN; b = expr; RPAREN
+    { `Unsafe_cast b }
   | a = expr_ops; LPAREN; RPAREN
     { `Apply (a, `Unit) }
   | a = expr_ops; LPAREN; b = expr; RPAREN

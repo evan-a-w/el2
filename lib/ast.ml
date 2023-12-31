@@ -75,6 +75,7 @@ and expr =
   | `Assign of expr * expr
   | `Compound of expr list
   | `Typed of expr * type_expr
+  | `Unsafe_cast of expr
   ]
 
 and inf_op =

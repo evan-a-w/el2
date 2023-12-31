@@ -1,0 +1,23 @@
+type file := unit
+
+implicit_extern malloc : i64 -> &unit = "malloc"
+implicit_extern free : &unit -> unit = "free"
+
+implicit_extern strcpy : (&char, &char) -> &char = "strcpy"
+implicit_extern strlen : &char -> i64 = "strlen"
+
+
+implicit_extern memset : (&unit, c_int, i64) -> unit = "memset"
+implicit_extern memcpy : (&unit, &unit, i64) -> unit = "memcpy"
+
+implicit_extern exit : c_int -> unit = "exit"
+
+implicit_extern fopen : (&char, &char) -> &file = "fopen"
+implicit_extern fclose : &file -> c_int = "fclose"
+
+implicit_extern fgetc : &file -> c_int = "fgetc"
+implicit_extern fgets : (&char, c_int, &file) -> &char = "fgets"
+implicit_extern fputs : (&char, &file) -> c_int = "fputs"
+implicit_extern fputc : (c_int, &file) -> c_int = "fputc"
+implicit_extern fread : (&unit, i64, i64, &file) -> i64 = "fread"
+implicit_extern fwrite : (&unit, i64, i64, &file) -> i64 = "fwrite"
