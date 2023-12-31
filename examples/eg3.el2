@@ -1,4 +1,6 @@
-[* right now this is a highly sad textual include, like C
-   #include, but it also only includes a file one time *]
+[* right now this is a highly sad textual include, like C #include
+   (but worse because it doesn't change directory or anything) *]
 $include(eg1.el2)
+
+[* it only includes the file once *]
 $include(eg1.el2)
