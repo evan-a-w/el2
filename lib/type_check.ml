@@ -158,7 +158,6 @@ module Type_state = struct
     [@@deriving sexp]
   end
 
-  (* module State = State.Make (T) *)
   include T
 
   let default_types () = String.Table.of_alist_exn []
@@ -183,7 +182,7 @@ type locals_map = mono String.Map.t
 
 let empty_ty_vars : ty_var_map = String.Map.empty
 
-let get_non_user_type ~state name =
+let get_non_user_type ~make_ty_vars ~state name =
   match name with
   | "i64" -> `I64
   | "c_int" -> `C_int
@@ -191,10 +190,9 @@ let get_non_user_type ~state name =
   | "bool" -> `Bool
   | "char" -> `Char
   | "unit" -> `Unit
+  | "_" when make_ty_vars -> make_indir ()
   | _ ->
     (match Map.find state.Type_state.ty_vars name with
-     | None when Char.equal name.[0] '\'' ->
-       make_var_mono (Counter.next_alphabetical state.ty_var_counter)
      | None -> raise (Unknown_type name)
      | Some a -> a)
 ;;
@@ -205,21 +203,23 @@ let lookup_user_type ~state name =
   | Some a -> a
 ;;
 
-let lookup_mono ~state name =
+let lookup_mono ~make_ty_vars ~state name =
   try
     let r = lookup_user_type ~state name in
     match r.ty_vars with
     | [] -> `User (inst_user_type_gen r)
     | _ -> raise (No_type_args r.ty_vars)
   with
-  | Unknown_type _ -> get_non_user_type ~state name
+  | Unknown_type _ -> get_non_user_type ~make_ty_vars ~state name
 ;;
 
-let rec mono_of_type_expr ~state (type_expr : type_expr) : mono =
+let rec mono_of_type_expr ?(make_ty_vars = true) ~state (type_expr : type_expr)
+  : mono
+  =
   let f = mono_of_type_expr ~state in
   match type_expr with
   | `Unit -> `Unit
-  | `Named s -> lookup_mono ~state s
+  | `Named s -> lookup_mono ~make_ty_vars ~state s
   | `Pointer m -> `Pointer (f m)
   | `Tuple l -> `Tuple (List.map l ~f)
   | `Named_args (s, l) ->
@@ -233,7 +233,9 @@ let all_user_of_enum ~state l =
   ( `Enum
       (List.map l ~f:(fun (s, t) ->
          if Hash_set.mem variants s then raise (Duplicate_variant s);
-         let mono_opt = Option.map t ~f:(mono_of_type_expr ~state) in
+         let mono_opt =
+           Option.map t ~f:(mono_of_type_expr ~make_ty_vars:false ~state)
+         in
          Hash_set.add variants s;
          s, mono_opt))
   , variants )
@@ -245,7 +247,7 @@ let all_user_of_struct ~state l =
       (List.map l ~f:(fun (s, t) ->
          if Hash_set.mem set s then raise (Duplicate_field s);
          Hash_set.add set s;
-         s, mono_of_type_expr ~state t))
+         s, mono_of_type_expr ~make_ty_vars:false ~state t))
   , set )
 ;;
 

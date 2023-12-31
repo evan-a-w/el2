@@ -1,7 +1,7 @@
 $include(../stdlib/stdlib.el2)
 
 let main() := {
-  let ints : &i64 = unsafe_cast(malloc(64));
-  ints[63] = 5;
-  ints[63]
+  let ints : &i64 = alloc(64);
+  ints[4] = 5;
+  ints[4]
 }
