@@ -60,7 +60,7 @@ let rec c_type_of_user_type ~state ({ monos; inst_user_mono; _ } as inst) =
         | None -> raise (Invalid_user_type user_type)
         | Some x ->
           (match x with
-           | `Alias _ -> failwith "impossible"
+           | `Alias m -> c_type_of_mono ~state m
            | `Struct l ->
              define_struct ~state ~name ~l;
              data
@@ -283,8 +283,8 @@ and function_definition ~state ~buf ~name ~args ~ret =
 
 and declare_inner_val ~state ~buf ~name ~mono =
   let mono = reach_end mono in
-  match mono with
-  | `Unit -> ()
+  match name, mono with
+  | "_", _ | _, `Unit -> ()
   | _ ->
     let c_type = c_type_of_mono ~state mono in
     Bigbuffer.add_string buf [%string {|%{c_type} %{name};|}]
@@ -298,8 +298,8 @@ and add_equal name =
   | _ -> name ^ " = "
 
 and nameify name ~expr =
-  match fst expr, snd expr |> reach_end with
-  | _, `Unit | `Assert (`Bool false, _), _ -> ""
+  match name, fst expr, snd expr |> reach_end with
+  | "_", _, _ | _, _, `Unit | _, `Assert (`Bool false, _), _ -> ""
   | _ -> name
 
 and define_inner_val_with_name ~state ~buf ~name expr =
@@ -364,17 +364,15 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
   | `Access_enum_field (field, expr) ->
     let expr = expr_to_string ~state ~expr ~buf in
     [%string {| (%{expr}).data.%{field} |}]
-  | `Compound l ->
-    let len = List.length l in
-    let last = ref None in
-    List.iteri l ~f:(fun i expr ->
-      let s = expr_to_string ~state ~expr ~buf in
-      match i = len - 1 with
-      | true -> last := Some s
-      | false ->
-        Bigbuffer.add_string buf s;
-        Bigbuffer.add_string buf "; ");
-    Option.value_exn !last
+  | `Compound e ->
+    let res_val = unique_name_or_empty ~state ~buf ~mono in
+    Bigbuffer.add_char buf '{';
+    let res = expr_to_string ~state ~expr:e ~buf in
+    Bigbuffer.add_string buf [%string {| %{add_equal res_val} |}];
+    Bigbuffer.add_string buf res;
+    Bigbuffer.add_char buf ';';
+    Bigbuffer.add_char buf '}';
+    res_val
   | `Inf_op (op, a, b) ->
     let a = expr_to_string ~buf ~state ~expr:a in
     let b = expr_to_string ~buf ~state ~expr:b in
@@ -449,14 +447,7 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
     let (_ : string) = create_inner_val_with_name ~state ~buf ~name a in
     expr_to_string ~state ~buf ~expr:b
   | `If (a, b, c) ->
-    let name =
-      match snd b |> reach_end with
-      | `Unit -> ""
-      | _ ->
-        let name = unique_name state.var_counter in
-        declare_inner_val ~state ~buf ~name ~mono;
-        name
-    in
+    let name = unique_name_or_empty ~state ~buf ~mono:(snd b) in
     let b_name = nameify name ~expr:b in
     let c_name = nameify name ~expr:c in
     let a = expr_to_string ~state ~buf ~expr:a in
@@ -467,6 +458,18 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
     Bigbuffer.add_string buf [%string {| %{add_equal c_name}%{c};} |}];
     name
   | `Assert e -> [%string {| assert(%{expr_to_string ~state ~buf ~expr:e}) |}]
+  | `Unsafe_cast e ->
+    let a = expr_to_string ~state ~buf ~expr:e in
+    let cast_to = c_type_of_mono ~state mono in
+    [%string "(%{cast_to})%{a}"]
+
+and unique_name_or_empty ~state ~buf ~mono =
+  match reach_end mono with
+  | `Unit -> ""
+  | _ ->
+    let name = unique_name state.var_counter in
+    declare_inner_val ~state ~buf ~name ~mono;
+    name
 ;;
 
 let state_of_input input =

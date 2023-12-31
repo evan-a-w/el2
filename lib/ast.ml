@@ -73,9 +73,14 @@ and expr =
   | `Match of expr * (pattern * expr) list
   | `Let of pattern * expr * expr
   | `Assign of expr * expr
-  | `Compound of expr list
+  | `Compound of compound_inner list
   | `Typed of expr * type_expr
   | `Unsafe_cast of expr
+  ]
+
+and compound_inner =
+  [ `Let of pattern * expr
+  | `Expr of expr
   ]
 
 and inf_op =
@@ -148,7 +153,12 @@ let rec expr_fold_rec expr ~init ~f =
     | `Enum _
     | `Null
     | `Unit -> ()
-    | `Tuple l | `Compound l -> List.fold l ~init ~f:(fun init -> rep ~init)
+    | `Tuple l -> List.fold l ~init ~f:(fun init -> rep ~init)
+    | `Compound l ->
+      List.fold l ~init ~f:(fun init ->
+          function
+          | `Expr e -> rep ~init e
+          | `Let (_, e) -> rep ~init e)
     | `Index (a, b)
     | `Inf_op (_, a, b)
     | `Assign (a, b)
@@ -156,6 +166,7 @@ let rec expr_fold_rec expr ~init ~f =
     | `Let (_, a, b) -> rep ~init:(rep ~init a) b
     | `Tuple_access (a, _)
     | `Field_access (a, _)
+    | `Unsafe_cast a
     | `Ref a
     | `Deref a
     | `Pref_op (_, a)

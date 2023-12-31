@@ -34,7 +34,7 @@ rule read =
   | "false"  { FALSE }
   | "match"  { MATCH }
   | "with"   { WITH }
-  | "unsafe_cast"   { unsafe_cast }
+  | "unsafe_cast"   { UNSAFE_CAST }
   | "extern"   { EXTERN }
   | "implicit_extern"   { IMPLICIT_EXTERN }
   | id       { ID (Lexing.lexeme lexbuf) }

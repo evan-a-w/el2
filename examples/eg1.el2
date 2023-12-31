@@ -61,7 +61,14 @@ let main() : [* optional type declaration of return type *] i64 = {
     next : Some(&first)
   };
 
-  let unused := second.next;
+  [* _ name == not bound and such *]
+  let _ := 1;
+
+  [* these block thingos are also an expression *]
+  let unused := {
+    do_nothing(1);
+    second.next
+  };
 
   list_option_iter(Some(&second), print_endline);
   0

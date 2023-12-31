@@ -50,11 +50,12 @@ type expanded_expr =
   | `Match of expanded_expr * (pattern * expanded_expr) list
   | `Let of string * expanded_expr * expanded_expr
   | `Assign of expanded_expr * expanded_expr
-  | `Compound of expanded_expr list
+  | `Compound of expanded_expr
   | `Typed of expanded_expr * type_expr
   | `Assert_struct of string * expanded_expr
   | `Assert_empty_enum_field of string * expanded_expr
   | `Access_enum_field of string * expanded_expr
+  | `Unsafe_cast of expanded_expr
   ]
 [@@deriving sexp, compare]
 
@@ -278,18 +279,18 @@ let process_types ~(state : Type_state.t) types =
     user_type.info := Some all_user);
   Hashtbl.iter state.types ~f:(fun user_type ->
     user_type.info
-      := Option.map
-           !(user_type.info)
-           ~f:
-             (go_all_user_map_rec
-                ~f:(function
-                  | `User x as user ->
-                    ignore (get_user_type x);
-                    user
-                  | o -> o)
-                ~on_var:(Fn.const None)
-                ~on_indir:(Fn.const None)
-                ~user_type_mem:(ref String.Map.empty)))
+    := Option.map
+         !(user_type.info)
+         ~f:
+           (go_all_user_map_rec
+              ~f:(function
+                | `User x as user ->
+                  ignore (get_user_type x);
+                  user
+                | o -> o)
+              ~on_var:(Fn.const None)
+              ~on_indir:(Fn.const None)
+              ~user_type_mem:(ref String.Map.empty)))
 ;;
 
 let unique_name counter = "internal_" ^ Counter.next_num counter
@@ -339,6 +340,11 @@ let rec breakup_patterns ~counter ~vars (pattern : pattern) (expr : expr) =
          (enqueue_new
             (`Assert_empty_enum_field (name, expand_expr ~counter expr))))
 
+and expand_let ~counter ~init (p, a) =
+  let vars = Stack.create () in
+  breakup_patterns ~counter ~vars p a;
+  Stack.fold vars ~init ~f:(fun acc (var, expr) -> `Let (var, expr, acc))
+
 and expand_expr ~counter (expr : expr) : expanded_expr =
   let f = expand_expr ~counter in
   match (expr : expr) with
@@ -352,7 +358,19 @@ and expand_expr ~counter (expr : expr) : expanded_expr =
   | `String s -> `String s
   | `Enum s -> `Enum s
   | `Tuple l -> `Tuple (List.map l ~f)
-  | `Compound l -> `Compound (List.map l ~f)
+  | `Compound l ->
+    let expr =
+      List.fold_right l ~init:None ~f:(fun x acc ->
+        match x, acc with
+        | `Expr e, None -> Some (f e)
+        | `Expr e, Some r -> `Let ("_", f e, r) |> Option.some
+        | `Let (a, b), None ->
+          expand_let ~counter ~init:`Unit (a, b) |> Option.some
+        | `Let (a, b), Some r ->
+          expand_let ~counter ~init:r (a, b) |> Option.some)
+      |> Option.value ~default:`Unit
+    in
+    `Compound expr
   | `Index (a, b) -> `Index (f a, f b)
   | `Inf_op (op, a, b) -> `Inf_op (op, f a, f b)
   | `Assign (a, b) -> `Assign (f a, f b)
@@ -367,17 +385,17 @@ and expand_expr ~counter (expr : expr) : expanded_expr =
   | `Struct (name, l) ->
     `Struct (name, List.map l ~f:(Tuple2.map_snd ~f:(Option.map ~f)))
   | `If (a, b, c) -> `If (f a, f b, f c)
+  | `Unsafe_cast x -> `Unsafe_cast (f x)
   | `Let (p, a, b) ->
-    let vars = Stack.create () in
-    breakup_patterns ~counter ~vars p a;
     let init = expand_expr ~counter b in
-    Stack.fold vars ~init ~f:(fun acc (var, expr) -> `Let (var, expr, acc))
+    expand_let ~counter ~init (p, a)
 ;;
 
 let function_arg_set ~init l =
-  List.fold l ~init ~f:(fun acc -> function
-    | `Untyped s -> Set.add acc s
-    | `Typed (s, _) -> Set.add acc s)
+  List.fold l ~init ~f:(fun acc ->
+      function
+      | `Untyped s -> Set.add acc s
+      | `Typed (s, _) -> Set.add acc s)
 ;;
 
 let rec traverse_expr
@@ -401,7 +419,7 @@ let rec traverse_expr
   | `Match (a, l) ->
     rep ~locals a;
     List.iter l ~f:(fun (_, e) -> rep ~locals e)
-  | `Tuple l | `Compound l -> List.iter l ~f:(rep ~locals)
+  | `Tuple l -> List.iter l ~f:(rep ~locals)
   | `Index (a, b) | `Inf_op (_, a, b) | `Assign (a, b) | `Apply (a, b) ->
     rep ~locals a;
     rep ~locals b
@@ -410,6 +428,8 @@ let rec traverse_expr
     let rep = rep ~locals in
     rep a;
     rep b
+  | `Compound a
+  | `Unsafe_cast a
   | `Assert_struct (_, a)
   | `Access_enum_field (_, a)
   | `Assert_empty_enum_field (_, a)
@@ -534,7 +554,7 @@ let get_sccs glob_vars =
         else if w.scc_st.on_stack
         then
           v.scc_st.lowlink
-            <- Int.min v.scc_st.lowlink (Option.value_exn w.scc_st.index));
+          <- Int.min v.scc_st.lowlink (Option.value_exn w.scc_st.index));
     if v.scc_st.lowlink = Option.value_exn v.scc_st.index
     then (
       let scc = Stack.create () in
@@ -694,6 +714,12 @@ let make_vars_weak_expr ~vars ~indirs (expr : Typed_ast.expr)
   expr_inner, `Mono mono
 ;;
 
+let state_add_local state ~name ~mono =
+  { state with
+    Type_state.locals = Map.set state.Type_state.locals ~key:name ~data:mono
+  }
+;;
+
 let rec mono_of_var ~state name =
   match Map.find state.Type_state.locals name with
   | Some x -> `Local (x, String.Map.empty)
@@ -850,10 +876,9 @@ and type_expr ~state expr : Typed_ast.expr =
     if Option.is_some res_type then raise (Unification_error End);
     let am = unify am (`User inst_user_type) in
     a, am
-  | `Compound l ->
-    let l' = List.map l ~f:(type_expr ~state) in
-    let res_type = List.last_exn l' |> snd in
-    `Compound l', res_type
+  | `Compound e ->
+    let expr = type_expr ~state e in
+    `Compound expr, snd expr
   | `Inf_op (op, a, b) ->
     let a, am = type_expr ~state a in
     let b, bm = type_expr ~state b in
@@ -972,11 +997,7 @@ and type_expr ~state expr : Typed_ast.expr =
     a, am
   | `Let (s, b, c) ->
     let b, bm = type_expr ~state b in
-    let state =
-      { state with
-        Type_state.locals = Map.set state.Type_state.locals ~key:s ~data:bm
-      }
-    in
+    let state = state_add_local state ~name:s ~mono:bm in
     let c, cm = type_expr ~state c in
     `Let (s, (b, bm), (c, cm)), cm
   | `If (a, b, c) ->
@@ -986,6 +1007,10 @@ and type_expr ~state expr : Typed_ast.expr =
     let am = unify am `Bool in
     let bm = unify bm cm in
     `If ((a, am), (b, bm), (c, cm)), bm
+  | `Unsafe_cast e ->
+    let expr = type_expr ~state e in
+    let res_type = make_indir () in
+    `Unsafe_cast expr, res_type
   | `Match (e, l) ->
     let initial_expr, em = type_expr ~state e in
     let res_type = make_indir () in

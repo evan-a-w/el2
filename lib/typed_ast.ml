@@ -37,10 +37,11 @@ and expr_inner =
     `Let of
     string * expr * expr
   | `Assign of expr * expr
-  | `Compound of expr list
+  | `Compound of expr
   | `Access_enum_field of string * expr
   | `Check_variant of string * expr
   | `Assert of expr
+  | `Unsafe_cast of expr
   ]
 
 and expr = expr_inner * mono
@@ -74,7 +75,7 @@ let rec go_expr_map_rec
     | `Null -> expr_inner
     | `Enum (name, expr) -> `Enum (name, Option.map expr ~f)
     | `Tuple l -> `Tuple (List.map l ~f)
-    | `Compound l -> `Compound (List.map l ~f)
+    | `Compound e -> `Compound (f e)
     | `Index (a, b) -> `Index (f a, f b)
     | `Tuple_access (a, b) -> `Tuple_access (f a, b)
     | `Glob_var (name, inst_map) -> `Glob_var (name, Map.map inst_map ~f:on_mono)
@@ -91,6 +92,7 @@ let rec go_expr_map_rec
     | `If (a, b, c) -> `If (f a, f b, f c)
     | `Check_variant (variant, expr) -> `Check_variant (variant, f expr)
     | `Assert e -> `Assert (f e)
+    | `Unsafe_cast e -> `Unsafe_cast (f e)
   in
   let expr_inner = on_expr_inner expr_inner in
   let mono =
@@ -180,7 +182,8 @@ let rec decompose_into_pattern mono ~make_a : 'a pattern_branches =
         (List.map l ~f:(fun (s, m) ->
            s, Option.map m ~f:(decompose_into_pattern ~make_a)))
     | `User
-        { user_type = Insted { repr_name; info = { contents = Some (`Struct l) }; _ }
+        { user_type =
+            Insted { repr_name; info = { contents = Some (`Struct l) }; _ }
         ; _
         } ->
       `Struct
@@ -196,8 +199,9 @@ let rec decompose_into_pattern mono ~make_a : 'a pattern_branches =
 let rec expr_map_monos (expr_inner, mono) ~f =
   let expr_inner =
     match (expr_inner : expr_inner) with
+    | `Unsafe_cast e -> `Unsafe_cast (expr_map_monos ~f e)
     | `Tuple l -> `Tuple (List.map l ~f:(expr_map_monos ~f))
-    | `Compound l -> `Compound (List.map l ~f:(expr_map_monos ~f))
+    | `Compound e -> `Compound (expr_map_monos ~f e)
     | `Index (a, b) -> `Index (expr_map_monos ~f a, expr_map_monos ~f b)
     | `Tuple_access (a, b) -> `Tuple_access (expr_map_monos ~f a, b)
     | `Glob_var (name, inst_map) -> `Glob_var (name, Map.map inst_map ~f)

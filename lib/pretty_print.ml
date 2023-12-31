@@ -143,7 +143,7 @@ let rec typed_ast (t : Typed_ast.expr) =
     | `Compound l ->
       lbrace
       ^^ break 1
-      ^^ mynest 4 (separate (semi ^^ break 1) (List.map l ~f:typed_ast))
+      ^^ mynest 4 (typed_ast l)
       ^^ break 1
       ^^ rbrace
     | `Access_enum_field (s, e) ->
@@ -151,6 +151,7 @@ let rec typed_ast (t : Typed_ast.expr) =
     | `Check_variant (s, e) ->
       typed_ast e ^^ space ^^ string "is" ^^ space ^^ string s
     | `Assert e -> string "assert" ^^ space ^^ typed_ast e
+    | `Unsafe_cast e -> string "unsafe_cast" ^^ lparen ^^ typed_ast e ^^ rparen
   in
   let mono = snd t |> mono in
   expr_inner ^^ space ^^ colon ^^ space ^^ mono

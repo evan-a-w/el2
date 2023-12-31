@@ -209,7 +209,7 @@ match_each:
   | p = pattern; ARROW; e = expr_ops
     { (p, e) }
 
-expr:
+expr_no_let:
   | e = expr_ops
     { e }
   | n = struct_name; LBRACE; l = separated_nonempty_list(SEMICOLON, expr_struct_element);
@@ -219,15 +219,30 @@ expr:
     { `Struct (n, []) }
   | IF; a = expr; THEN; b = expr; ELSE; c = expr
     { `If (a, b, c) }
-  | LET; p = pattern; COLON; t = type_expr; EQUALS; e = expr; SEMICOLON; r = expr
-    { `Let (p, `Typed (e, t), r) }
-  | LET; p = pattern; COLON; EQUALS; e = expr; SEMICOLON; r = expr
-    { `Let (p, e, r) }
   | MATCH; e = expr; WITH; PIPE; l = separated_nonempty_list(PIPE, match_each)
     { `Match (e, l) }
 
+let_part:
+  | LET; p = pattern; COLON; t = type_expr; EQUALS; e = expr
+    { (p, `Typed (e, t)) }
+  | LET; p = pattern; COLON; EQUALS; e = expr
+    { (p, e) }
+ 
+
+expr:
+  | e = expr_no_let
+    { e }
+  | t = let_part; SEMICOLON; r = expr
+    { `Let (fst t, snd t, r) }
+
+compound_inner:
+  | e = expr_no_let
+    { `Expr e }
+  | t = let_part
+    { `Let t }
+
 compound_expr:
-  | separated_list(SEMICOLON, expr)
+  | separated_list(SEMICOLON, compound_inner)
     { `Compound $1 }
 
 expr_struct_inner:
