@@ -1,7 +1,16 @@
 $include(../stdlib/stdlib.el2)
 
 let main() := {
+  [* alloc : i64 -> &a *]
   let ints : &i64 = alloc(64);
+  let string : &char = alloc(64);
+
+  strcpy(string, "Hello World!\n");
+  print_endline(string);
+
+  [* free : &a -> unit *]
+  free(string);
+
   ints[4] = 5;
   ints[4]
 }

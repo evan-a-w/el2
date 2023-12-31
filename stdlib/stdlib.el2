@@ -1,7 +1,7 @@
 type file := unit
 
 implicit_extern malloc : i64 -> &unit = "malloc"
-implicit_extern free : &unit -> unit = "free"
+implicit_extern c_free : &unit -> unit = "free"
 
 implicit_extern strcpy : (&char, &char) -> &char = "strcpy"
 implicit_extern strlen : &char -> i64 = "strlen"
@@ -21,7 +21,11 @@ implicit_extern fputc : (c_int, &file) -> c_int = "fputc"
 implicit_extern fread : (&unit, i64, i64, &file) -> i64 = "fread"
 implicit_extern fwrite : (&unit, i64, i64, &file) -> i64 = "fwrite"
 
+implicit_extern print_endline : &char -> c_int = "puts"
+
 [* the type '_' is a new type variable each time *]
 let alloc(sz) : &_ = ptr_cast(malloc(sz))
+
+let free(a : &_) := c_free(ptr_cast(a))
 
 let ptr_cast(x : &_) : &_ = unsafe_cast(x)
