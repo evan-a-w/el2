@@ -408,6 +408,7 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
     let b = expr_to_string ~state ~expr:b ~buf in
     [%string {| %{add_equal a}%{b}; |}]
   | `Glob_var (name, inst_map) ->
+    (* TODO: bug becaust inst_map isn't actually accurate for recursive function(s) *)
     let var = Hashtbl.find_exn state.input.glob_vars name in
     var_to_string ~state ~inst_map var
   | `Local_var name ->
