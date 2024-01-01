@@ -36,6 +36,7 @@ type expanded_expr =
   | `Char of char
   | `Var of name
   | `Tuple of expanded_expr list
+  | `Array_lit of expanded_expr list
   | `Enum of upper_name
   | `Struct of name * (string * expanded_expr option) list
   | `Apply of expanded_expr * expanded_expr
@@ -51,6 +52,8 @@ type expanded_expr =
   | `Let of string * expanded_expr * expanded_expr
   | `Assign of expanded_expr * expanded_expr
   | `Compound of expanded_expr
+  | `Size_of of [ `Type of type_expr | `Expr of expanded_expr ]
+  | `Return of expanded_expr
   | `Typed of expanded_expr * type_expr
   | `Assert_struct of string * expanded_expr
   | `Assert_empty_enum_field of string * expanded_expr
@@ -359,6 +362,7 @@ and expand_expr ~counter (expr : expr) : expanded_expr =
   | `Char c -> `Char c
   | `String s -> `String s
   | `Enum s -> `Enum s
+  | `Array_lit l -> `Array_lit (List.map l ~f)
   | `Tuple l -> `Tuple (List.map l ~f)
   | `Compound l ->
     let expr =
@@ -379,6 +383,9 @@ and expand_expr ~counter (expr : expr) : expanded_expr =
   | `Apply (a, b) -> `Apply (f a, f b)
   | `Tuple_access (a, i) -> `Tuple_access (f a, i)
   | `Field_access (a, field) -> `Field_access (f a, field)
+  | `Size_of (`Type t) -> `Size_of (`Type t)
+  | `Size_of (`Expr e) -> `Size_of (`Expr (f e))
+  | `Return a -> `Return (f a)
   | `Ref a -> `Ref (f a)
   | `Deref a -> `Deref (f a)
   | `Pref_op (op, a) -> `Pref_op (op, f a)
@@ -410,7 +417,7 @@ let rec traverse_expr
   let rep = traverse_expr ~glob_vars ~not_found_vars ~edge in
   match expr with
   | `Bool _ | `Int _ | `Float _ | `Char _ | `String _ | `Enum _ | `Unit | `Null
-    -> ()
+  | `Size_of (`Type _) -> ()
   | `Var name' ->
     (match Set.mem locals name' with
      | true -> ()
@@ -421,7 +428,7 @@ let rec traverse_expr
   | `Match (a, l) ->
     rep ~locals a;
     List.iter l ~f:(fun (_, e) -> rep ~locals e)
-  | `Tuple l -> List.iter l ~f:(rep ~locals)
+  | `Tuple l | `Array_lit l -> List.iter l ~f:(rep ~locals)
   | `Index (a, b) | `Inf_op (_, a, b) | `Assign (a, b) | `Apply (a, b) ->
     rep ~locals a;
     rep ~locals b
@@ -431,6 +438,8 @@ let rec traverse_expr
     rep a;
     rep b
   | `Compound a
+  | `Return a
+  | `Size_of (`Expr a)
   | `Unsafe_cast a
   | `Assert_struct (_, a)
   | `Access_enum_field (_, a)
@@ -762,7 +771,7 @@ and infer_scc ~state scc =
           state, b, `Function (a, b)
         | _, _ -> state, mono, mono
       in
-      let expr_inner, mono' = type_expr ~state v.Var.expr in
+      let expr_inner, mono' = type_expr ~res_type:to_unify ~state v.Var.expr in
       v, (expr_inner, unify to_unify mono'), mono)
   in
   let counter = Counter.create () in
@@ -797,13 +806,18 @@ and make_pointer ~state:_ =
   let ty_var = make_indir () in
   `Pointer ty_var, ty_var
 
-and type_expr ~state expr : Typed_ast.expr =
+and type_expr ~res_type ~state expr : Typed_ast.expr =
+  let rep ~state = type_expr ~res_type ~state in
   match expr with
   | `Bool b -> `Bool b, `Bool
   | `Int i -> `Int i, `I64
   | `Null ->
     let pointer_type, _ = make_pointer ~state in
     `Null, pointer_type
+  | `Return a ->
+    let a, am = rep ~state a in
+    let am = unify res_type am in
+    `Return (a, am), `Unit
   | `Float f -> `Float f, `F64
   | `Char c -> `Char c, `Char
   | `String s -> `String s, `Pointer `Char
@@ -812,19 +826,27 @@ and type_expr ~state expr : Typed_ast.expr =
     (match mono_of_var ~state name with
      | `Global (mono, inst_map) -> `Glob_var (name, inst_map), mono
      | `Local (mono, _) -> `Local_var name, mono)
+  | `Array_lit l ->
+    let init = make_indir () in
+    let res_type, l' =
+      List.fold_map ~init l ~f:(fun acc expr ->
+        let expr' = rep ~state expr in
+        unify acc (snd expr'), expr')
+    in
+    `Array_lit l', `Pointer res_type
   | `Tuple l ->
-    let l' = List.map l ~f:(type_expr ~state) in
+    let l' = List.map l ~f:(rep ~state) in
     let monos = List.map l' ~f:snd in
     `Tuple l', `Tuple monos
   | `Index (a, b) ->
-    let a, am = type_expr ~state a in
-    let b, bm = type_expr ~state b in
+    let a, am = rep ~state a in
+    let b, bm = rep ~state b in
     let pointer_type, ty_var = make_pointer ~state in
     let am = unify am pointer_type in
     let bm = unify bm `I64 in
     `Index ((a, am), (b, bm)), ty_var
   | `Tuple_access (a, i) ->
-    let a, am = type_expr ~state a in
+    let a, am = rep ~state a in
     let res_type =
       match am with
       | `Tuple l ->
@@ -835,18 +857,18 @@ and type_expr ~state expr : Typed_ast.expr =
     in
     `Tuple_access ((a, am), i), res_type
   | `Assign (a, b) ->
-    let a, am = type_expr ~state a in
-    let b, bm = type_expr ~state b in
+    let a, am = rep ~state a in
+    let b, bm = rep ~state b in
     let bm = unify bm am in
     `Assign ((a, bm), (b, bm)), bm
   | `Assert_struct (str, a) ->
-    let a, am = type_expr ~state a in
+    let a, am = rep ~state a in
     let user_type = lookup_user_type ~state str in
     let user_type = inst_user_type_gen user_type in
     let am = unify am (`User user_type) in
     a, am
   | `Access_enum_field (field, a) ->
-    let a, am = type_expr ~state a in
+    let a, am = rep ~state a in
     let user_type' =
       match Hashtbl.find state.Type_state.variant_to_type field with
       | Some t -> t
@@ -863,7 +885,7 @@ and type_expr ~state expr : Typed_ast.expr =
     let am = unify am (`User inst_user_type) in
     `Access_enum_field (field, (a, am)), res_type
   | `Assert_empty_enum_field (field, a) ->
-    let a, am = type_expr ~state a in
+    let a, am = rep ~state a in
     let user_type' =
       match Hashtbl.find state.Type_state.variant_to_type field with
       | Some t -> t
@@ -879,20 +901,21 @@ and type_expr ~state expr : Typed_ast.expr =
     let am = unify am (`User inst_user_type) in
     a, am
   | `Compound e ->
-    let expr = type_expr ~state e in
+    let expr = rep ~state e in
     `Compound expr, snd expr
   | `Inf_op (op, a, b) ->
-    let a, am = type_expr ~state a in
-    let b, bm = type_expr ~state b in
+    let a, am = rep ~state a in
+    let b, bm = rep ~state b in
     let m = unify am bm in
     let res_type =
       match op with
       | `Add | `Sub | `Mul | `Div | `Rem -> unify m `I64
-      | `Eq | `Ne | `Lt | `Gt | `Le | `Ge | `And | `Or -> unify m `Bool
+      | `Eq | `Ne | `Lt | `Gt | `Le | `Ge -> `Bool
+      | `And | `Or -> unify m `Bool
     in
     `Inf_op (op, (a, am), (b, bm)), res_type
   | `Field_access (a, field) ->
-    let a, am = type_expr ~state a in
+    let a, am = rep ~state a in
     let user_type =
       match Hashtbl.find state.Type_state.field_to_type field with
       | Some t -> t
@@ -907,17 +930,17 @@ and type_expr ~state expr : Typed_ast.expr =
     let am = unify am (`User user_type) in
     `Field_access ((a, am), field), res_type
   | `Ref a ->
-    let a, am = type_expr ~state a in
+    let a, am = rep ~state a in
     let pointer_type, ty_var = make_pointer ~state in
     let am = unify am ty_var in
     `Ref (a, am), pointer_type
   | `Deref a ->
-    let a, am = type_expr ~state a in
+    let a, am = rep ~state a in
     let pointer_type, ty_var = make_pointer ~state in
     let am = unify am pointer_type in
     `Deref (a, am), ty_var
   | `Pref_op (op, a) ->
-    let a, am = type_expr ~state a in
+    let a, am = rep ~state a in
     let res_type =
       match op with
       | `Minus -> unify am `I64
@@ -947,7 +970,7 @@ and type_expr ~state expr : Typed_ast.expr =
           | Some expr -> expr
           | None -> `Var field
         in
-        let a, am = type_expr ~state expr in
+        let a, am = rep ~state expr in
         let am = unify am orig_mono in
         field, (a, am))
     in
@@ -959,7 +982,7 @@ and type_expr ~state expr : Typed_ast.expr =
       | None -> failwith [%string {| Unknown field `%{s}`|}]
     in
     let user_type = inst_user_type_gen user_type in
-    let e, em = type_expr ~state e in
+    let e, em = rep ~state e in
     let arg_type =
       get_user_type_variant (get_user_type user_type) s
       |> Option.value_or_thunk ~default:(fun () ->
@@ -984,8 +1007,8 @@ and type_expr ~state expr : Typed_ast.expr =
     if Option.is_some arg_type then raise (Unification_error End);
     `Enum (s, None), `User user_type
   | `Apply (a, b) ->
-    let a, am = type_expr ~state a in
-    let b, bm = type_expr ~state b in
+    let a, am = rep ~state a in
+    let b, bm = rep ~state b in
     let arg_type = make_indir () in
     let res_type = make_indir () in
     let func_type = `Function (arg_type, res_type) in
@@ -993,28 +1016,34 @@ and type_expr ~state expr : Typed_ast.expr =
     let bm = unify bm arg_type in
     `Apply ((a, am), (b, bm)), res_type
   | `Typed (a, b) ->
-    let a, am = type_expr ~state a in
+    let a, am = rep ~state a in
     let b = mono_of_type_expr ~state b in
     let am = unify am b in
     a, am
   | `Let (s, b, c) ->
-    let b, bm = type_expr ~state b in
+    let b, bm = rep ~state b in
     let state = state_add_local state ~name:s ~mono:bm in
-    let c, cm = type_expr ~state c in
+    let c, cm = rep ~state c in
     `Let (s, (b, bm), (c, cm)), cm
   | `If (a, b, c) ->
-    let a, am = type_expr ~state a in
-    let b, bm = type_expr ~state b in
-    let c, cm = type_expr ~state c in
+    let a, am = rep ~state a in
+    let b, bm = rep ~state b in
+    let c, cm = rep ~state c in
     let am = unify am `Bool in
     let bm = unify bm cm in
     `If ((a, am), (b, bm), (c, cm)), bm
+  | `Size_of (`Type t) ->
+    let mono = mono_of_type_expr ~state t in
+    `Size_of mono, `I64
+  | `Size_of (`Expr e) ->
+    let _, mono = rep ~state e in
+    `Size_of mono, `I64
   | `Unsafe_cast e ->
-    let expr = type_expr ~state e in
+    let expr = rep ~state e in
     let res_type = make_indir () in
     `Unsafe_cast expr, res_type
   | `Match (e, l) ->
-    let initial_expr, em = type_expr ~state e in
+    let initial_expr, em = rep ~state e in
     let res_type = make_indir () in
     let var = unique_name state.var_counter in
     let bound_expr = `Local_var var, em in
@@ -1023,7 +1052,7 @@ and type_expr ~state expr : Typed_ast.expr =
         let conds, bindings_f, state =
           breakup_and_type_pattern ~state ~expr:bound_expr p
         in
-        let e, em = type_expr ~state e in
+        let e, em = rep ~state e in
         let em = unify em res_type in
         conds, bindings_f (e, em))
     in

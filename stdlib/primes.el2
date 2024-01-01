@@ -1,0 +1,26 @@
+let primes_size := 303
+
+let primes := {|
+  [* since the includes are just textual, we plop the data in
+     a separate file. Also, because my lexer is built sloppily,
+     it can't parse integers bigger than ocaml ints can store.
+     Since ocaml ints are 63 bits, this isn't even sufficient for us
+     here
+  *]
+  $include(primes.data)
+|}
+
+let nearest_prime_helper(i, lo, hi, res) := {
+  if lo >= hi then return(res);
+  let mid := (hi - lo) / 2 + lo;
+  if primes[mid] >= i then
+    nearest_prime_helper(i, lo, mid - 1, primes[mid])
+  else
+    nearest_prime_helper(i, mid + 1, hi, res)
+}
+
+let nearest_prime(i) := nearest_prime_helper(i, 0, primes_size, 0)
+
+[*
+let main() := nearest_prime(136)
+*]

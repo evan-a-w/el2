@@ -204,7 +204,7 @@ let rec var_to_string_inner ~state ~inst_map (var : Var.var) =
       { name = var.Var.name; gen_expr; cache = Inst_map.empty })
   in
   let expr_inner, poly = gen_expr in
-  let ((expr_inner, mono) as expr) =
+  let ((_, mono) as expr) =
     (expr_inner, poly_inner poly)
     |> Typed_ast.expr_map_rec
          ~on_expr_inner:Fn.id
@@ -227,8 +227,7 @@ let rec var_to_string_inner ~state ~inst_map (var : Var.var) =
        (match mono with
         | `Unit -> ""
         | _ ->
-          declare_val ~state ~name ~mono;
-          define_val ~state ~name ~mono ~expr_inner;
+          define_toplevel_val_with_name ~state ~name expr;
           name)
      | `Func args ->
        let args = List.map args ~f:(fun (s, m) -> s, inst_mono ~inst_map m) in
@@ -247,17 +246,6 @@ and var_to_string ~state ~inst_map var =
        Hashtbl.find_or_add state.extern_vars internal_name ~default:(fun () ->
          declare_extern ~state ~name:extern_name ~mono;
          extern_name))
-
-and define_val ~state ~name ~mono ~expr_inner =
-  match mono with
-  | `Unit -> ()
-  | _ ->
-    ignore
-      (define_inner_val_with_name
-         ~state
-         ~buf:state.def_buf
-         ~name
-         (expr_inner, mono))
 
 and define_func ~state ~name ~args ~ret ~expr =
   let buf = Bigbuffer.create 100 in
@@ -302,6 +290,16 @@ and nameify name ~expr =
   | "_", _, _ | _, _, `Unit | _, `Assert (`Bool false, _), _ -> ""
   | _ -> name
 
+and define_toplevel_val_with_name ~state ~name expr =
+  let buf = state.def_buf in
+  let type_str = c_type_of_mono ~state (snd expr) in
+  let name = nameify name ~expr in
+  let res = expr_to_string ~state ~buf ~expr in
+  let res =
+    nameify [%string {| %{type_str} %{add_equal name}%{res}; |}] ~expr
+  in
+  Bigbuffer.add_string buf res
+
 and define_inner_val_with_name ~state ~buf ~name expr =
   let name = nameify name ~expr in
   let expr = expr_to_string ~state ~buf ~expr in
@@ -325,6 +323,19 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
   | `Null -> "NULL"
   | `Bool true -> "true"
   | `Bool false -> "false"
+  | `Size_of mono ->
+    let typ = c_type_of_mono ~state mono in
+    [%string {| sizeof(%{typ}) |}]
+  | `Return x -> [%string {| return %{expr_to_string ~state ~buf ~expr:x}; |}]
+  | `Array_lit l ->
+    let inners =
+      List.map l ~f:(fun expr -> expr_to_string ~state ~buf ~expr)
+      |> String.concat ~sep:","
+    in
+    let name = unique_name state.var_counter in
+    let typ = c_type_of_mono ~state (List.hd_exn l |> snd) in
+    Bigbuffer.add_string buf [%string {| %{typ} %{name}[] = { %{inners} }; |}];
+    name
   | `Tuple l ->
     let _, typ_no_struct = get_typ_no_struct mono in
     let inners =

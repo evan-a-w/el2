@@ -80,6 +80,9 @@ let rec typed_ast (t : Typed_ast.expr) =
     | `Char c -> "'" ^ Char.to_string c ^ "'" |> string
     | `Glob_var (s, _) -> string s
     | `Local_var s -> string s
+    | `Array_lit l ->
+      let inner = List.map l ~f:typed_ast |> separate (semi ^^ space) in
+      lbrace ^^ char '|' ^^ mynest 4 inner ^^ char '|' ^^ rbrace
     | `Tuple l ->
       let inner = List.map l ~f:typed_ast |> separate (comma ^^ space) in
       mynest 4 inner |> wrap
@@ -152,6 +155,8 @@ let rec typed_ast (t : Typed_ast.expr) =
       typed_ast e ^^ space ^^ string "is" ^^ space ^^ string s
     | `Assert e -> string "assert" ^^ space ^^ typed_ast e
     | `Unsafe_cast e -> string "unsafe_cast" ^^ lparen ^^ typed_ast e ^^ rparen
+    | `Size_of m -> string "sizeof" ^^ lbracket ^^ mono m ^^ rbracket
+    | `Return e -> string "return" ^^ lparen ^^ typed_ast e ^^ rparen
   in
   let mono = snd t |> mono in
   expr_inner ^^ space ^^ colon ^^ space ^^ mono

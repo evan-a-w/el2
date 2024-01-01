@@ -4,12 +4,14 @@
 %token <string> UPPER_ID
 %token <string> STRING
 %token EOF
+%token NULL SIZE_OF RETURN
 %token EQ, GE, GT, LE, LT, NE
 %token AND, OR
 %token ARROW
 %token IF, THEN, ELSE
 %token PLUS MINUS TIMES DIV REM AMP CARET
 %token LPAREN RPAREN LBRACE RBRACE LBRACK RBRACK DOT
+%token LBRACEPIPE PIPERBRACE
 %token EQUALS SEMICOLON COMMA HASH COLON PIPE
 %token MATCH WITH
 %token TRUE FALSE
@@ -54,6 +56,8 @@ atom:
     { `String s }
   | c = CHAR
     { `Char c }
+  | NULL
+    { `Null }
   | TRUE
     { `Bool true }
   | FALSE
@@ -74,14 +78,14 @@ type_expr_no_whitespace:
     { `Named n }
   | type_expr_wrapped
     { $1 }
-  | AMP; t = type_expr_no_whitespace
-    { `Pointer t }
 
 type_expr:
   | n = name; LPAREN; l = separated_nonempty_list(COMMA, type_expr); RPAREN
     { `Named_args (n, l) }
   | a = type_expr; ARROW; b = type_expr
     { `Function (a, b) }
+  | AMP; t = type_expr
+    { `Pointer t }
   | t = type_expr_no_whitespace
     { t }
 
@@ -160,6 +164,12 @@ expr_no_whitespace:
 expr_ops:
   | e = expr_no_whitespace
     { e }
+  | SIZE_OF; LBRACK; b = type_expr; RBRACK
+    { `Size_of (`Type b) }
+  | SIZE_OF; LPAREN; b = expr; RPAREN
+    { `Size_of (`Expr b) }
+  | RETURN; LPAREN; b = expr; RPAREN
+    { `Return b }
   | UNSAFE_CAST; LPAREN; b = expr; RPAREN
     { `Unsafe_cast b }
   | a = expr_ops; LPAREN; RPAREN
@@ -215,6 +225,8 @@ expr_no_let:
   | n = struct_name; LBRACE; l = separated_nonempty_list(SEMICOLON, expr_struct_element);
     RBRACE
     { `Struct (n, l) }
+  | LBRACEPIPE; l = separated_nonempty_list(SEMICOLON, expr); PIPERBRACE
+    { `Array_lit l }
   | n = struct_name; LBRACE; RBRACE 
     { `Struct (n, []) }
   | IF; a = expr; THEN; b = expr; ELSE; c = expr
@@ -238,6 +250,8 @@ expr:
 compound_inner:
   | e = expr_no_let
     { `Expr e }
+  | IF; a = expr; THEN; b = expr
+    { `Expr (`If (a, `Let (`Var "_", b, `Unit), `Unit)) }
   | t = let_part
     { `Let t }
 

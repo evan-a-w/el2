@@ -32,6 +32,9 @@ rule read =
   | "else"   { ELSE }
   | "true"   { TRUE }
   | "false"  { FALSE }
+  | "null"   { NULL }
+  | "return" { RETURN }
+  | "sizeof" { SIZE_OF }
   | "match"  { MATCH }
   | "with"   { WITH }
   | "unsafe_cast"   { UNSAFE_CAST }
@@ -52,6 +55,8 @@ rule read =
   | "|"      { PIPE }
   | "("      { LPAREN }
   | ")"      { RPAREN }
+  | "{|"     { LBRACEPIPE }
+  | "|}"     { PIPERBRACE }
   | "{"      { LBRACE }
   | "}"      { RBRACE }
   | "["      { LBRACK }

@@ -75,7 +75,12 @@ and expr =
   | `Assign of expr * expr
   | `Compound of compound_inner list
   | `Typed of expr * type_expr
-  | `Unsafe_cast of expr
+  | `Unsafe_cast of expr (* sizeof[type_expr] or sizeof(expr) *)
+  | `Size_of of [ `Type of type_expr | `Expr of expr ]
+  | `Return of expr
+  | `Array_lit of
+    expr list
+    (* TODO: sizeof_type(type), sizeof_expr(expr), return, array exprs *)
   ]
 
 and compound_inner =
@@ -153,7 +158,7 @@ let rec expr_fold_rec expr ~init ~f =
     | `Enum _
     | `Null
     | `Unit -> ()
-    | `Tuple l -> List.fold l ~init ~f:(fun init -> rep ~init)
+    | `Tuple l | `Array_lit l -> List.fold l ~init ~f:(fun init -> rep ~init)
     | `Compound l ->
       List.fold l ~init ~f:(fun init ->
           function
@@ -164,6 +169,9 @@ let rec expr_fold_rec expr ~init ~f =
     | `Assign (a, b)
     | `Apply (a, b)
     | `Let (_, a, b) -> rep ~init:(rep ~init a) b
+    | `Size_of (`Type _) -> ()
+    | `Size_of (`Expr a)
+    | `Return a
     | `Tuple_access (a, _)
     | `Field_access (a, _)
     | `Unsafe_cast a

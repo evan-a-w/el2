@@ -29,3 +29,6 @@ let alloc(sz) : &_ = ptr_cast(malloc(sz))
 let free(a : &_) := c_free(ptr_cast(a))
 
 let ptr_cast(x : &_) : &_ = unsafe_cast(x)
+
+let max(a, b) := if a > b then a else b
+let min(a, b) := if a < b then a else b

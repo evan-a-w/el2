@@ -1,0 +1,48 @@
+$include(stdlib.el2)
+$include(primes.el2)
+
+type bucket_state :=
+  | HT_FREE
+  | HT_USED
+  | HT_DEAD
+
+type bucket(key, data) := {
+  state : bucket_state; [* what is in the bucket *]
+  hash : i64; [* cache the hash *]
+  key : key;
+  data : data
+}
+
+let max_load := 0.6
+let min_load_after_remove := 0.1
+let min_capacity := 17
+
+let resize_amt(size) := (size + (if size == 0 then 0 else 1)) * 2
+
+type hash_table(key, data) := {
+  size : i64;
+  capacity : i64;
+  buckets : &bucket(key, data);
+  hash_fn : &key -> i64;
+  compare_fn : (&key, &key) -> bool
+}
+
+let hash_table_create(hash_fn, compare_fn) :=
+  #hash_table { size : 0; capacity : 0; buckets : null; hash_fn; compare_fn }
+  
+
+let bucket_compare(t, key, h, i) :=
+  t^.buckets[i].hash == h && t^.compare_fn(&t^.buckets[i].key, key)
+
+let resize(t, new_capacity) := {
+  new_capacity = max(new_capacity, min_capacity);
+  if (new_capacity < min_capacity) then
+    new_capacity = min_capacity;
+  ()
+  
+}
+
+
+
+let create_i64(hash_fn : &i64 -> i64, compare_fn : (&i64, &i64) -> bool) : hash_table(i64, unit) = hash_table_create(hash_fn, compare_fn)
+let cmp_i64(t : &hash_table(i64, unit), key, h, i) := bucket_compare(t, key, h, i)
