@@ -1,6 +1,15 @@
 type file := unit
 
+type option(a) :=
+  | Some(a)
+  | None
+
+type result(ok, err) :=
+  | Ok(ok)
+  | Err(err)
+
 implicit_extern malloc : i64 -> &unit = "malloc"
+implicit_extern calloc : (i64, i64) -> &unit = "calloc"
 implicit_extern c_free : &unit -> unit = "free"
 
 implicit_extern strcpy : (&char, &char) -> &char = "strcpy"
@@ -25,6 +34,7 @@ implicit_extern print_endline : &char -> c_int = "puts"
 
 [* the type '_' is a new type variable each time *]
 let alloc(sz) : &_ = ptr_cast(malloc(sz))
+let alloc_zeroed(num_elements, element_sz) : &_ = ptr_cast(calloc(num_elements, element_sz))
 
 let free(a : &_) := c_free(ptr_cast(a))
 

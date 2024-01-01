@@ -407,6 +407,26 @@ let function_arg_set ~init l =
       | `Typed (s, _) -> Set.add acc s)
 ;;
 
+let rec pattern_vars p ~locals =
+  match p with
+  | `Bool _ | `Float _ | `Char _ | `String _ | `Int _ | `Null -> locals
+  | `Var s -> Set.add locals s
+  | `Unit -> locals
+  | `Tuple l ->
+    List.fold l ~init:locals ~f:(fun locals p -> pattern_vars p ~locals)
+  | `Ref p -> pattern_vars p ~locals
+  | `Struct (_, l) ->
+    List.fold l ~init:locals ~f:(fun acc (f, p) ->
+      match p with
+      | Some p -> pattern_vars p ~locals:acc
+      | None -> Set.add acc f)
+  | `Typed (p, _) -> pattern_vars p ~locals
+  | `Enum (_, p) ->
+    (match p with
+     | Some p -> pattern_vars p ~locals
+     | None -> locals)
+;;
+
 let rec traverse_expr
   ~glob_vars
   ~not_found_vars
@@ -427,7 +447,7 @@ let rec traverse_expr
        then Hash_set.add not_found_vars name')
   | `Match (a, l) ->
     rep ~locals a;
-    List.iter l ~f:(fun (_, e) -> rep ~locals e)
+    List.iter l ~f:(fun (p, e) -> rep ~locals:(pattern_vars p ~locals) e)
   | `Tuple l | `Array_lit l -> List.iter l ~f:(rep ~locals)
   | `Index (a, b) | `Inf_op (_, a, b) | `Assign (a, b) | `Apply (a, b) ->
     rep ~locals a;
@@ -1208,6 +1228,12 @@ type output =
 let type_check toplevels =
   try
     let state = process_toplevel_graph toplevels in
+    (*
+       Hashtbl.iter state.glob_vars ~f:(fun var ->
+       match var with
+       | Var.El v -> print_s [%sexp (v.Var.expr : expanded_expr)]
+       | _ -> ());
+    *)
     let _ = get_sccs state.glob_vars in
     Hashtbl.iter state.glob_vars ~f:(fun var -> ignore (infer_var ~state var));
     { glob_vars = state.glob_vars
@@ -1215,9 +1241,9 @@ let type_check toplevels =
     ; var_counter = state.var_counter
     }
   with
-  | Unification_error e as exn ->
+  | Unification_error e ->
     show_unification_error e |> print_endline;
-    raise exn
+    exit 1
 ;;
 
 let process_and_dump toplevels =

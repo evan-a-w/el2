@@ -39,6 +39,26 @@ type state =
   ; var_counter : Counter.t
   }
 
+type c_type_error =
+  | End
+  | Error_in of mono * c_type_error
+
+let show_c_type_error err =
+  let buf = Buffer.create 100 in
+  let rec helper = function
+    | End -> Buffer.add_string buf "end"
+    | Error_in (m, e) ->
+      Buffer.add_string buf (show_mono m);
+      Buffer.add_string buf " because ";
+      helper e
+  in
+  Buffer.add_string buf "error in ";
+  helper err;
+  Buffer.contents buf
+;;
+
+exception C_type_error of c_type_error
+
 let rec c_type_of_user_type ~state ({ monos; inst_user_mono; _ } as inst) =
   let ({ repr_name; info; _ } as user_type) = get_user_type inst in
   let map_ref =
@@ -69,51 +89,55 @@ let rec c_type_of_user_type ~state ({ monos; inst_user_mono; _ } as inst) =
              data)))
 
 and c_type_of_mono ~state (mono : mono) =
-  let mono = reach_end mono in
-  match mono with
-  | `Bool -> "bool"
-  | `I64 -> "int64_t"
-  | `C_int -> "int"
-  | `F64 -> "double"
-  | `Unit -> "void"
-  | `Char -> "char"
-  | `User x -> c_type_of_user_type ~state x
-  | `Opaque x -> c_type_of_mono ~state x
-  | `Pointer x ->
-    let x = c_type_of_mono ~state x in
-    x ^ "*"
-  | `Function (a, b) ->
-    (match Map.find state.inst_monos mono with
-     | Some x -> x
-     | None ->
-       let name = string_of_mono mono in
-       state.inst_monos <- Map.set state.inst_monos ~key:mono ~data:name;
-       let args =
-         match a with
-         | `Tuple l -> l
-         | _ -> [ a ]
-       in
-       Bigbuffer.add_string
-         state.type_buf
-         (function_typedef_string ~state ~name ~args ~ret:b);
-       name)
-  | `Tuple l ->
-    (match Map.find state.inst_monos mono with
-     | Some x -> x
-     | None ->
-       let mono_name = string_of_mono mono in
-       let name = "struct " ^ mono_name in
-       state.inst_monos <- Map.set state.inst_monos ~key:mono ~data:name;
-       let fields =
-         List.mapi l ~f:(fun i x ->
-           let a = [%string {| %{mono_name}_%{i#Int} |}] in
-           let b = c_type_of_mono ~state x in
-           [%string {|%{b} %{a};|}])
-         |> String.concat ~sep:"\n"
-       in
-       Bigbuffer.add_string state.type_buf [%string {|%{name} {%{fields}};|}];
-       name)
-  | `Indir _ | `Var _ -> raise (Invalid_type mono)
+  try
+    let mono = reach_end mono in
+    match mono with
+    | `Bool -> "bool"
+    | `I64 -> "int64_t"
+    | `C_int -> "int"
+    | `F64 -> "double"
+    | `Unit -> "void"
+    | `Char -> "char"
+    | `User x -> c_type_of_user_type ~state x
+    | `Opaque x -> c_type_of_mono ~state x
+    | `Pointer x ->
+      let x = c_type_of_mono ~state x in
+      x ^ "*"
+    | `Function (a, b) ->
+      (match Map.find state.inst_monos mono with
+       | Some x -> x
+       | None ->
+         let name = string_of_mono mono in
+         state.inst_monos <- Map.set state.inst_monos ~key:mono ~data:name;
+         let args =
+           match a with
+           | `Tuple l -> l
+           | _ -> [ a ]
+         in
+         Bigbuffer.add_string
+           state.type_buf
+           (function_typedef_string ~state ~name ~args ~ret:b);
+         name)
+    | `Tuple l ->
+      (match Map.find state.inst_monos mono with
+       | Some x -> x
+       | None ->
+         let mono_name = string_of_mono mono in
+         let name = "struct " ^ mono_name in
+         state.inst_monos <- Map.set state.inst_monos ~key:mono ~data:name;
+         let fields =
+           List.mapi l ~f:(fun i x ->
+             let a = [%string {| %{mono_name}_%{i#Int} |}] in
+             let b = c_type_of_mono ~state x in
+             [%string {|%{b} %{a};|}])
+           |> String.concat ~sep:"\n"
+         in
+         Bigbuffer.add_string state.type_buf [%string {|%{name} {%{fields}};|}];
+         name)
+    | `Indir _ | `Var _ -> raise (Invalid_type mono)
+  with
+  | Typed_ast.Incomplete_type m -> raise (C_type_error (Error_in (m, End)))
+  | C_type_error e -> raise (C_type_error (Error_in (mono, e)))
 
 and declare_function ~state ~name ~args ~ret =
   let args =
@@ -210,30 +234,48 @@ let rec var_to_string_inner ~state ~inst_map (var : Var.var) =
          ~on_expr_inner:Fn.id
          ~on_mono:(inst_mono ~inst_map)
   in
-  match Map.find comp_var.cache inst_map with
-  | Some x -> x
-  | None ->
-    let suffix =
-      Map.data inst_map |> List.map ~f:string_of_mono |> String.concat ~sep:"_"
+  try
+    match Map.find comp_var.cache inst_map with
+    | Some x -> x
+    | None ->
+      let suffix =
+        Map.data inst_map
+        |> List.map ~f:string_of_mono
+        |> String.concat ~sep:"_"
+      in
+      let name =
+        match Map.length inst_map with
+        | 0 -> comp_var.name
+        | _ -> comp_var.name ^ "_inst_" ^ suffix
+      in
+      comp_var.cache <- Map.set comp_var.cache ~key:inst_map ~data:name;
+      (match var.Var.args with
+       | `Non_func ->
+         (match mono with
+          | `Unit -> ""
+          | _ ->
+            define_toplevel_val_with_name ~state ~name expr;
+            name)
+       | `Func args ->
+         let args = List.map args ~f:(fun (s, m) -> s, inst_mono ~inst_map m) in
+         declare_function ~state ~name ~args ~ret:mono;
+         define_func ~state ~name ~args ~ret:mono ~expr;
+         name)
+  with
+  | C_type_error e ->
+    show_c_type_error e |> print_endline;
+    let pretty_expr = Pretty_print.typed_ast expr |> Pretty_print.to_string in
+    let inst_map =
+      Map.to_alist inst_map
+      |> List.map ~f:(fun (a, b) -> [%string {| %{a} = %{show_mono b} |}])
+      |> String.concat ~sep:",\n"
     in
-    let name =
-      match Map.length inst_map with
-      | 0 -> comp_var.name
-      | _ -> comp_var.name ^ "_inst_" ^ suffix
-    in
-    comp_var.cache <- Map.set comp_var.cache ~key:inst_map ~data:name;
-    (match var.Var.args with
-     | `Non_func ->
-       (match mono with
-        | `Unit -> ""
-        | _ ->
-          define_toplevel_val_with_name ~state ~name expr;
-          name)
-     | `Func args ->
-       let args = List.map args ~f:(fun (s, m) -> s, inst_mono ~inst_map m) in
-       declare_function ~state ~name ~args ~ret:mono;
-       define_func ~state ~name ~args ~ret:mono ~expr;
-       name)
+    print_endline
+      [%string
+        {| while compiling %{var.Var.name} with type %{show_mono mono} |}];
+    print_endline [%string {| with inst_map `%{inst_map}` |}];
+    print_endline pretty_expr;
+    exit 1
 
 and var_to_string ~state ~inst_map var =
   match var with

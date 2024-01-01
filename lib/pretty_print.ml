@@ -8,7 +8,8 @@ module M = Set.Make (struct
     type t = mono list * user_type [@@deriving sexp, compare]
   end)
 
-let rec mono (t : mono) : PPrint.document =
+let rec mono ?(map = ref M.empty) (t : mono) : PPrint.document =
+  let mono = mono ~map in
   let res =
     match inner_mono t with
     | `Unit -> string "unit"
@@ -28,11 +29,87 @@ let rec mono (t : mono) : PPrint.document =
     | `Function (a, b) ->
       mono a ^^ space ^^ string "->" ^^ mynest 4 (space ^^ mono b)
     | `Opaque t' -> string "opaque" ^^ lbracket ^^ mono t' ^^ rbracket
-    | `User inst -> inst_user_type inst
+    | `User inst -> inst_user_type ~map inst
   in
   group res
 
-and inst_user_type inst =
+and user_type_p ?(map = ref M.empty) user_type =
+  let mono = mono ~map in
+  let inner user_type =
+    match !(user_type.info) with
+    | Some (`Alias m) -> string "alias" ^^ space ^^ mono m
+    | Some (`Enum l) ->
+      string "enum"
+      ^^ space
+      ^^ lbracket
+      ^^ space
+      ^^ mynest
+           4
+           (List.map l ~f:(fun (s, m) ->
+              match m with
+              | None -> string s
+              | Some m -> string s ^^ space ^^ string "=" ^^ space ^^ mono m)
+            |> separate (semi ^^ space))
+      ^^ space
+      ^^ rbracket
+    | Some (`Struct l) ->
+      string "struct"
+      ^^ space
+      ^^ lbracket
+      ^^ space
+      ^^ mynest
+           4
+           (List.map l ~f:(fun (s, m) ->
+              string s ^^ space ^^ string ":" ^^ space ^^ mono m)
+            |> separate (semi ^^ space))
+      ^^ space
+      ^^ rbracket
+    | None -> string "opaque"
+  in
+  string user_type.repr_name
+  ^^ (match user_type.ty_vars with
+      | [] -> empty
+      | l ->
+        lparen
+        ^^ mynest 4 (List.map l ~f:string |> separate (comma ^^ space))
+        ^^ rparen)
+  ^^ space
+  ^^ equals
+  ^^ space
+  ^^ inner user_type
+
+and inst_user_type ?(map = ref M.empty) inst =
+  let mono = mono ~map in
+  match Set.mem !map (inst.monos, user_type inst) with
+  | true -> short_inst_user_type inst
+  | false ->
+    if true
+    then (
+      map := Set.add !map (inst.monos, user_type inst);
+      let user_type = user_type inst in
+      let monos = mono (`Tuple inst.monos) in
+      let user_type = user_type_p ~map user_type in
+      lbrace
+      ^^ space
+      ^^ string "monos"
+      ^^ space
+      ^^ equals
+      ^^ space
+      ^^ lbracket
+      ^^ monos
+      ^^ rbracket
+      ^^ semi
+      ^^ space
+      ^^ string "user_type"
+      ^^ space
+      ^^ equals
+      ^^ space
+      ^^ user_type
+      ^^ space
+      ^^ rbrace)
+    else short_inst_user_type inst
+
+and short_inst_user_type inst =
   let monos =
     match inst.monos with
     | [] -> empty
@@ -144,11 +221,7 @@ let rec typed_ast (t : Typed_ast.expr) =
     | `Assign (a, b) ->
       typed_ast a ^^ space ^^ string "=" ^^ space ^^ typed_ast b
     | `Compound l ->
-      lbrace
-      ^^ break 1
-      ^^ mynest 4 (typed_ast l)
-      ^^ break 1
-      ^^ rbrace
+      lbrace ^^ break 1 ^^ mynest 4 (typed_ast l) ^^ break 1 ^^ rbrace
     | `Access_enum_field (s, e) ->
       typed_ast e ^^ space ^^ string "@" ^^ space ^^ string s
     | `Check_variant (s, e) ->
@@ -160,6 +233,12 @@ let rec typed_ast (t : Typed_ast.expr) =
   in
   let mono = snd t |> mono in
   expr_inner ^^ space ^^ colon ^^ space ^^ mono
+;;
+
+let to_string x =
+  let buf = Buffer.create 100 in
+  PPrint.ToBuffer.pretty 1. 80 buf x;
+  Buffer.contents buf
 ;;
 
 let output_endline x = PPrint.ToChannel.pretty 1. 80 stdout (x ^^ hardline)

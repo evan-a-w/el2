@@ -1,0 +1,28 @@
+type option(a) :=
+  | Some(a)
+  | None
+
+type list(a) :=
+  { data : a;
+    next : option(&(list(a)))
+  }
+
+implicit_extern print_endline : &char -> c_int = "puts"
+
+let list_option_iter(a, f) := {
+  match a with
+  | None -> ()
+  | Some(a) -> {
+        f(a^.data);
+	list_option_iter(a^.next, f)
+    }
+}
+
+let main() : [* optional type declaration of return type *] i64 = {
+  let first := #list {
+    data : "first";
+    next : None
+  };
+  list_option_iter(Some(&first), print_endline);
+  0
+}

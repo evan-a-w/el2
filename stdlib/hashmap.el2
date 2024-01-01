@@ -1,10 +1,15 @@
 $include(stdlib.el2)
 $include(primes.el2)
 
+type hashmap_error :=
+  | Not_found
+  | Duplicate
+  | Failed_allocation
+
 type bucket_state :=
-  | HT_FREE
-  | HT_USED
-  | HT_DEAD
+  | Bucket_free
+  | Bucket_used
+  | Bucket_dead
 
 type bucket(key, data) := {
   state : bucket_state; [* what is in the bucket *]
@@ -13,13 +18,12 @@ type bucket(key, data) := {
   data : data
 }
 
-let max_load := 0.6
-let min_load_after_remove := 0.1
-let min_capacity := 17
+[* load out of 1000 *]
+let hashmap_max_load := 600
+let hashmap_min_load_after_remove := 100
+let hashmap_min_capacity := 17
 
-let resize_amt(size) := (size + (if size == 0 then 0 else 1)) * 2
-
-type hash_table(key, data) := {
+type hashmap(key, data) := {
   size : i64;
   capacity : i64;
   buckets : &bucket(key, data);
@@ -27,22 +31,90 @@ type hash_table(key, data) := {
   compare_fn : (&key, &key) -> bool
 }
 
-let hash_table_create(hash_fn, compare_fn) :=
-  #hash_table { size : 0; capacity : 0; buckets : null; hash_fn; compare_fn }
+let hashmap_create(hash_fn, compare_fn) :=
+  #hashmap { size : 0; capacity : 0; buckets : null; hash_fn; compare_fn }
   
 
 let bucket_compare(t, key, h, i) :=
   t^.buckets[i].hash == h && t^.compare_fn(&t^.buckets[i].key, key)
 
-let resize(t, new_capacity) := {
-  new_capacity = max(new_capacity, min_capacity);
-  if (new_capacity < min_capacity) then
-    new_capacity = min_capacity;
-  ()
-  
+let hashmap_insert_elements(t, old_buckets, old_capacity, i) := {
+  if i >= old_capacity then return(());
+  match old_buckets[i].state with
+  | Bucket_used -> { hashmap_insert(t, old_buckets[i].key, old_buckets[i].data); () }
+  | _ -> ();
+  hashmap_insert_elements(t, old_buckets, old_capacity, i + 1)
 }
 
+let hashmap_resize(t, new_capacity) := {
+  new_capacity = max(new_capacity, hashmap_min_capacity);
+  new_capacity = nearest_prime(new_capacity);
 
+  let new_buckets := alloc_zeroed(new_capacity, sizeof(t^.buckets[0]));
+  if new_buckets == null then return(Err(Failed_allocation));
 
-let create_i64(hash_fn : &i64 -> i64, compare_fn : (&i64, &i64) -> bool) : hash_table(i64, unit) = hash_table_create(hash_fn, compare_fn)
-let cmp_i64(t : &hash_table(i64, unit), key, h, i) := bucket_compare(t, key, h, i)
+  let old_buckets := t^.buckets;
+  let old_capacity := t^.capacity;
+
+  t^.size = 0;
+  t^.capacity = new_capacity;
+  t^.buckets = new_buckets;
+
+  hashmap_insert_elements(t, old_buckets, old_capacity, 0);
+
+  free(old_buckets);
+  Ok(())
+}
+
+type hashmap_insert_result(data) :=
+  | Hashmap_duplicate(&data)
+  | Hashmap_inserted(&data)
+  | Hashmap_failed(hashmap_error)
+
+let hashmap_insert_loop(t, key, h, cnt, i, found_dead, dead_i) := {
+  if cnt > t^.capacity then return(Ok(if found_dead then dead_i else i));
+
+  match t^.buckets[i].state with
+  | Bucket_free -> return(Ok(if found_dead then dead_i else i))
+  | Bucket_used -> {
+      if bucket_compare(t, &key, h, i) then return(Err(&t^.buckets[i].data))
+    }
+  | Bucket_dead -> {
+      if found_dead == false then {
+        found_dead = true;
+        dead_i = i;
+        ()
+      }
+    };
+
+  hashmap_insert_loop(t, key, h, cnt + 1, (i + 1) % t^.capacity, found_dead, dead_i)
+}
+
+let hashmap_insert(t, key, data) : hashmap_insert_result(_) = {
+  let sz := min(t^.size, 1);
+  let load := sz * 1000 / min(t^.capacity, 1);
+  if load > hashmap_max_load then {
+    match hashmap_resize(t, sz * 2) with
+    | Ok(()) -> ()
+    | Err(e) -> return(Hashmap_failed(e))
+  };
+
+  let h := t^.hash_fn(&key);
+  let index := h % t^.capacity;
+  match hashmap_insert_loop(t, key, h, 0, index, false, 0) with
+  | Err(e) -> Hashmap_duplicate(e)
+  | Ok(i) -> {
+      t^.buckets[i].hash = h;
+      t^.buckets[i].state = Bucket_used;
+      t^.buckets[i].key = key;
+      t^.buckets[i].data = data;
+      t^.size = t^.size + 1;
+      Hashmap_inserted(&t^.buckets[i].data)
+    }
+
+}
+
+let create_i64(hash_fn : &i64 -> i64, compare_fn : (&i64, &i64) -> bool) : hashmap(i64, unit) = hashmap_create(hash_fn, compare_fn)
+let cmp_i64(t : &hashmap(i64, unit), key, h, i) := bucket_compare(t, key, h, i)
+let insert_i64(t : &hashmap(i64, i64), key, data) := hashmap_insert(t, key, data)
+let resize_i64(t : &hashmap(i64, i64), sz) := hashmap_resize(t, sz)
