@@ -262,20 +262,33 @@ let rec var_to_string_inner ~state ~inst_map (var : Var.var) =
          define_func ~state ~name ~args ~ret:mono ~expr;
          name)
   with
-  | C_type_error e ->
-    show_c_type_error e |> print_endline;
-    let pretty_expr = Pretty_print.typed_ast expr |> Pretty_print.to_string in
-    let inst_map =
-      Map.to_alist inst_map
-      |> List.map ~f:(fun (a, b) -> [%string {| %{a} = %{show_mono b} |}])
-      |> String.concat ~sep:",\n"
-    in
-    print_endline
-      [%string
-        {| while compiling %{var.Var.name} with type %{show_mono mono} |}];
-    print_endline [%string {| with inst_map `%{inst_map}` |}];
-    print_endline pretty_expr;
+  | C_type_error _ as exn ->
+    print_var_comp_error var inst_map mono exn;
     exit 1
+  | Typed_ast.Incomplete_type m as exn ->
+    print_endline "Incomplete type in var_to_string_inner";
+    print_endline (show_mono m);
+    let pretty_expr = Pretty_print.typed_ast expr |> Pretty_print.to_string in
+    print_endline pretty_expr;
+    print_var_comp_error var inst_map mono exn;
+    exit 1
+
+and print_exn_backtrace exn =
+  Backtrace.Exn.most_recent_for_exn exn
+  |> Option.value_exn
+  |> Backtrace.to_string
+  |> print_endline
+
+and print_var_comp_error var inst_map mono exn =
+  let inst_map =
+    Map.to_alist inst_map
+    |> List.map ~f:(fun (a, b) -> [%string {| %{a} = %{show_mono b} |}])
+    |> String.concat ~sep:",\n"
+  in
+  print_endline
+    [%string {| while compiling %{var.Var.name} with type %{show_mono mono} |}];
+  print_endline [%string {| with inst_map `%{inst_map}` |}];
+  print_exn_backtrace exn
 
 and var_to_string ~state ~inst_map var =
   match var with
@@ -357,165 +370,190 @@ and create_inner_val ~state ~buf expr =
   create_inner_val_with_name ~state ~buf ~name expr
 
 and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
-  let get_typ_no_struct mono =
-    let typ = c_type_of_mono ~state mono in
-    typ, String.chop_prefix_if_exists ~prefix:"struct " typ
-  in
-  match expr_inner with
-  | `Null -> "NULL"
-  | `Bool true -> "true"
-  | `Bool false -> "false"
-  | `Size_of mono ->
-    let typ = c_type_of_mono ~state mono in
-    [%string {| sizeof(%{typ}) |}]
-  | `Return x -> [%string {| return %{expr_to_string ~state ~buf ~expr:x}; |}]
-  | `Array_lit l ->
-    let inners =
-      List.map l ~f:(fun expr -> expr_to_string ~state ~buf ~expr)
-      |> String.concat ~sep:","
+  try
+    let get_typ_no_struct mono =
+      let typ = c_type_of_mono ~state mono in
+      typ, String.chop_prefix_if_exists ~prefix:"struct " typ
     in
-    let name = unique_name state.var_counter in
-    let typ = c_type_of_mono ~state (List.hd_exn l |> snd) in
-    Bigbuffer.add_string buf [%string {| %{typ} %{name}[] = { %{inners} }; |}];
-    name
-  | `Tuple l ->
-    let _, typ_no_struct = get_typ_no_struct mono in
-    let inners =
-      List.map l ~f:(create_inner_val ~state ~buf)
-      |> List.mapi ~f:(fun i s ->
-        [%string {| .%{typ_no_struct}_%{i#Int} = %{s} |}])
-      |> String.concat ~sep:", "
+    match expr_inner with
+    | `Null -> "NULL"
+    | `Bool true -> "true"
+    | `Bool false -> "false"
+    | `Size_of mono ->
+      let typ = c_type_of_mono ~state mono in
+      [%string {| sizeof(%{typ}) |}]
+    | `Return x -> [%string {| return %{expr_to_string ~state ~buf ~expr:x}; |}]
+    | `Array_lit l ->
+      let inners =
+        List.map l ~f:(fun expr -> expr_to_string ~state ~buf ~expr)
+        |> String.concat ~sep:","
+      in
+      let name = unique_name state.var_counter in
+      let typ = c_type_of_mono ~state (List.hd_exn l |> snd) in
+      Bigbuffer.add_string buf [%string {| %{typ} %{name}[] = { %{inners} }; |}];
+      name
+    | `Tuple l ->
+      let _, typ_no_struct = get_typ_no_struct mono in
+      let inners =
+        List.map l ~f:(create_inner_val ~state ~buf)
+        |> List.mapi ~f:(fun i s ->
+          [%string {| .%{typ_no_struct}_%{i#Int} = %{s} |}])
+        |> String.concat ~sep:", "
+      in
+      [%string "(%{c_type_of_mono ~state mono}){ %{inners} }"]
+    | `Index (a, b) ->
+      let a = expr_to_string ~state ~buf ~expr:a in
+      let b = expr_to_string ~state ~buf ~expr:b in
+      [%string {| (%{a})[%{b}] |}]
+    | `Tuple_access ((a, am), i) ->
+      let _, typ_no_struct = get_typ_no_struct am in
+      let num =
+        match am with
+        | `Tuple l -> List.length l
+        | _ -> 0
+      in
+      let a = expr_to_string ~state ~expr:(a, am) ~buf in
+      (match i < num with
+       | true -> [%string {| (%{a}).%{typ_no_struct}_%{i#Int} |}]
+       | false -> failwith "tuple access out of bounds")
+    | `Assign (a, b) ->
+      let a = expr_to_string ~state ~expr:a ~buf in
+      let a = nameify a ~expr:b in
+      let b = expr_to_string ~state ~expr:b ~buf in
+      [%string {| %{add_equal a}%{b}; |}]
+    | `Glob_var (name, inst_map) ->
+      (* TODO: bug becaust inst_map isn't actually accurate for recursive function(s) *)
+      let var = Hashtbl.find_exn state.input.glob_vars name in
+      let inst_map =
+        match var, !inst_map with
+        | _, Some x -> x
+        | Var.El var, None ->
+          (match var.Var.poly with
+           | `Mono _ -> String.Map.empty
+           | _ ->
+             let inst_map' =
+               recover_inst_map (poly_inner var.Var.poly) mono String.Map.empty
+             in
+             inst_map := Some inst_map';
+             inst_map := Some inst_map';
+             inst_map')
+        | _ -> String.Map.empty
+      in
+      var_to_string ~state ~inst_map var
+    | `Local_var name ->
+      (match reach_end mono with
+       | `Unit -> ""
+       | _ -> name)
+    | `Access_enum_field (field, expr) ->
+      let expr = expr_to_string ~state ~expr ~buf in
+      [%string {| (%{expr}).data.%{field} |}]
+    | `Compound e ->
+      let res_val = unique_name_or_empty ~state ~buf ~mono in
+      Bigbuffer.add_char buf '{';
+      let res = expr_to_string ~state ~expr:e ~buf in
+      Bigbuffer.add_string buf [%string {| %{add_equal res_val} |}];
+      Bigbuffer.add_string buf res;
+      Bigbuffer.add_char buf ';';
+      Bigbuffer.add_char buf '}';
+      res_val
+    | `Inf_op (op, a, b) ->
+      let a = expr_to_string ~buf ~state ~expr:a in
+      let b = expr_to_string ~buf ~state ~expr:b in
+      let op =
+        match op with
+        | `Ge -> ">"
+        | `Rem -> "%"
+        | `Div -> "/"
+        | `Add -> "+"
+        | `Lt -> "<"
+        | `And -> "&&"
+        | `Sub -> "-"
+        | `Eq -> "=="
+        | `Le -> "<"
+        | `Or -> "||"
+        | `Gt -> ">"
+        | `Mul -> "*"
+        | `Ne -> "!="
+      in
+      [%string {| ((%{a}) %{op} (%{b})) |}]
+    | `Field_access (expr, field) ->
+      let expr = expr_to_string ~state ~buf ~expr in
+      [%string {| %{expr}.%{field} |}]
+    | `Float x -> Float.to_string x
+    | `Unit -> ""
+    | `Ref e -> [%string "&(%{expr_to_string ~state ~buf ~expr:e })"]
+    | `Deref e -> [%string "(*(%{expr_to_string ~state ~buf ~expr:e }))"]
+    | `Char x -> [%string "'%{x#Char}'"]
+    | `String s -> [%string {| "%{s}" |}]
+    | `Int i -> [%string {| %{i#Int} |}]
+    | `Check_variant (variant, expr) ->
+      let _, typ_no_struct = get_typ_no_struct (snd expr) in
+      let variant = enum_tag ~name:typ_no_struct ~variant in
+      [%string {| ((%{expr_to_string ~state ~expr  ~buf}).tag == %{variant}) |}]
+    | `Pref_op (op, e) ->
+      let e = expr_to_string ~state ~buf ~expr:e in
+      let op =
+        match op with
+        | `Minus -> "-"
+      in
+      [%string {| %{op}(%{e}) |}]
+    | `Enum (s, p) ->
+      let typ, typ_no_struct = get_typ_no_struct mono in
+      let variant = enum_tag ~name:typ_no_struct ~variant:s in
+      let union =
+        match p with
+        | None -> ""
+        | Some p ->
+          let var = create_inner_val ~state ~buf p in
+          [%string {| , .data = { .%{s} = %{var} } |}]
+      in
+      [%string {| (%{typ}){ .tag = %{variant}%{union} } |}]
+    | `Struct (_, fields) ->
+      let typ, _ = get_typ_no_struct mono in
+      let fields =
+        List.map fields ~f:(fun (s, p) ->
+          let expr = create_inner_val ~state ~buf p in
+          [%string {| .%{s} = %{expr} |}])
+        |> String.concat ~sep:", "
+      in
+      [%string {| (%{typ}){ %{fields} } |}]
+    | `Apply (a, ((be, _) as b)) ->
+      let args =
+        match be with
+        | `Tuple l -> List.map l ~f:(create_inner_val ~state ~buf)
+        | _ -> [ create_inner_val ~state ~buf b ]
+      in
+      let args = String.concat ~sep:", " args in
+      let a = expr_to_string ~state ~buf ~expr:a in
+      [%string {| (%{a})(%{args}) |}]
+    | `Let (name, a, b) ->
+      let (_ : string) = create_inner_val_with_name ~state ~buf ~name a in
+      expr_to_string ~state ~buf ~expr:b
+    | `If (a, b, c) ->
+      let name = unique_name_or_empty ~state ~buf ~mono:(snd b) in
+      let b_name = nameify name ~expr:b in
+      let c_name = nameify name ~expr:c in
+      let a = expr_to_string ~state ~buf ~expr:a in
+      Bigbuffer.add_string buf [%string {| if (%{a}) { |}];
+      let b = expr_to_string ~state ~buf ~expr:b in
+      Bigbuffer.add_string buf [%string {| %{add_equal b_name}%{b};} else { |}];
+      let c = expr_to_string ~state ~buf ~expr:c in
+      Bigbuffer.add_string buf [%string {| %{add_equal c_name}%{c};} |}];
+      name
+    | `Assert e -> [%string {| assert(%{expr_to_string ~state ~buf ~expr:e}) |}]
+    | `Unsafe_cast e ->
+      let a = expr_to_string ~state ~buf ~expr:e in
+      let cast_to = c_type_of_mono ~state mono in
+      [%string "(%{cast_to})%{a}"]
+  with
+  | C_type_error e as exn ->
+    show_c_type_error e |> print_endline;
+    let pretty_expr =
+      Pretty_print.typed_ast (expr_inner, mono) |> Pretty_print.to_string
     in
-    [%string "(%{c_type_of_mono ~state mono}){ %{inners} }"]
-  | `Index (a, b) ->
-    let a = expr_to_string ~state ~buf ~expr:a in
-    let b = expr_to_string ~state ~buf ~expr:b in
-    [%string {| (%{a})[%{b}] |}]
-  | `Tuple_access ((a, am), i) ->
-    let _, typ_no_struct = get_typ_no_struct am in
-    let num =
-      match am with
-      | `Tuple l -> List.length l
-      | _ -> 0
-    in
-    let a = expr_to_string ~state ~expr:(a, am) ~buf in
-    (match i < num with
-     | true -> [%string {| (%{a}).%{typ_no_struct}_%{i#Int} |}]
-     | false -> failwith "tuple access out of bounds")
-  | `Assign (a, b) ->
-    let a = expr_to_string ~state ~expr:a ~buf in
-    let a = nameify a ~expr:b in
-    let b = expr_to_string ~state ~expr:b ~buf in
-    [%string {| %{add_equal a}%{b}; |}]
-  | `Glob_var (name, inst_map) ->
-    (* TODO: bug becaust inst_map isn't actually accurate for recursive function(s) *)
-    let var = Hashtbl.find_exn state.input.glob_vars name in
-    var_to_string ~state ~inst_map var
-  | `Local_var name ->
-    (match reach_end mono with
-     | `Unit -> ""
-     | _ -> name)
-  | `Access_enum_field (field, expr) ->
-    let expr = expr_to_string ~state ~expr ~buf in
-    [%string {| (%{expr}).data.%{field} |}]
-  | `Compound e ->
-    let res_val = unique_name_or_empty ~state ~buf ~mono in
-    Bigbuffer.add_char buf '{';
-    let res = expr_to_string ~state ~expr:e ~buf in
-    Bigbuffer.add_string buf [%string {| %{add_equal res_val} |}];
-    Bigbuffer.add_string buf res;
-    Bigbuffer.add_char buf ';';
-    Bigbuffer.add_char buf '}';
-    res_val
-  | `Inf_op (op, a, b) ->
-    let a = expr_to_string ~buf ~state ~expr:a in
-    let b = expr_to_string ~buf ~state ~expr:b in
-    let op =
-      match op with
-      | `Ge -> ">"
-      | `Rem -> "%"
-      | `Div -> "/"
-      | `Add -> "+"
-      | `Lt -> "<"
-      | `And -> "&&"
-      | `Sub -> "-"
-      | `Eq -> "=="
-      | `Le -> "<"
-      | `Or -> "||"
-      | `Gt -> ">"
-      | `Mul -> "*"
-      | `Ne -> "!="
-    in
-    [%string {| ((%{a}) %{op} (%{b})) |}]
-  | `Field_access (expr, field) ->
-    let expr = expr_to_string ~state ~buf ~expr in
-    [%string {| %{expr}.%{field} |}]
-  | `Float x -> Float.to_string x
-  | `Unit -> ""
-  | `Ref e -> [%string "&(%{expr_to_string ~state ~buf ~expr:e })"]
-  | `Deref e -> [%string "(*(%{expr_to_string ~state ~buf ~expr:e }))"]
-  | `Char x -> [%string "'%{x#Char}'"]
-  | `String s -> [%string {| "%{s}" |}]
-  | `Int i -> [%string {| %{i#Int} |}]
-  | `Check_variant (variant, expr) ->
-    let _, typ_no_struct = get_typ_no_struct (snd expr) in
-    let variant = enum_tag ~name:typ_no_struct ~variant in
-    [%string {| ((%{expr_to_string ~state ~expr  ~buf}).tag == %{variant}) |}]
-  | `Pref_op (op, e) ->
-    let e = expr_to_string ~state ~buf ~expr:e in
-    let op =
-      match op with
-      | `Minus -> "-"
-    in
-    [%string {| %{op}(%{e}) |}]
-  | `Enum (s, p) ->
-    let typ, typ_no_struct = get_typ_no_struct mono in
-    let variant = enum_tag ~name:typ_no_struct ~variant:s in
-    let union =
-      match p with
-      | None -> ""
-      | Some p ->
-        let var = create_inner_val ~state ~buf p in
-        [%string {| , .data = { .%{s} = %{var} } |}]
-    in
-    [%string {| (%{typ}){ .tag = %{variant}%{union} } |}]
-  | `Struct (_, fields) ->
-    let typ, _ = get_typ_no_struct mono in
-    let fields =
-      List.map fields ~f:(fun (s, p) ->
-        let expr = create_inner_val ~state ~buf p in
-        [%string {| .%{s} = %{expr} |}])
-      |> String.concat ~sep:", "
-    in
-    [%string {| (%{typ}){ %{fields} } |}]
-  | `Apply (a, ((be, _) as b)) ->
-    let args =
-      match be with
-      | `Tuple l -> List.map l ~f:(create_inner_val ~state ~buf)
-      | _ -> [ create_inner_val ~state ~buf b ]
-    in
-    let args = String.concat ~sep:", " args in
-    let a = expr_to_string ~state ~buf ~expr:a in
-    [%string {| (%{a})(%{args}) |}]
-  | `Let (name, a, b) ->
-    let (_ : string) = create_inner_val_with_name ~state ~buf ~name a in
-    expr_to_string ~state ~buf ~expr:b
-  | `If (a, b, c) ->
-    let name = unique_name_or_empty ~state ~buf ~mono:(snd b) in
-    let b_name = nameify name ~expr:b in
-    let c_name = nameify name ~expr:c in
-    let a = expr_to_string ~state ~buf ~expr:a in
-    Bigbuffer.add_string buf [%string {| if (%{a}) { |}];
-    let b = expr_to_string ~state ~buf ~expr:b in
-    Bigbuffer.add_string buf [%string {| %{add_equal b_name}%{b};} else { |}];
-    let c = expr_to_string ~state ~buf ~expr:c in
-    Bigbuffer.add_string buf [%string {| %{add_equal c_name}%{c};} |}];
-    name
-  | `Assert e -> [%string {| assert(%{expr_to_string ~state ~buf ~expr:e}) |}]
-  | `Unsafe_cast e ->
-    let a = expr_to_string ~state ~buf ~expr:e in
-    let cast_to = c_type_of_mono ~state mono in
-    [%string "(%{cast_to})%{a}"]
+    print_endline "Failed in expr to string:";
+    print_endline pretty_expr;
+    raise exn
 
 and unique_name_or_empty ~state ~buf ~mono =
   match reach_end mono with

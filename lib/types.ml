@@ -69,7 +69,7 @@ and inst_user_type =
   { monos : mono list
   ; mutable user_type : inst_user_type_info
   ; mutable inst_user_mono : mono option
-      (* if user_type is an alias, this is the mono that comes from mapping ty_vars to the replacement mono *)
+  (* if user_type is an alias, this is the mono that comes from mapping ty_vars to the replacement mono *)
   }
 
 and enum_type = [ `Enum of (string * mono) list ]
@@ -439,9 +439,9 @@ and go_user_type_map_rec ~user_type_mem ~f ~on_var ~on_indir user_type =
     let res = { user_type with info = ref None } in
     user_type_mem := Map.set !user_type_mem ~key:user_type.repr_name ~data:res;
     res.info
-      := Option.map
-           ~f:(go_all_user_map_rec ~user_type_mem ~f ~on_var ~on_indir)
-           !(user_type.info);
+    := Option.map
+         ~f:(go_all_user_map_rec ~user_type_mem ~f ~on_var ~on_indir)
+         !(user_type.info);
     res
 
 and go_all_user_map_rec ~user_type_mem ~f ~on_var ~on_indir =
@@ -665,4 +665,26 @@ let rec string_of_mono (mono : mono) =
   | `Tuple l -> List.map l ~f:string_of_mono |> String.concat ~sep:"_and_"
   | `Indir (id, _) -> [%string "weak_%{id#Int}"]
   | `Var (s, _) -> s
+;;
+
+let rec recover_inst_map poly mono inst_map =
+  let poly = inner_mono poly in
+  let mono = inner_mono mono in
+  match poly, mono with
+  | `Var (s, _), _ -> Map.set inst_map ~key:s ~data:mono
+  | `Indir _, _
+  | `Bool, `Bool
+  | `C_int, `C_int
+  | `I64, `I64
+  | `F64, `F64
+  | `Unit, `Unit
+  | `Char, `Char -> inst_map
+  | `Pointer p, `Pointer p' -> recover_inst_map p p' inst_map
+  | `Opaque p, `Opaque p' -> recover_inst_map p p' inst_map
+  | `Function (a, b), `Function (a', b') ->
+    recover_inst_map a a' inst_map |> recover_inst_map b b'
+  | `User { monos = l; _ }, `User { monos = l'; _ } | `Tuple l, `Tuple l' ->
+    List.fold2_exn l l' ~init:inst_map ~f:(fun acc a b ->
+      recover_inst_map a b acc)
+  | _ -> inst_map
 ;;

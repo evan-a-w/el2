@@ -21,18 +21,21 @@ implicit_extern print_endline : &char -> c_int = "puts"
 
 let do_nothing(a) := ()
 
-let option_iter(a, f) := {
+let option_iter(
+  a,
+  [* can optionally declare the type of arguments
+     '_' in type expressions means a new type variable
+     (rn you can't use a or b or 'a etc.)
+  *]
+  f : _ -> unit
+) := {
   [* pattern matching *]
   match a with
   | Some(a) -> f(a)
   | None -> ()
 }
 
-let list_option_iter(
-  a,
-  [* can optionally declare the type of arguments *]
-  f : &char -> c_int
-) := {
+let list_option_iter(a, f) := {
 
   option_iter(a, do_nothing);
 

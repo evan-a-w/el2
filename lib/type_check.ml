@@ -520,7 +520,7 @@ let process_toplevel_graph (toplevels : toplevel list) =
         List.map vars ~f:(function
           | `Typed (s, e) -> s, mono_of_type_expr ~state e
           | `Untyped s ->
-            s, make_var_mono (Counter.next_alphabetical state.ty_var_counter))
+            s, make_indir ())
       in
       let edge =
         Var.create_func
@@ -753,7 +753,7 @@ let state_add_local state ~name ~mono =
 
 let rec mono_of_var ~state name =
   match Map.find state.Type_state.locals name with
-  | Some x -> `Local (x, String.Map.empty)
+  | Some x -> `Local x
   | None ->
     (match Hashtbl.find state.Type_state.glob_vars name with
      | Some var -> infer_var ~state var
@@ -765,9 +765,12 @@ and infer_var ~state var =
     (match v.scc.type_check_state with
      | `Untouched -> infer_scc ~state v.Var.scc
      | `In_checking | `Done -> ());
-    `Global (inst v.Var.poly)
+    let mono, inst_map = inst v.Var.poly in
+    (match v.Var.scc.type_check_state with
+     | `Untouched | `In_checking -> `Global (mono, ref None)
+     | `Done -> `Global (mono, ref (Some inst_map)))
   | Extern (_, _, mono) | Implicit_extern (_, _, mono) ->
-    `Global (mono, String.Map.empty)
+    `Global (mono, ref (Some String.Map.empty))
 
 and infer_scc ~state scc =
   scc.Var.type_check_state <- `In_checking;
@@ -819,9 +822,6 @@ and infer_scc ~state scc =
     v.Var.typed_expr <- Some expr);
   scc.Var.type_check_state <- `Done
 
-and make_var ~state =
-  make_var_mono (Counter.next_alphabetical state.Type_state.ty_var_counter)
-
 and make_pointer ~state:_ =
   let ty_var = make_indir () in
   `Pointer ty_var, ty_var
@@ -845,7 +845,7 @@ and type_expr ~res_type ~state expr : Typed_ast.expr =
   | `Var name ->
     (match mono_of_var ~state name with
      | `Global (mono, inst_map) -> `Glob_var (name, inst_map), mono
-     | `Local (mono, _) -> `Local_var name, mono)
+     | `Local mono -> `Local_var name, mono)
   | `Array_lit l ->
     let init = make_indir () in
     let res_type, l' =
@@ -1002,7 +1002,6 @@ and type_expr ~res_type ~state expr : Typed_ast.expr =
       | None -> failwith [%string {| Unknown field `%{s}`|}]
     in
     let user_type = inst_user_type_gen user_type in
-    let e, em = rep ~state e in
     let arg_type =
       get_user_type_variant (get_user_type user_type) s
       |> Option.value_or_thunk ~default:(fun () ->
@@ -1010,7 +1009,10 @@ and type_expr ~res_type ~state expr : Typed_ast.expr =
       |> Option.value_or_thunk ~default:(fun () ->
         raise (Unification_error End))
     in
+    let e, em = rep ~state e in
+    print_s [%message "Unify arg type for enum" ~field:s (em : mono) (arg_type : mono)];
     let em = unify em arg_type in
+    print_s [%message "After unif arg type    " ~field:s (em : mono) (arg_type : mono)];
     `Enum (s, Some (e, em)), `User user_type
   | `Enum s ->
     let user_type =

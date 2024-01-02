@@ -18,7 +18,7 @@ and expr_inner =
   | `String of string
   | `Bool of bool
   | `Char of char
-  | `Glob_var of string * mono String.Map.t (* map for inst vars *)
+  | `Glob_var of string * mono String.Map.t option ref (* map for inst vars *)
   | `Local_var of string
   | `Tuple of expr list
   | `Enum of upper_name * expr option
@@ -52,7 +52,7 @@ and gen_expr = expr_inner * poly
 
 and mem_assignable_expr =
   [ `Deref of expr
-  | `Global_var of name * mono String.Map.t
+  | `Glob_var of name * mono String.Map.t option ref
   | `Local_var of name
   | `Index of expr * expr
   | `Field_access of expr * string
@@ -91,7 +91,11 @@ let rec go_expr_map_rec
     | `Compound e -> `Compound (f e)
     | `Index (a, b) -> `Index (f a, f b)
     | `Tuple_access (a, b) -> `Tuple_access (f a, b)
-    | `Glob_var (name, inst_map) -> `Glob_var (name, Map.map inst_map ~f:mono_f)
+    | `Glob_var (name, inst_map) ->
+      (match !inst_map with
+       | Some x -> inst_map := Some (Map.map ~f:mono_f x)
+       | None -> ());
+      `Glob_var (name, inst_map)
     | `Assign (a, b) -> `Assign (f a, f b)
     | `Access_enum_field (en, e) -> `Access_enum_field (en, f e)
     | `Inf_op (a, b, c) -> `Inf_op (a, f b, f c)
@@ -108,9 +112,7 @@ let rec go_expr_map_rec
     | `Unsafe_cast e -> `Unsafe_cast (f e)
   in
   let expr_inner = on_expr_inner expr_inner in
-  let mono = mono_f
-      mono
-  in
+  let mono = mono_f mono in
   expr_inner, mono
 ;;
 
@@ -213,7 +215,11 @@ let rec expr_map_monos (expr_inner, mono) ~f =
     | `Compound e -> `Compound (expr_map_monos ~f e)
     | `Index (a, b) -> `Index (expr_map_monos ~f a, expr_map_monos ~f b)
     | `Tuple_access (a, b) -> `Tuple_access (expr_map_monos ~f a, b)
-    | `Glob_var (name, inst_map) -> `Glob_var (name, Map.map inst_map ~f)
+    | `Glob_var (name, inst_map) ->
+      (match !inst_map with
+       | Some x -> inst_map := Some (Map.map ~f x)
+       | None -> ());
+      `Glob_var (name, inst_map)
     | `Assign (a, b) -> `Assign (expr_map_monos ~f a, expr_map_monos ~f b)
     | `Access_enum_field (en, e) -> `Access_enum_field (en, expr_map_monos ~f e)
     | `Inf_op (a, b, c) -> `Inf_op (a, expr_map_monos ~f b, expr_map_monos ~f c)
@@ -232,6 +238,7 @@ let rec expr_map_monos (expr_inner, mono) ~f =
       `Check_variant (variant, expr_map_monos ~f expr)
     | `Assert e -> `Assert (expr_map_monos ~f e)
     | `Size_of m -> `Size_of (f m)
+    | `Enum (s, e) -> `Enum (s, Option.map e ~f:(expr_map_monos ~f))
     | `Unit
     | `Null
     | `Int _
@@ -239,8 +246,7 @@ let rec expr_map_monos (expr_inner, mono) ~f =
     | `String _
     | `Bool _
     | `Char _
-    | `Local_var _
-    | `Enum _ -> expr_inner
+    | `Local_var _ -> expr_inner
   in
   expr_inner, f mono
 ;;
