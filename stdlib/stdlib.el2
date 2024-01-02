@@ -1,12 +1,6 @@
 type file := unit
 
-type option(a) :=
-  | Some(a)
-  | None
-
-type result(ok, err) :=
-  | Ok(ok)
-  | Err(err)
+[* TODO: make types more accurate *]
 
 implicit_extern malloc : i64 -> &unit = "malloc"
 implicit_extern calloc : (i64, i64) -> &unit = "calloc"
@@ -29,6 +23,13 @@ implicit_extern fputs : (&char, &file) -> c_int = "fputs"
 implicit_extern fputc : (c_int, &file) -> c_int = "fputc"
 implicit_extern fread : (&unit, i64, i64, &file) -> i64 = "fread"
 implicit_extern fwrite : (&unit, i64, i64, &file) -> i64 = "fwrite"
+
+implicit_extern stdin : &file = "stdin"
+implicit_extern stdout : &file = "stdout"
+implicit_extern stderr : &file = "stderr"
+
+implicit_extern srand : i64 -> unit = "srand"
+implicit_extern rand : unit -> i64 = "rand"
 
 implicit_extern print_endline : &char -> c_int = "puts"
 

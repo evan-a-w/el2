@@ -67,8 +67,15 @@ let rec c_type_of_user_type ~state ({ monos; inst_user_mono; _ } as inst) =
   in
   let monos = List.map monos ~f:reach_end in
   match Map.find !map_ref monos with
-  | Some x -> x
+  | Some x ->
+    print_endline
+      [%string
+        {|YES found in cache for %{repr_name}  and %{List.map ~f:show_mono monos |> String.concat ~sep:", "}|}];
+    x
   | None ->
+    print_endline
+      [%string
+        {|NO found in cache for %{repr_name} (%{show_mono (`User inst)}) and %{List.map ~f:show_mono monos |> String.concat ~sep:", "}|}];
     let name = string_of_mono (`User inst) in
     let data = "struct " ^ name in
     Bigbuffer.add_string state.type_decl_buf [%string {|%{data};|}];
@@ -425,7 +432,7 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
       (* TODO: bug becaust inst_map isn't actually accurate for recursive function(s) *)
       let var = Hashtbl.find_exn state.input.glob_vars name in
       let inst_map =
-        match var, !inst_map with
+        match var, inst_map with
         | _, Some x -> x
         | Var.El var, None ->
           (match var.Var.poly with
@@ -434,8 +441,6 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
              let inst_map' =
                recover_inst_map (poly_inner var.Var.poly) mono String.Map.empty
              in
-             inst_map := Some inst_map';
-             inst_map := Some inst_map';
              inst_map')
         | _ -> String.Map.empty
       in
@@ -481,7 +486,7 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
       [%string {| %{expr}.%{field} |}]
     | `Float x -> Float.to_string x
     | `Unit -> ""
-    | `Ref e -> [%string "&(%{expr_to_string ~state ~buf ~expr:e })"]
+    | `Ref e -> [%string "&(%{create_inner_val ~state ~buf e })"]
     | `Deref e -> [%string "(*(%{expr_to_string ~state ~buf ~expr:e }))"]
     | `Char x -> [%string "'%{x#Char}'"]
     | `String s -> [%string {| "%{s}" |}]
@@ -504,8 +509,11 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
         match p with
         | None -> ""
         | Some p ->
-          let var = create_inner_val ~state ~buf p in
-          [%string {| , .data = { .%{s} = %{var} } |}]
+          (match snd p |> reach_end with
+           | `Unit -> ""
+           | _ ->
+             let var = create_inner_val ~state ~buf p in
+             [%string {| , .data = { .%{s} = %{var} } |}])
       in
       [%string {| (%{typ}){ .tag = %{variant}%{union} } |}]
     | `Struct (_, fields) ->

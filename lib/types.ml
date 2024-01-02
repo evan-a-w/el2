@@ -549,6 +549,8 @@ and show_user_type_inst
   [%string "{  %{monos}; %{user_type}; }"]
 ;;
 
+(* TODO: convinced bug is once again here, cache inst of user type
+   based on mono args when inst_user_type is called *)
 let do_inst_user_type ~monos user_type =
   let rep_map =
     List.zip_exn user_type.ty_vars monos |> String.Map.of_alist_exn

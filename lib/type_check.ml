@@ -519,8 +519,7 @@ let process_toplevel_graph (toplevels : toplevel list) =
       let var_decls =
         List.map vars ~f:(function
           | `Typed (s, e) -> s, mono_of_type_expr ~state e
-          | `Untyped s ->
-            s, make_indir ())
+          | `Untyped s -> s, make_indir ())
       in
       let edge =
         Var.create_func
@@ -767,35 +766,43 @@ and infer_var ~state var =
      | `In_checking | `Done -> ());
     let mono, inst_map = inst v.Var.poly in
     (match v.Var.scc.type_check_state with
-     | `Untouched | `In_checking -> `Global (mono, ref None)
-     | `Done -> `Global (mono, ref (Some inst_map)))
+     | `Untouched | `In_checking -> `Global (mono, None)
+     | `Done -> `Global (mono, Some inst_map))
   | Extern (_, _, mono) | Implicit_extern (_, _, mono) ->
-    `Global (mono, ref (Some String.Map.empty))
+    `Global (mono, Some String.Map.empty)
 
 and infer_scc ~state scc =
   scc.Var.type_check_state <- `In_checking;
   let monos =
     Stack.to_list scc.Var.vars
     |> List.map ~f:(fun v ->
-      let mono, _ = inst v.Var.poly in
-      let state, to_unify, mono =
-        match v.Var.args, mono with
-        | `Func l, `Function (a, b) ->
-          let tup =
-            match l with
-            | [ (_, m) ] -> m
-            | _ -> `Tuple (List.map l ~f:snd)
-          in
-          let state =
-            List.fold l ~init:state ~f:(fun state (key, data) ->
-              { state with locals = Map.set state.locals ~key ~data })
-          in
-          let a = unify tup a in
-          state, b, `Function (a, b)
-        | _, _ -> state, mono, mono
-      in
-      let expr_inner, mono' = type_expr ~res_type:to_unify ~state v.Var.expr in
-      v, (expr_inner, unify to_unify mono'), mono)
+      try
+        let mono, _ = inst v.Var.poly in
+        let state, to_unify, mono =
+          match v.Var.args, mono with
+          | `Func l, `Function (a, b) ->
+            let tup =
+              match l with
+              | [ (_, m) ] -> m
+              | _ -> `Tuple (List.map l ~f:snd)
+            in
+            let state =
+              List.fold l ~init:state ~f:(fun state (key, data) ->
+                { state with locals = Map.set state.locals ~key ~data })
+            in
+            let a = unify tup a in
+            state, b, `Function (a, b)
+          | _, _ -> state, mono, mono
+        in
+        let expr_inner, mono' =
+          type_expr ~res_type:to_unify ~state v.Var.expr
+        in
+        v, (expr_inner, unify to_unify mono'), mono
+      with
+      | Unification_error e ->
+        show_unification_error e |> print_endline;
+        print_s [%message "While evaluating" (v.Var.expr : expanded_expr)];
+        exit 1)
   in
   let counter = Counter.create () in
   let vars = String.Table.create () in
@@ -1010,9 +1017,7 @@ and type_expr ~res_type ~state expr : Typed_ast.expr =
         raise (Unification_error End))
     in
     let e, em = rep ~state e in
-    print_s [%message "Unify arg type for enum" ~field:s (em : mono) (arg_type : mono)];
     let em = unify em arg_type in
-    print_s [%message "After unif arg type    " ~field:s (em : mono) (arg_type : mono)];
     `Enum (s, Some (e, em)), `User user_type
   | `Enum s ->
     let user_type =
@@ -1250,10 +1255,12 @@ let type_check toplevels =
 
 let process_and_dump toplevels =
   let output = type_check toplevels in
+  Hashtbl.iter output.types ~f:(fun user_type ->
+    print_endline [%string "Inferred %{user_type.repr_name} to be:"];
+    Pretty_print.user_type_p user_type |> Pretty_print.output_endline);
   Hashtbl.iter output.glob_vars ~f:(fun var ->
     match var with
-    | Var.El { typed_expr = Some e; name; poly; _ } ->
-      print_endline [%string "Inferred %{name} to have type %{show_poly poly}"];
-      print_s [%sexp (e : Typed_ast.gen_expr)]
+    | Var.El { name; poly; _ } ->
+      print_endline [%string "Inferred %{name} to have type %{show_poly poly}"]
     | _ -> ())
 ;;

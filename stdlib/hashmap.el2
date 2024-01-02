@@ -1,5 +1,6 @@
 $include(stdlib.el2)
 $include(primes.el2)
+$include(types.el2)
 
 type hashmap_error :=
   | Not_found
@@ -111,7 +112,39 @@ let hashmap_insert(t, key, data) : hashmap_insert_result(_) = {
       t^.size = t^.size + 1;
       Hashmap_inserted(&t^.buckets[i].data)
     }
+}
 
+let hashmap_find(t, key) := {
+  let hash := t^.hash_fn(&key);
+
+  hashmap_find_helper(t, key, hash, hash % t^.capacity, 0)
+}
+
+type hashmap_iterator(key, data) := {
+  index : i64;
+  t : &hashmap(key, data)
+}
+
+let hashmap_iterator_next(state) := {
+  if state^.index >= state^.t^.capacity then
+    return(None);
+  let i := state^.index;
+  match state^.t^.buckets[i].state with
+  | Bucket_used -> {
+      state^.index = i + 1;
+      Some(&state^.t^.buckets[i].data)
+    }
+  | _ -> hashmap_iterator_next(state)
+}
+
+let hashmap_iterator(t) := #hashmap_iterator { index : 0; t : t }
+
+let hashmap_find_helper(t, key, hash, i, it) := {
+  if it >= t^.capacity || t^.buckets[i].state != Bucket_free then
+    return(null);
+  if t^.buckets[i].state == Bucket_used && bucket_compare(t, &key, hash, i) then
+    return(&t^.buckets[i]);
+  hashmap_find_helper(t, key, hash, (i + 1) % t^.capacity, it + 1)
 }
 
 let create_i64(hash_fn : &i64 -> i64, compare_fn : (&i64, &i64) -> bool) : hashmap(i64, unit) = hashmap_create(hash_fn, compare_fn)

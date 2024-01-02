@@ -6,10 +6,11 @@ let print_position outx lexbuf =
   let pos = lexbuf.lex_curr_p in
   fprintf
     outx
-    "%s:%d:%d"
+    "%s:%d:%d in lexeme %s\n"
     pos.pos_fname
     pos.pos_lnum
     (pos.pos_cnum - pos.pos_bol + 1)
+    Lexing.(lexeme lexbuf)
 ;;
 
 let parse_with_error lexbuf =

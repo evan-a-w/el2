@@ -1,0 +1,37 @@
+$include(hashmap.el2)
+
+let test_size := 1000
+let random_inserts := 100
+let random_max := 1000
+
+let i64_equal(a, b) := a^ == b^
+let i64_hash(a) := a^
+
+let print_int(i) := {
+  let curr := i % 10;
+
+  if i / 10 > 0 then print_int(i / 10);
+
+  [* for some reason, chars are a bit borked in parsing so i do this jank string thing *]
+  fputc(unsafe_cast(curr + unsafe_cast("0"[0])), stdout)
+}
+
+
+let print_hashmap_elements(it) := {
+  match hashmap_iterator_next(it) with
+  | None -> ()
+  | Some(&x) -> {
+      print_int(x);
+      print_endline("");
+      ()
+    }
+}
+
+let main() := {
+  let t := hashmap_create(i64_hash, i64_equal);
+
+  hashmap_insert(&t, 1, 2);
+
+  print_hashmap_elements(&hashmap_iterator(&t));
+  0
+}
