@@ -375,6 +375,7 @@ and create_inner_val ~state ~buf expr =
   let name = unique_name state.var_counter in
   create_inner_val_with_name ~state ~buf ~name expr
 
+(* TODO: special case &unit to have mem location of other member, or NULL *)
 and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
   try
     let get_typ_no_struct mono =
@@ -482,8 +483,9 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
       in
       [%string {| ((%{a}) %{op} (%{b})) |}]
     | `Field_access (expr, field) ->
-      let expr = expr_to_string ~state ~buf ~expr in
-      [%string {| %{expr}.%{field} |}]
+      (match reach_end mono with
+       | `Unit -> define_inner_val_with_name ~state ~buf ~name:"_" expr
+       | _ -> [%string {| (%{expr_to_string ~state ~expr ~buf}).%{field} |}])
     | `Float x -> Float.to_string x
     | `Unit -> ""
     | `Ref expr -> [%string "&(%{expr_to_lvalue_string ~state ~buf ~expr})"]
@@ -529,7 +531,10 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
       let args =
         match be with
         | `Tuple l ->
-          List.map l ~f:(fun expr -> expr_to_string ~state ~buf ~expr)
+          List.filter_map l ~f:(fun expr ->
+            match expr_to_string ~state ~buf ~expr with
+            | "" -> None
+            | s -> Some s)
         | _ -> [ expr_to_string ~state ~buf ~expr:b ]
       in
       let args = String.concat ~sep:", " args in

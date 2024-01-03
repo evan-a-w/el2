@@ -36,37 +36,54 @@ let print_hashmap_elements(it) := {
     }
 }
 
+let print_hashmap_elements_unit(it) := {
+  match hashmap_iterator_next(it) with
+  | None -> ()
+  | Some((&k, &())) -> {
+      print_int(k);
+      print_hashmap_elements_unit(it)
+    }
+}
+
 let main() := {
-  let t := hashmap_create(i64_hash, i64_equal);
+  {
+    let t := hashmap_create(i64_hash, i64_equal);
 
-  hashmap_insert(&t, 1, 2);
-  hashmap_insert(&t, 7, 9);
-  hashmap_insert(&t, 7, 9);
-  hashmap_insert(&t, 1, 3);
-  hashmap_insert(&t, 2, 3);
+    hashmap_insert(&t, 1, 2);
+    hashmap_insert(&t, 7, 9);
+    hashmap_insert(&t, 7, 9);
+    hashmap_insert(&t, 1, 3);
+    hashmap_insert(&t, 2, 3);
 
-  print_hashmap_elements(&hashmap_iterator(&t));
-  print_endline("");
+    print_hashmap_elements(&hashmap_iterator(&t));
+    print_endline("");
 
-  match hashmap_remove(&t, 7) with
-  | Some(9) -> ()
-  | _ -> assert(false);
+    match hashmap_remove(&t, 7) with
+    | Some(9) -> ()
+    | _ -> assert(false);
 
-  print_hashmap_elements(&hashmap_iterator(&t));
-  print_endline("");
+    print_hashmap_elements(&hashmap_iterator(&t));
+    print_endline("");
 
-  match hashmap_remove(&t, 1) with
-  | Some(2) -> ()
-  | _ -> assert(false);
+    match hashmap_remove(&t, 1) with
+    | Some(2) -> ()
+    | _ -> assert(false);
 
-  print_hashmap_elements(&hashmap_iterator(&t));
-  print_endline("");
+    match hashmap_remove(&t, 1) with
+    | None -> ()
+    | _ -> assert(false);
 
-  match hashmap_remove(&t, 2) with
-  | Some(3) -> ()
-  | _ -> assert(false);
+    print_hashmap_elements(&hashmap_iterator(&t));
+    print_endline("");
 
-  print_hashmap_elements(&hashmap_iterator(&t));
+    match hashmap_remove(&t, 2) with
+    | Some(3) -> ()
+    | _ -> assert(false);
+
+    print_hashmap_elements(&hashmap_iterator(&t));
+
+    hashmap_destroy(&t)
+  };
 
   [* expected:
      1 2
@@ -79,7 +96,42 @@ let main() := {
      2 3
   *]
 
-  hashmap_destroy(&t);
+  [* Currently, it doesn't work when data is unit type
+  {
+    let t := hashmap_create(i64_hash, i64_equal);
+
+    hashmap_insert(&t, 1, ());
+    hashmap_insert(&t, 7, ());
+    hashmap_insert(&t, 7, ());
+    hashmap_insert(&t, 1, ());
+    hashmap_insert(&t, 2, ());
+
+    print_hashmap_elements_unit(&hashmap_iterator(&t));
+    print_endline("");
+
+    match hashmap_remove(&t, 7) with
+    | Some(()) -> ()
+    | _ -> assert(false);
+
+    print_hashmap_elements_unit(&hashmap_iterator(&t));
+    print_endline("");
+
+    match hashmap_remove(&t, 1) with
+    | Some(()) -> ()
+    | _ -> assert(false);
+
+    print_hashmap_elements_unit(&hashmap_iterator(&t));
+    print_endline("");
+
+    match hashmap_remove(&t, 2) with
+    | Some(()) -> ()
+    | _ -> assert(false);
+
+    print_hashmap_elements_unit(&hashmap_iterator(&t));
+
+    hashmap_destroy(&t)
+  };
+  *]
 
   0
 }
