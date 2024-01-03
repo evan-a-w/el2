@@ -11,7 +11,7 @@ Usage:
 Install ocaml (opam, dune etc.)
 `dune exec bin/main.exe -- --comp <filename>` will spit out C code for you to separately compile.
 
-The compilation error messages are absolutely awful.
+The compilation error messages are absolutely awful, worse than you can imagine.
 
 ```
 [*
@@ -58,7 +58,7 @@ let list_option_iter(
         [* postfix deref, equivalent to the above *]
         f(a^.data);
 
-	list_option_iter(a^.next, f)
+        list_option_iter(a^.next, f)
     }
 }
 
