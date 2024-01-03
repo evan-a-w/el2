@@ -630,7 +630,6 @@ let rec unify a b =
       let monos =
         List.zip_exn a.monos b.monos |> List.map ~f:(fun (a, b) -> unify a b)
       in
-      (* TODO potentially do unify on the insted_user_types *)
       `User { a with monos }
     | `User u, o | o, `User u ->
       (match user_type_monify u with

@@ -24,7 +24,9 @@ module Mono_list_map = Map.Make (struct
 
 type type_cache = string Mono_list_map.t ref
 
-(* TODO: make the mem expr thingos work for sure *)
+(* TODO: make the mem expr thingos work for sure
+   (lvalues and such)
+   Currently borked because we unintentionally copy shit a lot *)
 
 type state =
   { input : Type_check.output
@@ -59,16 +61,7 @@ let show_c_type_error err =
 
 exception C_type_error of c_type_error
 
-let deeb = false
-
 let rec c_type_of_user_type ~state inst =
-  (match inst.orig_user_type.repr_name with
-   | "result" when deeb ->
-     print_endline
-       [%string
-         "C TYPE OF %{Pretty_print.user_type_p \
-          inst.orig_user_type#Pretty_print}"]
-   | _ -> ());
   let user_type =
     get_insted_user_type inst
     |> Option.value_or_thunk ~default:(fun () -> raise (Invalid_user_type inst))
@@ -81,19 +74,8 @@ let rec c_type_of_user_type ~state inst =
   in
   let monos = List.map inst.monos ~f:reach_end in
   match Map.find !map_ref monos with
-  | Some x ->
-    if deeb
-    then
-      print_endline
-        [%string
-          {|YES found in cache for %{user_type.repr_name}  and %{List.map ~f:show_mono monos |> String.concat ~sep:", "}|}];
-    x
+  | Some x -> x
   | None ->
-    if deeb
-    then
-      print_endline
-        [%string
-          {|NO found in cache for %{user_type.repr_name} (%{Pretty_print.mono (`User inst)#Pretty_print}) and %{List.map ~f:show_mono monos |> String.concat ~sep:", "}|}];
     let name = string_of_mono (`User inst) in
     let data = "struct " ^ name in
     Bigbuffer.add_string state.type_decl_buf [%string {|%{data};|}];
@@ -446,7 +428,6 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
       let b = expr_to_string ~state ~expr:b ~buf in
       [%string {| %{add_equal a}%{b}; |}]
     | `Glob_var (name, inst_map) ->
-      (* TODO: bug becaust inst_map isn't actually accurate for recursive function(s) *)
       let var = Hashtbl.find_exn state.input.glob_vars name in
       let inst_map =
         match var, inst_map with

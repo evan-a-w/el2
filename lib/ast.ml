@@ -80,7 +80,6 @@ and expr =
   | `Return of expr
   | `Array_lit of
     expr list
-    (* TODO: sizeof_type(type), sizeof_expr(expr), return, array exprs *)
   ]
 
 and compound_inner =
