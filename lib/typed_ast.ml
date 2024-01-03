@@ -183,14 +183,14 @@ let rec decompose_into_pattern mono ~make_a : 'a pattern_branches =
     | `Unit -> `Unit (make_a ())
     | `Tuple l -> `Tuple (List.map l ~f:(decompose_into_pattern ~make_a))
     | `Pointer x -> `Ref (decompose_into_pattern x ~make_a)
-    | `User
-        { user_type = Insted { info = { contents = Some (`Enum l) }; _ }; _ } ->
+    | `User { orig_user_type = { info = { contents = Some (`Enum l) }; _ }; _ }
+      ->
       `Enum
         (List.map l ~f:(fun (s, m) ->
            s, Option.map m ~f:(decompose_into_pattern ~make_a)))
     | `User
-        { user_type =
-            Insted { repr_name; info = { contents = Some (`Struct l) }; _ }
+        { orig_user_type =
+            { repr_name; info = { contents = Some (`Struct l) }; _ }
         ; _
         } ->
       `Struct

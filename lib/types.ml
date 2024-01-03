@@ -61,15 +61,10 @@ and user_type =
   ; info : all_user option ref
   }
 
-and inst_user_type_info =
-  | Insted of user_type
-  | To_inst of user_type
-
 and inst_user_type =
   { monos : mono list
-  ; mutable user_type : inst_user_type_info
-  ; mutable inst_user_mono : mono option
-  (* if user_type is an alias, this is the mono that comes from mapping ty_vars to the replacement mono *)
+  ; orig_user_type : user_type
+  ; insted_user_type : user_type option ref
   }
 
 and enum_type = [ `Enum of (string * mono) list ]
@@ -130,10 +125,10 @@ let rec compare_mono (m : mono) (m' : mono) =
   | `Function (a, b), `Function (a', b') ->
     [%compare: mono * mono] (a, b) (a', b')
   | `Tuple l, `Tuple l' -> [%compare: mono list] l l'
-  | ( `User { monos = inst1; user_type = r1; _ }
-    , `User { monos = inst2; user_type = r2; _ } ) ->
+  | ( `User { monos = inst1; orig_user_type = r1; _ }
+    , `User { monos = inst2; orig_user_type = r2; _ } ) ->
     (match [%compare: mono list] inst1 inst2 with
-     | 0 -> compare_inst_user_type_info r1 r2
+     | 0 -> compare_user_type r1 r2
      | other -> other)
   | (`Indir (_, ra), `Indir (_, rb) | `Var (_, ra), `Var (_, rb))
     when phys_equal ra rb -> 0
@@ -164,13 +159,6 @@ let rec compare_mono (m : mono) (m' : mono) =
   | `Indir _, _ -> -1
   | _, `Indir _ -> 1
 
-and compare_inst_user_type_info u u' =
-  let get = function
-    | Insted x -> x
-    | To_inst x -> x
-  in
-  compare_user_type (get u) (get u')
-
 and compare_user_type u u' =
   [%compare: string list * string]
     (u.ty_vars, u.repr_name)
@@ -189,7 +177,6 @@ and compare_all_user a a' =
 
 let rec sexp_of_mono_seen ~seen m =
   let sexp_of_mono = sexp_of_mono_seen ~seen in
-  let sexp_of_inst_user_type_info = sexp_of_inst_user_type_info_seen ~seen in
   let m = collapse_mono m in
   match m with
   | `Unit -> [%sexp "Unit"]
@@ -204,21 +191,17 @@ let rec sexp_of_mono_seen ~seen m =
   | `Var (name, m) ->
     Sexp.List
       [ [%sexp "Var"]; [%sexp (name : string)]; [%sexp_of: mono option ref] m ]
-  | `User { monos; user_type; _ } ->
+  | `User { monos; orig_user_type; insted_user_type } ->
     Sexp.List
       [ [%sexp "User"]
       ; [%sexp_of: mono list] monos
-      ; [%sexp (user_type : inst_user_type_info)]
+      ; [%sexp (orig_user_type : user_type)]
+      ; [%sexp (insted_user_type : user_type option ref)]
       ]
   | `Function (a, b) ->
     Sexp.List [ [%sexp "Function"]; sexp_of_mono a; sexp_of_mono b ]
   | `Opaque m -> Sexp.List [ [%sexp "Opaque"]; sexp_of_mono m ]
   | `Pointer m -> Sexp.List [ [%sexp "Pointer"]; sexp_of_mono m ]
-
-and sexp_of_inst_user_type_info_seen ~seen = function
-  | Insted x -> Sexp.List [ Sexp.Atom "Insted"; sexp_of_user_type_seen x ~seen ]
-  | To_inst x ->
-    Sexp.List [ Sexp.Atom "To_inst"; sexp_of_user_type_seen x ~seen ]
 
 and sexp_of_user_type_seen ~seen ({ repr_name; ty_vars; info } as user_type) =
   let sexp_of_all_user = sexp_of_all_user_seen ~seen in
@@ -254,6 +237,7 @@ let sexp_of_all_user a =
 ;;
 
 let rec mono_of_sexp_seen ~seen sexp : mono =
+  let user_type_of_sexp = user_type_of_sexp_seen ~seen in
   let mono_of_sexp = mono_of_sexp_seen ~seen in
   match sexp with
   | Sexp.Atom "Unit" -> `Unit
@@ -268,24 +252,16 @@ let rec mono_of_sexp_seen ~seen sexp : mono =
     `Var (string_of_sexp name, ref None)
   | List [ Atom "Var"; name; List [ Atom "Some"; mono ] ] ->
     `Var (string_of_sexp name, ref (Some (mono_of_sexp mono)))
-  | List [ Atom "User"; inst; user ] ->
+  | List [ Atom "User"; inst; orig_user; insted ] ->
     let monos = [%of_sexp: mono list] inst in
     `User
       { monos
-      ; user_type = inst_user_type_info_of_sexp_seen ~seen user
-      ; inst_user_mono = None
+      ; orig_user_type = user_type_of_sexp_seen ~seen orig_user
+      ; insted_user_type = ref ([%of_sexp: user_type option] insted)
       }
   | _ -> failwith [%string "Invalid mono sexp %{sexp#Sexp}"]
 
-and inst_user_type_info_of_sexp_seen ~seen sexp =
-  match sexp with
-  | Sexp.List [ Atom "Insted"; rest ] ->
-    Insted (user_type_ref_of_sexp_seen ~seen rest)
-  | Sexp.List [ Atom "To_inst"; rest ] ->
-    To_inst (user_type_ref_of_sexp_seen ~seen rest)
-  | _ -> failwith [%string "Invalid user_type sexp %{sexp#Sexp}"]
-
-and user_type_ref_of_sexp_seen ~seen sexp =
+and user_type_of_sexp_seen ~seen sexp =
   match sexp with
   | Sexp.Atom repr_name ->
     (match Hashtbl.find seen repr_name with
@@ -320,7 +296,7 @@ let mono_of_sexp a = mono_of_sexp_seen ~seen:(String.Table.create ()) a
 let all_user_of_sexp a = all_user_of_sexp_seen ~seen:(String.Table.create ()) a
 
 let user_type_of_sexp user_type =
-  user_type_ref_of_sexp_seen ~seen:(String.Table.create ()) user_type
+  user_type_of_sexp_seen ~seen:(String.Table.create ()) user_type
 ;;
 
 let%expect_test "recursive_types_sexp" =
@@ -333,8 +309,8 @@ let%expect_test "recursive_types_sexp" =
              (`Alias
                (`User
                  { monos = []
-                 ; user_type = Insted user_type_b
-                 ; inst_user_mono = None
+                 ; orig_user_type = user_type_b
+                 ; insted_user_type = ref None
                  })))
     }
   and user_type_b =
@@ -346,8 +322,8 @@ let%expect_test "recursive_types_sexp" =
              (`Alias
                (`User
                  { monos = []
-                 ; user_type = Insted user_type_a
-                 ; inst_user_mono = None
+                 ; orig_user_type = user_type_a
+                 ; insted_user_type = ref None
                  })))
     }
   in
@@ -409,28 +385,15 @@ let rec go_mono_map_rec ~user_type_mem (mono : mono) ~f ~on_var ~on_indir =
     | `Tuple l -> `Tuple (List.map l ~f:go)
     | `Indir r -> Option.value (on_indir r) ~default:mono
     | `Var r -> Option.value (on_var r) ~default:mono
-    | `User { monos; user_type; _ } ->
+    | `User { monos; orig_user_type; insted_user_type } ->
+      let user = go_user_type_map_rec ~user_type_mem ~f ~on_var ~on_indir in
       `User
         { monos = List.map monos ~f:go
-        ; user_type =
-            go_inst_user_type_info_map_rec
-              ~user_type_mem
-              ~f
-              ~on_var
-              ~on_indir
-              user_type
-        ; inst_user_mono = None
+        ; orig_user_type = user orig_user_type
+        ; insted_user_type = ref (Option.map ~f:user !insted_user_type)
         }
   in
   f mono
-
-and go_inst_user_type_info_map_rec ~user_type_mem ~f ~on_var ~on_indir user_type
-  =
-  match user_type with
-  | Insted x ->
-    Insted (go_user_type_map_rec ~user_type_mem ~f ~on_var ~on_indir x)
-  | To_inst x ->
-    To_inst (go_user_type_map_rec ~user_type_mem ~f ~on_var ~on_indir x)
 
 and go_user_type_map_rec ~user_type_mem ~f ~on_var ~on_indir user_type =
   match Map.find !user_type_mem user_type.repr_name with
@@ -482,11 +445,7 @@ let rec show_mono (mono : mono) =
   | `Unit -> "unit"
   | `Char -> "char"
   | `User inst ->
-    let { repr_name; _ } =
-      match inst.user_type with
-      | Insted x -> x
-      | To_inst x -> x
-    in
+    let { repr_name; _ } = inst.orig_user_type in
     let monos =
       match inst.monos with
       | [] -> ""
@@ -541,50 +500,122 @@ and show_user_type user_type =
   show_user_type_inner buf user_type;
   Buffer.contents buf
 
-and show_user_type_inst
-  { monos; user_type = Insted user_type | To_inst user_type; _ }
-  =
+and show_user_type_inst { monos; orig_user_type; _ } =
   let monos = show_mono (`Tuple monos) in
-  let user_type = show_user_type user_type in
+  let user_type = show_user_type orig_user_type in
   [%string "{  %{monos}; %{user_type}; }"]
 ;;
 
-(* TODO: convinced bug is once again here, cache inst of user type
-   based on mono args when inst_user_type is called *)
-let do_inst_user_type ~monos user_type =
-  let rep_map =
-    List.zip_exn user_type.ty_vars monos |> String.Map.of_alist_exn
-  in
-  user_type_map_rec
-    ~on_var:(Fn.const None)
-    ~on_indir:(Fn.const None)
-    ~f:(function
-      | `Var (s, _) as mono -> Map.find rep_map s |> Option.value ~default:mono
-      | o -> o)
-    user_type
-;;
+module Ut = Map.Make (struct
+    type t = mono list * string [@@deriving sexp, compare]
+  end)
 
-let inst_user_type user_type ~(monos : mono list) : inst_user_type =
-  let user_type =
-    match !(user_type.info) with
-    | None -> To_inst user_type
-    | Some _ ->
-      let res = do_inst_user_type ~monos user_type in
-      Insted res
-  in
-  { monos; user_type; inst_user_mono = None }
-;;
+type cache =
+  { mutable inst_user_types : mono Ut.t
+  ; mutable user_types : user_type Ut.t
+  }
 
-let get_user_type inst_user_type =
-  match inst_user_type.user_type with
-  | Insted user_type -> user_type
-  | To_inst user_type ->
-    let res = do_inst_user_type user_type ~monos:inst_user_type.monos in
-    inst_user_type.user_type <- Insted res;
+let cache_create () = { inst_user_types = Ut.empty; user_types = Ut.empty }
+
+let rec do_inst_user_type ~(cache : cache) ~rep_map inst_user_type =
+  let monos = List.map ~f:(do_inst_mono ~cache ~rep_map) inst_user_type.monos in
+  match
+    Map.find
+      cache.inst_user_types
+      (monos, inst_user_type.orig_user_type.repr_name)
+  with
+  | Some x -> x
+  | None ->
+    `User
+      (do_inst_user_type_inner
+         ~cache
+         ~rep_map
+         ~monos
+         inst_user_type.orig_user_type)
+
+and do_inst_user_type_inner ~cache ~rep_map ~monos orig_user_type =
+  let inst = { monos; orig_user_type; insted_user_type = ref None } in
+  cache.inst_user_types
+  <- Map.set
+       cache.inst_user_types
+       ~key:(monos, orig_user_type.repr_name)
+       ~data:(`User inst);
+  let insted_user_type =
+    do_inst_actual_user_type ~cache ~monos orig_user_type ~rep_map
+  in
+  inst.insted_user_type := insted_user_type;
+  inst
+
+and do_inst_actual_user_type ~cache ~rep_map ~monos user_type : user_type option
+  =
+  match
+    Map.find cache.user_types (monos, user_type.repr_name), !(user_type.info)
+  with
+  | Some x, _ -> Some x
+  | None, None -> None
+  | None, Some info ->
+    let res = { user_type with info = ref None } in
+    cache.user_types
+    <- Map.set cache.user_types ~key:(monos, user_type.repr_name) ~data:res;
+    let rep_map =
+      List.fold2_exn
+        user_type.ty_vars
+        monos
+        ~init:rep_map
+        ~f:(fun acc key data -> Map.set acc ~key ~data)
+    in
+    res.info := Some (do_inst_all_user ~cache ~rep_map info);
+    Some res
+
+and do_inst_all_user ~cache ~rep_map (all_user : all_user) =
+  let go_mono = do_inst_mono ~cache ~rep_map in
+  match all_user with
+  | `Enum l -> `Enum (List.map l ~f:(fun (s, m) -> s, Option.map ~f:go_mono m))
+  | `Struct l -> `Struct (List.map l ~f:(fun (s, m) -> s, go_mono m))
+  | `Alias m -> `Alias (go_mono m)
+
+and do_inst_mono ~cache ~rep_map mono =
+  let go = do_inst_mono ~cache ~rep_map in
+  let mono = inner_mono mono in
+  match mono with
+  | `Var (s, _) when Map.mem rep_map s -> Map.find_exn rep_map s
+  | `Unit | `C_int | `I64 | `F64 | `Bool | `Char | `Indir _ | `Var _ -> mono
+  | `Pointer m -> `Pointer (go m)
+  | `Opaque m -> `Opaque (go m)
+  | `Function (a, b) -> `Function (go a, go b)
+  | `Tuple l -> `Tuple (List.map l ~f:go)
+  | `User inst_user_type -> do_inst_user_type ~cache ~rep_map inst_user_type
+
+and do_get_insted_user_type ~cache ~rep_map inst_user_type =
+  match !(inst_user_type.insted_user_type) with
+  | Some _ as x -> x
+  | None ->
+    let res =
+      do_inst_actual_user_type
+        inst_user_type.orig_user_type
+        ~monos:inst_user_type.monos
+        ~cache
+        ~rep_map
+    in
+    inst_user_type.insted_user_type := res;
     res
 ;;
 
-let user_type = get_user_type
+let get_insted_user_type inst =
+  do_get_insted_user_type
+    ~cache:{ user_types = Ut.empty; inst_user_types = Ut.empty }
+    ~rep_map:String.Map.empty
+    inst
+;;
+
+let inst_user_type user_type ~(monos : mono list) : inst_user_type =
+  do_inst_user_type_inner
+    ~cache:(cache_create ())
+    ~rep_map:String.Map.empty
+    ~monos
+    user_type
+;;
+
 let show_mono = show_mono_deep
 
 let show_poly poly =
@@ -606,11 +637,7 @@ let show_poly poly =
 ;;
 
 let inst_mono ~inst_map mono =
-  inner_mono mono
-  |> mono_map_rec_keep_refs ~f:(fun mono ->
-    match mono with
-    | `Var (s, _) -> Map.find inst_map s |> Option.value ~default:mono
-    | _ -> mono)
+  inner_mono mono |> do_inst_mono ~cache:(cache_create ()) ~rep_map:inst_map
 ;;
 
 let inst poly =
@@ -626,23 +653,11 @@ let inst_user_type_gen user_type =
   inst_user_type ~monos user_type
 ;;
 
-let user_type_monify ({ monos; inst_user_mono; _ } as inst) =
-  let { repr_name = _; ty_vars; info } = user_type inst in
-  match inst_user_mono with
-  | Some _ -> inst_user_mono
-  | None ->
-    let rep_map = List.zip_exn ty_vars monos |> String.Table.of_alist_exn in
-    (match !info with
-     | Some (`Alias m) ->
-       let mono =
-         mono_map_rec_keep_refs m ~f:(function
-           | `Var (s, _) when Hashtbl.mem rep_map s ->
-             Hashtbl.find_exn rep_map s
-           | other -> other)
-       in
-       inst.inst_user_mono <- Some mono;
-       Some mono
-     | _ -> None)
+let user_type_monify inst =
+  let user_type = get_insted_user_type inst in
+  match user_type with
+  | Some { info = { contents = Some (`Alias m) }; _ } -> Some m
+  | _ -> None
 ;;
 
 let rec string_of_mono (mono : mono) =
@@ -655,7 +670,7 @@ let rec string_of_mono (mono : mono) =
   | `Unit -> "unit"
   | `Char -> "char"
   | `User inst ->
-    let { repr_name; _ } = user_type inst in
+    let { repr_name; _ } = inst.orig_user_type in
     (match inst.monos with
      | [] -> repr_name
      | l ->

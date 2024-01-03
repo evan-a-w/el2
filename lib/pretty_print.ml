@@ -5,7 +5,7 @@ open PPrint
 let mynest i x = ifflat x (hardline ^^ blank i ^^ align x)
 
 module M = Set.Make (struct
-    type t = mono list * user_type [@@deriving sexp, compare]
+    type t = mono list * string [@@deriving sexp, compare]
   end)
 
 let rec mono ?(map = ref M.empty) (t : mono) : PPrint.document =
@@ -64,7 +64,7 @@ and user_type_p ?(map = ref M.empty) user_type =
             |> separate (semi ^^ space))
       ^^ space
       ^^ rbracket
-    | None -> string "opaque"
+    | None -> string "unknown"
   in
   string user_type.repr_name
   ^^ (match user_type.ty_vars with
@@ -80,45 +80,43 @@ and user_type_p ?(map = ref M.empty) user_type =
 
 and inst_user_type ?(map = ref M.empty) inst =
   let mono = mono ~map in
-  match Set.mem !map (inst.monos, user_type inst) with
+  (* DELETE *)
+  if false
+  then print_endline [%string "inst_user_type %{show_user_type_inst inst}"];
+  match Set.mem !map (inst.monos, inst.orig_user_type.repr_name) with
   | true -> short_inst_user_type inst
-  | false ->
-    if true
-    then (
-      map := Set.add !map (inst.monos, user_type inst);
-      let user_type = user_type inst in
-      let monos = mono (`Tuple inst.monos) in
-      let user_type = user_type_p ~map user_type in
-      lbrace
-      ^^ space
-      ^^ string "monos"
-      ^^ space
-      ^^ equals
-      ^^ space
-      ^^ lbracket
-      ^^ monos
-      ^^ rbracket
-      ^^ semi
-      ^^ space
-      ^^ string "user_type"
-      ^^ space
-      ^^ equals
-      ^^ space
-      ^^ user_type
-      ^^ space
-      ^^ rbrace)
-    else short_inst_user_type inst
+  | _ ->
+    let user_type = get_insted_user_type inst |> Option.value_exn in
+    map := Set.add !map (inst.monos, user_type.repr_name);
+    let monos = mono (`Tuple inst.monos) in
+    let user_type = user_type_p ~map user_type in
+    lbrace
+    ^^ space
+    ^^ string "user_type"
+    ^^ space
+    ^^ equals
+    ^^ space
+    ^^ user_type
+    ^^ semi
+    ^^ space
+    ^^ string "monos"
+    ^^ space
+    ^^ equals
+    ^^ space
+    ^^ lbracket
+    ^^ monos
+    ^^ rbracket
+    ^^ space
+    ^^ rbrace
 
 and short_inst_user_type inst =
   let monos =
     match inst.monos with
     | [] -> empty
     | monos ->
-      lparen
-      ^^ mynest 4 (List.map monos ~f:mono |> separate (comma ^^ space))
-      ^^ rparen
+      lparen ^^ (List.map monos ~f:mono |> separate (comma ^^ space)) ^^ rparen
   in
-  string (user_type inst).repr_name ^^ monos
+  string inst.orig_user_type.repr_name ^^ monos
 ;;
 
 let inf_op (op : Ast.inf_op) : PPrint.document =

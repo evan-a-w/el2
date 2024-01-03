@@ -1,4 +1,4 @@
-$include(stdlib.el2)
+$include(stdlib.el2) &bucket_
 $include(primes.el2)
 $include(types.el2)
 
@@ -72,7 +72,9 @@ type hashmap_insert_result(data) :=
   | Hashmap_inserted(&data)
   | Hashmap_failed(hashmap_error)
 
-let hashmap_insert_loop(t, key, h, cnt, i, found_dead, dead_i) := {
+let hashmap_insert_loop(t, key, h, cnt, i, found_dead, dead_i)
+  : result(i64, &_)
+= {
   if cnt > t^.capacity then return(Ok(if found_dead then dead_i else i));
 
   match t^.buckets[i].state with

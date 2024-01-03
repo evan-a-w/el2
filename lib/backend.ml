@@ -6,7 +6,7 @@ open! Type_check
 let reach_end = Typed_ast.reach_end
 
 exception Invalid_type of mono
-exception Invalid_user_type of user_type
+exception Invalid_user_type of inst_user_type
 
 module Inst_map = Map.Make (struct
     type t = mono String.Map.t [@@deriving sexp, compare]
@@ -59,41 +59,47 @@ let show_c_type_error err =
 
 exception C_type_error of c_type_error
 
-let rec c_type_of_user_type ~state ({ monos; inst_user_mono; _ } as inst) =
-  let ({ repr_name; info; _ } as user_type) = get_user_type inst in
-  let map_ref =
-    Hashtbl.find_or_add state.inst_user_types repr_name ~default:(fun () ->
-      ref Mono_list_map.empty)
+let deeb = false
+
+let rec c_type_of_user_type ~state inst =
+  let user_type =
+    get_insted_user_type inst
+    |> Option.value_or_thunk ~default:(fun () -> raise (Invalid_user_type inst))
   in
-  let monos = List.map monos ~f:reach_end in
+  let map_ref =
+    Hashtbl.find_or_add
+      state.inst_user_types
+      user_type.repr_name
+      ~default:(fun () -> ref Mono_list_map.empty)
+  in
+  let monos = List.map inst.monos ~f:reach_end in
   match Map.find !map_ref monos with
   | Some x ->
-    print_endline
-      [%string
-        {|YES found in cache for %{repr_name}  and %{List.map ~f:show_mono monos |> String.concat ~sep:", "}|}];
+    if deeb
+    then
+      print_endline
+        [%string
+          {|YES found in cache for %{user_type.repr_name}  and %{List.map ~f:show_mono monos |> String.concat ~sep:", "}|}];
     x
   | None ->
-    print_endline
-      [%string
-        {|NO found in cache for %{repr_name} (%{show_mono (`User inst)}) and %{List.map ~f:show_mono monos |> String.concat ~sep:", "}|}];
+    if deeb
+    then
+      print_endline
+        [%string
+          {|NO found in cache for %{user_type.repr_name} (%{show_mono (`User inst)}) and %{List.map ~f:show_mono monos |> String.concat ~sep:", "}|}];
     let name = string_of_mono (`User inst) in
     let data = "struct " ^ name in
     Bigbuffer.add_string state.type_decl_buf [%string {|%{data};|}];
     map_ref := Map.set !map_ref ~key:monos ~data;
-    (match inst_user_mono with
-     | Some m -> c_type_of_mono ~state m
-     | None ->
-       (match !info with
-        | None -> raise (Invalid_user_type user_type)
-        | Some x ->
-          (match x with
-           | `Alias m -> c_type_of_mono ~state m
-           | `Struct l ->
-             define_struct ~state ~name ~l;
-             data
-           | `Enum l ->
-             define_enum ~state ~name ~l;
-             data)))
+    (match !(user_type.info) with
+     | None -> raise (Invalid_user_type inst)
+     | Some (`Alias m) -> c_type_of_mono ~state m
+     | Some (`Struct l) ->
+       define_struct ~state ~name ~l;
+       data
+     | Some (`Enum l) ->
+       define_enum ~state ~name ~l;
+       data)
 
 and c_type_of_mono ~state (mono : mono) =
   try
@@ -270,6 +276,10 @@ let rec var_to_string_inner ~state ~inst_map (var : Var.var) =
          name)
   with
   | C_type_error _ as exn ->
+    print_var_comp_error var inst_map mono exn;
+    exit 1
+  | Invalid_user_type u as exn ->
+    print_endline [%string "Invalid user type %{show_mono (`User u)}"];
     print_var_comp_error var inst_map mono exn;
     exit 1
   | Typed_ast.Incomplete_type m as exn ->
@@ -601,7 +611,10 @@ let compile ~input =
     match data.ty_vars with
     | [] ->
       let inst_user_type =
-        { monos = []; user_type = Insted data; inst_user_mono = None }
+        { monos = []
+        ; orig_user_type = data
+        ; insted_user_type = ref (Some data)
+        }
       in
       ignore (c_type_of_user_type ~state inst_user_type)
     | _ -> ());

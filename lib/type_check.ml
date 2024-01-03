@@ -219,7 +219,7 @@ let lookup_mono ~make_ty_vars ~state name =
 let rec mono_of_type_expr ?(make_ty_vars = true) ~state (type_expr : type_expr)
   : mono
   =
-  let f = mono_of_type_expr ~state in
+  let f = mono_of_type_expr ~make_ty_vars ~state in
   match type_expr with
   | `Unit -> `Unit
   | `Named s -> lookup_mono ~make_ty_vars ~state s
@@ -227,7 +227,9 @@ let rec mono_of_type_expr ?(make_ty_vars = true) ~state (type_expr : type_expr)
   | `Tuple l -> `Tuple (List.map l ~f)
   | `Named_args (s, l) ->
     let monos = List.map l ~f in
-    `User (lookup_user_type ~state s |> inst_user_type ~monos)
+    let user_type = lookup_user_type ~state s in
+    let inst = inst_user_type ~monos user_type in
+    `User inst
   | `Function (a, b) -> `Function (f a, f b)
 ;;
 
@@ -265,7 +267,8 @@ let process_types ~(state : Type_state.t) types =
     let state = { state with ty_vars } in
     let all_user =
       match decl with
-      | `Alias type_expr -> `Alias (mono_of_type_expr ~state type_expr)
+      | `Alias type_expr ->
+        `Alias (mono_of_type_expr ~state ~make_ty_vars:false type_expr)
       | `Enum l ->
         let all_user, variants = all_user_of_enum ~state l in
         Hash_set.iter variants ~f:(fun s ->
@@ -281,21 +284,7 @@ let process_types ~(state : Type_state.t) types =
           | `Duplicate -> raise (Duplicate_variant s));
         all_user
     in
-    user_type.info := Some all_user);
-  Hashtbl.iter state.types ~f:(fun user_type ->
-    user_type.info
-    := Option.map
-         !(user_type.info)
-         ~f:
-           (go_all_user_map_rec
-              ~f:(function
-                | `User x as user ->
-                  ignore (get_user_type x);
-                  user
-                | o -> o)
-              ~on_var:(Fn.const None)
-              ~on_indir:(Fn.const None)
-              ~user_type_mem:(ref String.Map.empty)))
+    user_type.info := Some all_user)
 ;;
 
 let unique_name counter = "internal_" ^ Counter.next_num counter
@@ -484,7 +473,21 @@ let rec traverse_expr
 let process_toplevel_graph (toplevels : toplevel list) =
   let state = Type_state.create () in
   let type_defs = String.Table.create () in
+  let let_toplevels = Queue.create () in
+  List.iter toplevels ~f:(function
+    | `Let_type ((repr_name, ty_vars), type_decl) ->
+      (match
+         Hashtbl.add
+           state.types
+           ~key:repr_name
+           ~data:(make_user_type ~repr_name ~ty_vars)
+       with
+       | `Ok ->
+         Hashtbl.add_exn type_defs ~key:repr_name ~data:(ty_vars, type_decl)
+       | `Duplicate -> raise (Duplicate_type_name repr_name))
+    | x -> Queue.enqueue let_toplevels x);
   let not_found_vars = String.Hash_set.create () in
+  process_types ~state type_defs;
   let find_references ~edge ~locals expr =
     let open Var in
     match Hashtbl.find state.glob_vars edge.name with
@@ -499,20 +502,6 @@ let process_toplevel_graph (toplevels : toplevel list) =
         ~locals
         expr
   in
-  let let_toplevels = Queue.create () in
-  List.iter toplevels ~f:(function
-    | `Let_type ((repr_name, ty_vars), type_decl) ->
-      (match
-         Hashtbl.add
-           state.types
-           ~key:repr_name
-           ~data:(make_user_type ~repr_name ~ty_vars)
-       with
-       | `Ok ->
-         Hashtbl.add_exn type_defs ~key:repr_name ~data:(ty_vars, type_decl)
-       | `Duplicate -> raise (Duplicate_type_name repr_name))
-    | x -> Queue.enqueue let_toplevels x);
-  process_types ~state type_defs;
   Queue.iter let_toplevels ~f:(function
     | `Let_fn (name, vars, expr) ->
       let expr = expand_expr ~counter:state.var_counter expr in
@@ -637,11 +626,12 @@ let rec unify a b =
       r := Some m;
       m
     | `User a, `User b
-      when String.equal (user_type a).repr_name (user_type b).repr_name ->
+      when String.equal a.orig_user_type.repr_name b.orig_user_type.repr_name ->
       let monos =
         List.zip_exn a.monos b.monos |> List.map ~f:(fun (a, b) -> unify a b)
       in
-      `User { monos; user_type = a.user_type; inst_user_mono = None }
+      (* TODO potentially do unify on the insted_user_types *)
+      `User { a with monos }
     | `User u, o | o, `User u ->
       (match user_type_monify u with
        | None -> raise (Unification_error End)
@@ -801,7 +791,8 @@ and infer_scc ~state scc =
       with
       | Unification_error e ->
         show_unification_error e |> print_endline;
-        print_s [%message "While evaluating" (v.Var.expr : expanded_expr)];
+        print_s
+          [%message "While evaluating" v.Var.name (v.Var.expr : expanded_expr)];
         exit 1)
   in
   let counter = Counter.create () in
@@ -903,7 +894,10 @@ and type_expr ~res_type ~state expr : Typed_ast.expr =
     in
     let inst_user_type = inst_user_type_gen user_type' in
     let res_type =
-      get_user_type_variant (user_type inst_user_type) field
+      get_insted_user_type inst_user_type
+      |> Option.value_or_thunk ~default:(fun () -> failwith "Undefined type")
+      |> fun x ->
+      get_user_type_variant x field
       |> Option.value_or_thunk ~default:(fun () ->
         raise (Unification_error End))
       |> Option.value_or_thunk ~default:(fun () ->
@@ -920,7 +914,10 @@ and type_expr ~res_type ~state expr : Typed_ast.expr =
     in
     let inst_user_type = inst_user_type_gen user_type' in
     let res_type =
-      get_user_type_variant (user_type inst_user_type) field
+      get_insted_user_type inst_user_type
+      |> Option.value_or_thunk ~default:(fun () -> failwith "Undefined type")
+      |> fun x ->
+      get_user_type_variant x field
       |> Option.value_or_thunk ~default:(fun () ->
         raise (Unification_error End))
     in
@@ -950,7 +947,10 @@ and type_expr ~res_type ~state expr : Typed_ast.expr =
     in
     let user_type = inst_user_type_gen user_type in
     let res_type =
-      get_user_type_field (get_user_type user_type) field
+      get_insted_user_type user_type
+      |> Option.value_or_thunk ~default:(fun () -> failwith "Undefined type")
+      |> fun x ->
+      get_user_type_field x field
       |> Option.value_or_thunk ~default:(fun () ->
         raise (Unification_error End))
     in
@@ -978,8 +978,8 @@ and type_expr ~res_type ~state expr : Typed_ast.expr =
     let user_type = inst_user_type_gen user_type in
     let l = List.sort l ~compare:(fun (a, _) (b, _) -> String.compare a b) in
     let struct_l =
-      (match !((get_user_type user_type).info) with
-       | Some (`Struct l) -> l
+      (match get_insted_user_type user_type with
+       | Some { info = { contents = Some (`Struct l) }; _ } -> l
        | _ -> raise (Unification_error End))
       |> List.sort ~compare:(fun (a, _) (b, _) -> String.compare a b)
     in
@@ -1010,7 +1010,10 @@ and type_expr ~res_type ~state expr : Typed_ast.expr =
     in
     let user_type = inst_user_type_gen user_type in
     let arg_type =
-      get_user_type_variant (get_user_type user_type) s
+      get_insted_user_type user_type
+      |> Option.value_or_thunk ~default:(fun () -> failwith "Undefined type")
+      |> fun x ->
+      get_user_type_variant x s
       |> Option.value_or_thunk ~default:(fun () ->
         raise (Unification_error End))
       |> Option.value_or_thunk ~default:(fun () ->
@@ -1027,7 +1030,10 @@ and type_expr ~res_type ~state expr : Typed_ast.expr =
     in
     let user_type = inst_user_type_gen user_type in
     let arg_type =
-      get_user_type_variant (get_user_type user_type) s
+      get_insted_user_type user_type
+      |> Option.value_or_thunk ~default:(fun () -> failwith "Undefined type")
+      |> fun x ->
+      get_user_type_variant x s
       |> Option.value_or_thunk ~default:(fun () ->
         raise (Unification_error End))
     in
@@ -1162,8 +1168,8 @@ and breakup_and_type_pattern ~state ~expr:(e, em) pattern =
     let conds = true_cond in
     let bindings_f expr = expr in
     let struct_l =
-      (match !((get_user_type user_type).info) with
-       | Some (`Struct l) -> l
+      (match get_insted_user_type user_type with
+       | Some { info = { contents = Some (`Struct l) }; _ } -> l
        | _ -> raise (Unification_error End))
       |> List.sort ~compare:(fun (a, _) (b, _) -> String.compare a b)
     in
@@ -1205,7 +1211,10 @@ and breakup_and_type_pattern ~state ~expr:(e, em) pattern =
     in
     let user_type = inst_user_type_gen user_type in
     let arg_type =
-      get_user_type_variant (get_user_type user_type) name
+      get_insted_user_type user_type
+      |> Option.value_or_thunk ~default:(fun () -> failwith "Undefined type")
+      |> fun x ->
+      get_user_type_variant x name
       |> Option.value_or_thunk ~default:(fun () -> failwith "impossible")
     in
     let em = unify em (`User user_type) in
@@ -1235,12 +1244,6 @@ type output =
 let type_check toplevels =
   try
     let state = process_toplevel_graph toplevels in
-    (*
-       Hashtbl.iter state.glob_vars ~f:(fun var ->
-       match var with
-       | Var.El v -> print_s [%sexp (v.Var.expr : expanded_expr)]
-       | _ -> ());
-    *)
     let _ = get_sccs state.glob_vars in
     Hashtbl.iter state.glob_vars ~f:(fun var -> ignore (infer_var ~state var));
     { glob_vars = state.glob_vars
