@@ -1,8 +1,8 @@
 A simple (and incomplete) language that aims to blend OCaml and C.
 
 My original idea was for a C like language with a module system like OCaml,
-allowing for code reuse. I also enjoy the type system of OCaml, so evanlang2
-has a Hindley-Milner type system with full type inference, as well as sum types.
+allowing for code reuse. I also enjoy the type system of OCaml, so el2
+has a Hindley-Milner type system with full type inference, as well as sum types/tagged unions.
 
 Currently, the module system is unimplemented - the language is basically (a less complete) C with type inference and some other nice stuff like the order of declarations not being important.
 In fact, it even compiles to C (though I hope to use LLVM in the future).
@@ -10,6 +10,8 @@ In fact, it even compiles to C (though I hope to use LLVM in the future).
 Usage:
 Install ocaml (opam, dune etc.)
 `dune exec bin/main.exe -- --comp <filename>` will spit out C code for you to separately compile.
+
+The compilation error messages are absolutely awful.
 
 ```
 [*
@@ -29,9 +31,6 @@ type list(a) :=
 
 [* type without any type args *]
 type unused_data := { unused_data : unit }
-
-[* declares a function that is linked already (in the C standard library) *]
-implicit_extern print_endline : &char -> c_int = "puts"
 
 let do_nothing(a) := ()
 
@@ -63,13 +62,18 @@ let list_option_iter(
     }
 }
 
-let main() : [* optional type declaration of return type *] i64 = {
+[* optional type declaration of return type
+   the double meaning of ':=' and ': type_expr ='
+   was stolen from jai i think
+*]
+let main() : i64 = {
+  [* you have to name the struct when creating one *]
   let first := #list {
     data : "first";
     next : None
   };
 
-  [* type declarations can be used in the same way in functions *]
+  [* type declarations can be used in the same way for local variables *]
   let second : list(&char) = #list {
     data : "second";
     next : Some(&first)
@@ -80,4 +84,7 @@ let main() : [* optional type declaration of return type *] i64 = {
   list_option_iter(Some(&second), print_endline);
   0
 }
+
+[* declares a function that is linked already (in the C standard library) *]
+implicit_extern print_endline : &char -> c_int = "puts"
 ```

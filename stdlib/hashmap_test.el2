@@ -48,23 +48,23 @@ let main() := {
   print_hashmap_elements(&hashmap_iterator(&t));
   print_endline("");
 
-  (match hashmap_remove(&t, 7) with
+  match hashmap_remove(&t, 7) with
   | Some(9) -> ()
-  | _ -> assert(false));
+  | _ -> assert(false);
 
   print_hashmap_elements(&hashmap_iterator(&t));
   print_endline("");
 
-  (match hashmap_remove(&t, 1) with
+  match hashmap_remove(&t, 1) with
   | Some(2) -> ()
-  | _ -> assert(false));
+  | _ -> assert(false);
 
   print_hashmap_elements(&hashmap_iterator(&t));
   print_endline("");
 
-  (match hashmap_remove(&t, 2) with
+  match hashmap_remove(&t, 2) with
   | Some(3) -> ()
-  | _ -> assert(false));
+  | _ -> assert(false);
 
   print_hashmap_elements(&hashmap_iterator(&t));
 
