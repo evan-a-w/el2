@@ -79,5 +79,7 @@ let main() := {
      2 3
   *]
 
+  hashmap_destroy(&t);
+
   0
 }

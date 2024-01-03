@@ -181,6 +181,8 @@ let hashmap_remove(t, key) := {
 
 let hashmap_iterator(t) := #hashmap_iterator { index : 0; t : t }
 
+let hashmap_destroy(t) := free(t^.buckets)
+
 let hashmap_find_helper(t, key, hash, i, it) := {
   if it >= t^.capacity || t^.buckets[i].state != Bucket_free then
     return(null);
