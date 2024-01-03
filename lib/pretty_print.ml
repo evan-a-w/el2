@@ -2,7 +2,7 @@ open! Core
 open Types
 open PPrint
 
-let mynest i x = ifflat x (hardline ^^ blank i ^^ align x)
+let mynest i x = ifflat x (break 0 ^^ blank i ^^ align x)
 
 module M = Set.Make (struct
     type t = mono list * string [@@deriving sexp, compare]
@@ -80,19 +80,24 @@ and user_type_p ?(map = ref M.empty) user_type =
 
 and inst_user_type ?(map = ref M.empty) inst =
   let mono = mono ~map in
-  (* DELETE *)
-  if false
-  then print_endline [%string "inst_user_type %{show_user_type_inst inst}"];
   match Set.mem !map (inst.monos, inst.orig_user_type.repr_name) with
   | true -> short_inst_user_type inst
   | _ ->
+    let orig_user_type = user_type_p ~map inst.orig_user_type in
+    map := Set.add !map (inst.monos, inst.orig_user_type.repr_name);
     let user_type = get_insted_user_type inst |> Option.value_exn in
-    map := Set.add !map (inst.monos, user_type.repr_name);
     let monos = mono (`Tuple inst.monos) in
     let user_type = user_type_p ~map user_type in
     lbrace
     ^^ space
-    ^^ string "user_type"
+    ^^ string "orig_user_type"
+    ^^ space
+    ^^ equals
+    ^^ space
+    ^^ orig_user_type
+    ^^ semi
+    ^^ space
+    ^^ string "insted_user_type"
     ^^ space
     ^^ equals
     ^^ space
@@ -232,6 +237,8 @@ let rec typed_ast (t : Typed_ast.expr) =
   let mono = snd t |> mono in
   expr_inner ^^ space ^^ colon ^^ space ^^ mono
 ;;
+
+type t = PPrint.document
 
 let to_string x =
   let buf = Buffer.create 100 in

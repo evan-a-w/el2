@@ -389,7 +389,7 @@ let rec go_mono_map_rec ~user_type_mem (mono : mono) ~f ~on_var ~on_indir =
       let user = go_user_type_map_rec ~user_type_mem ~f ~on_var ~on_indir in
       `User
         { monos = List.map monos ~f:go
-        ; orig_user_type = user orig_user_type
+        ; orig_user_type
         ; insted_user_type = ref (Option.map ~f:user !insted_user_type)
         }
   in

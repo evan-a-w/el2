@@ -30,7 +30,9 @@ let print_hashmap_elements(it) := {
 let main() := {
   let t := hashmap_create(i64_hash, i64_equal);
 
+  [*
   hashmap_insert(&t, 1, 2);
+  *]
 
   print_hashmap_elements(&hashmap_iterator(&t));
   0

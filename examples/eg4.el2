@@ -2,6 +2,10 @@ let nums := {| 1; 2; 3; 4 |}
 
 type t := { a : i64 }
 
+type result(a, b) :=
+  | Ok(a)
+  | Err(b)
+
 
 let num2(a, b) := a
 let num(a) := a

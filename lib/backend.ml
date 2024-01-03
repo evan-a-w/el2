@@ -62,6 +62,13 @@ exception C_type_error of c_type_error
 let deeb = false
 
 let rec c_type_of_user_type ~state inst =
+  (match inst.orig_user_type.repr_name with
+   | "result" when deeb ->
+     print_endline
+       [%string
+         "C TYPE OF %{Pretty_print.user_type_p \
+          inst.orig_user_type#Pretty_print}"]
+   | _ -> ());
   let user_type =
     get_insted_user_type inst
     |> Option.value_or_thunk ~default:(fun () -> raise (Invalid_user_type inst))
@@ -86,7 +93,7 @@ let rec c_type_of_user_type ~state inst =
     then
       print_endline
         [%string
-          {|NO found in cache for %{user_type.repr_name} (%{show_mono (`User inst)}) and %{List.map ~f:show_mono monos |> String.concat ~sep:", "}|}];
+          {|NO found in cache for %{user_type.repr_name} (%{Pretty_print.mono (`User inst)#Pretty_print}) and %{List.map ~f:show_mono monos |> String.concat ~sep:", "}|}];
     let name = string_of_mono (`User inst) in
     let data = "struct " ^ name in
     Bigbuffer.add_string state.type_decl_buf [%string {|%{data};|}];
@@ -607,7 +614,8 @@ let headers =
 
 let compile ~input =
   let state = state_of_input input in
-  Hashtbl.iteri input.types ~f:(fun ~key:_ ~data ->
+  (*
+     Hashtbl.iteri input.types ~f:(fun ~key:_ ~data ->
     match data.ty_vars with
     | [] ->
       let inst_user_type =
@@ -618,6 +626,7 @@ let compile ~input =
       in
       ignore (c_type_of_user_type ~state inst_user_type)
     | _ -> ());
+  *)
   Hashtbl.iteri input.glob_vars ~f:(fun ~key:_ ~data ->
     (* inst all monomorphic thingos *)
     match data with
