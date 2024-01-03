@@ -53,6 +53,7 @@ type expanded_expr =
   | `Assign of expanded_expr * expanded_expr
   | `Compound of expanded_expr
   | `Size_of of [ `Type of type_expr | `Expr of expanded_expr ]
+  | `Assert of expanded_expr
   | `Return of expanded_expr
   | `Typed of expanded_expr * type_expr
   | `Assert_struct of string * expanded_expr
@@ -351,6 +352,7 @@ and expand_expr ~counter (expr : expr) : expanded_expr =
   | `Char c -> `Char c
   | `String s -> `String s
   | `Enum s -> `Enum s
+  | `Assert a -> `Assert (f a)
   | `Array_lit l -> `Array_lit (List.map l ~f)
   | `Tuple l -> `Tuple (List.map l ~f)
   | `Compound l ->
@@ -446,6 +448,7 @@ let rec traverse_expr
     let rep = rep ~locals in
     rep a;
     rep b
+  | `Assert a
   | `Compound a
   | `Return a
   | `Size_of (`Expr a)
@@ -823,7 +826,14 @@ and make_pointer ~state:_ =
   let ty_var = make_indir () in
   `Pointer ty_var, ty_var
 
-and type_expr ~res_type ~state expr : Typed_ast.expr =
+and type_expr ~res_type ~state expr =
+  try type_expr_ ~res_type ~state expr with
+  | Unification_error _ as exn ->
+    print_endline "While evaluating:";
+    print_s [%message (expr : expanded_expr)];
+    raise exn
+
+and type_expr_ ~res_type ~state expr : Typed_ast.expr =
   let rep ~state = type_expr ~res_type ~state in
   match expr with
   | `Bool b -> `Bool b, `Bool
@@ -862,6 +872,10 @@ and type_expr ~res_type ~state expr : Typed_ast.expr =
     let am = unify am pointer_type in
     let bm = unify bm `I64 in
     `Index ((a, am), (b, bm)), ty_var
+  | `Assert a ->
+    let a, am = rep ~state a in
+    let am = unify am `Bool in
+    `Assert (a, am), `Unit
   | `Tuple_access (a, i) ->
     let a, am = rep ~state a in
     let res_type =

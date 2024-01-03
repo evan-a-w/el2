@@ -1,4 +1,4 @@
-$include(stdlib.el2) &bucket_
+$include(stdlib.el2)
 $include(primes.el2)
 $include(types.el2)
 
@@ -75,7 +75,7 @@ type hashmap_insert_result(data) :=
 let hashmap_insert_loop(t, key, h, cnt, i, found_dead, dead_i)
   : result(i64, &_)
 = {
-  if cnt > t^.capacity then return(Ok(if found_dead then dead_i else i));
+  if cnt >= t^.capacity then return(Ok(if found_dead then dead_i else i));
 
   match t^.buckets[i].state with
   | Bucket_free -> return(Ok(if found_dead then dead_i else i))
@@ -94,8 +94,8 @@ let hashmap_insert_loop(t, key, h, cnt, i, found_dead, dead_i)
 }
 
 let hashmap_insert(t, key, data) : hashmap_insert_result(_) = {
-  let sz := min(t^.size, 1);
-  let load := sz * 1000 / min(t^.capacity, 1);
+  let sz := max(t^.size, 1);
+  let load := sz * 1000 / max(t^.capacity, 1);
   if load > hashmap_max_load then {
     match hashmap_resize(t, sz * 2) with
     | Ok(()) -> ()
@@ -131,12 +131,52 @@ let hashmap_iterator_next(state) := {
   if state^.index >= state^.t^.capacity then
     return(None);
   let i := state^.index;
+  state^.index = i + 1;
   match state^.t^.buckets[i].state with
   | Bucket_used -> {
-      state^.index = i + 1;
-      Some(&state^.t^.buckets[i].data)
+      Some((&state^.t^.buckets[i].key, &state^.t^.buckets[i].data))
     }
   | _ -> hashmap_iterator_next(state)
+}
+
+[* pre: cap != 0 *]
+let hashmap_remove_helper(t, key, initial_index, h, i) := {
+  (match t^.buckets[i].state with
+  | Bucket_free -> return(None)
+  | Bucket_used -> { if bucket_compare(t, &key, h, i) then return(Some(i)) }
+  | _ -> ());
+
+  i = (i + 1) % t^.capacity;
+
+  if i == initial_index then
+    None
+  else
+    hashmap_remove_helper(t, key, initial_index, h, i)
+}
+
+let hashmap_remove(t, key) := {
+  if t^.capacity == 0 then return(None);
+
+  let h := t^.hash_fn(&key);
+  let i := h % t^.capacity;
+  match hashmap_remove_helper(t, key, i, h, i) with
+  | None -> None
+  | Some(x) -> {
+      let new_load := (t^.size - 1) * 1000 / t^.capacity;
+      let min_load := (t^.size - 1) * 1000 / hashmap_min_capacity;
+
+      if new_load < min_load && new_load < hashmap_min_load_after_remove then {
+        match hashmap_resize(t, max(t^.size - 1, 1) * 2) with
+	| Ok(_) -> return(hashmap_remove(t, key))
+	| _ [* if allocation fails, just don't resize *] -> ()
+      };
+
+      let res := t^.buckets[x].data;
+      t^.buckets[x].state = Bucket_dead;
+      t^.size = t^.size - 1;
+
+      Some(res)
+    }
 }
 
 let hashmap_iterator(t) := #hashmap_iterator { index : 0; t : t }
@@ -148,8 +188,3 @@ let hashmap_find_helper(t, key, hash, i, it) := {
     return(&t^.buckets[i]);
   hashmap_find_helper(t, key, hash, (i + 1) % t^.capacity, it + 1)
 }
-
-let create_i64(hash_fn : &i64 -> i64, compare_fn : (&i64, &i64) -> bool) : hashmap(i64, unit) = hashmap_create(hash_fn, compare_fn)
-let cmp_i64(t : &hashmap(i64, unit), key, h, i) := bucket_compare(t, key, h, i)
-let insert_i64(t : &hashmap(i64, i64), key, data) := hashmap_insert(t, key, data)
-let resize_i64(t : &hashmap(i64, i64), sz) := hashmap_resize(t, sz)

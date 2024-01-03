@@ -81,7 +81,7 @@ and user_type_p ?(map = ref M.empty) user_type =
 and inst_user_type ?(map = ref M.empty) inst =
   let mono = mono ~map in
   match Set.mem !map (inst.monos, inst.orig_user_type.repr_name) with
-  | true -> short_inst_user_type inst
+  | false -> short_inst_user_type inst
   | _ ->
     let orig_user_type = user_type_p ~map inst.orig_user_type in
     map := Set.add !map (inst.monos, inst.orig_user_type.repr_name);

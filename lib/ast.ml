@@ -58,6 +58,7 @@ and expr =
   | `Bool of bool
   | `Char of char
   | `Var of name
+  | `Assert of expr
   | `Tuple of expr list
   | `Enum of upper_name
   | `Struct of name * (string * expr option) list
@@ -173,6 +174,7 @@ let rec expr_fold_rec expr ~init ~f =
     | `Return a
     | `Tuple_access (a, _)
     | `Field_access (a, _)
+    | `Assert a
     | `Unsafe_cast a
     | `Ref a
     | `Deref a

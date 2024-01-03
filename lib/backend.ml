@@ -401,7 +401,7 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
     | `Tuple l ->
       let _, typ_no_struct = get_typ_no_struct mono in
       let inners =
-        List.map l ~f:(create_inner_val ~state ~buf)
+        List.map l ~f:(fun expr -> expr_to_string ~state ~buf ~expr)
         |> List.mapi ~f:(fun i s ->
           [%string {| .%{typ_no_struct}_%{i#Int} = %{s} |}])
         |> String.concat ~sep:", "
@@ -423,7 +423,7 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
        | true -> [%string {| (%{a}).%{typ_no_struct}_%{i#Int} |}]
        | false -> failwith "tuple access out of bounds")
     | `Assign (a, b) ->
-      let a = expr_to_string ~state ~expr:a ~buf in
+      let a = expr_to_lvalue_string ~state ~expr:a ~buf in
       let a = nameify a ~expr:b in
       let b = expr_to_string ~state ~expr:b ~buf in
       [%string {| %{add_equal a}%{b}; |}]
@@ -448,8 +448,10 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
        | `Unit -> ""
        | _ -> name)
     | `Access_enum_field (field, expr) ->
-      let expr = expr_to_string ~state ~expr ~buf in
-      [%string {| (%{expr}).data.%{field} |}]
+      (match reach_end mono with
+       | `Unit -> define_inner_val_with_name ~state ~buf ~name:"_" expr
+       | _ ->
+         [%string {| (%{expr_to_string ~state ~expr ~buf}).data.%{field} |}])
     | `Compound e ->
       let res_val = unique_name_or_empty ~state ~buf ~mono in
       Bigbuffer.add_char buf '{';
@@ -464,7 +466,7 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
       let b = expr_to_string ~buf ~state ~expr:b in
       let op =
         match op with
-        | `Ge -> ">"
+        | `Ge -> ">="
         | `Rem -> "%"
         | `Div -> "/"
         | `Add -> "+"
@@ -472,7 +474,7 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
         | `And -> "&&"
         | `Sub -> "-"
         | `Eq -> "=="
-        | `Le -> "<"
+        | `Le -> "<="
         | `Or -> "||"
         | `Gt -> ">"
         | `Mul -> "*"
@@ -484,7 +486,7 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
       [%string {| %{expr}.%{field} |}]
     | `Float x -> Float.to_string x
     | `Unit -> ""
-    | `Ref e -> [%string "&(%{create_inner_val ~state ~buf e })"]
+    | `Ref expr -> [%string "&(%{expr_to_lvalue_string ~state ~buf ~expr})"]
     | `Deref e -> [%string "(*(%{expr_to_string ~state ~buf ~expr:e }))"]
     | `Char x -> [%string "'%{x#Char}'"]
     | `String s -> [%string {| "%{s}" |}]
@@ -506,19 +508,19 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
       let union =
         match p with
         | None -> ""
-        | Some p ->
-          (match snd p |> reach_end with
+        | Some expr ->
+          (match snd expr |> reach_end with
            | `Unit -> ""
            | _ ->
-             let var = create_inner_val ~state ~buf p in
+             let var = expr_to_string ~state ~buf ~expr in
              [%string {| , .data = { .%{s} = %{var} } |}])
       in
       [%string {| (%{typ}){ .tag = %{variant}%{union} } |}]
     | `Struct (_, fields) ->
       let typ, _ = get_typ_no_struct mono in
       let fields =
-        List.map fields ~f:(fun (s, p) ->
-          let expr = create_inner_val ~state ~buf p in
+        List.map fields ~f:(fun (s, expr) ->
+          let expr = expr_to_string ~state ~buf ~expr in
           [%string {| .%{s} = %{expr} |}])
         |> String.concat ~sep:", "
       in
@@ -526,8 +528,9 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
     | `Apply (a, ((be, _) as b)) ->
       let args =
         match be with
-        | `Tuple l -> List.map l ~f:(create_inner_val ~state ~buf)
-        | _ -> [ create_inner_val ~state ~buf b ]
+        | `Tuple l ->
+          List.map l ~f:(fun expr -> expr_to_string ~state ~buf ~expr)
+        | _ -> [ expr_to_string ~state ~buf ~expr:b ]
       in
       let args = String.concat ~sep:", " args in
       let a = expr_to_string ~state ~buf ~expr:a in
@@ -560,6 +563,17 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
     print_endline "Failed in expr to string:";
     print_endline pretty_expr;
     raise exn
+
+and expr_to_lvalue_string ~state ~buf ~expr =
+  match fst expr with
+  | `Deref _
+  | `Local_var _
+  | `Glob_var _
+  | `Field_access _
+  | `Access_enum_field _
+  | `Tuple_access _
+  | `Index _ -> expr_to_string ~state ~buf ~expr
+  | _ -> create_inner_val ~state ~buf expr
 
 and unique_name_or_empty ~state ~buf ~mono =
   match reach_end mono with
@@ -595,8 +609,7 @@ let headers =
 
 let compile ~input =
   let state = state_of_input input in
-  (*
-     Hashtbl.iteri input.types ~f:(fun ~key:_ ~data ->
+  Hashtbl.iteri input.types ~f:(fun ~key:_ ~data ->
     match data.ty_vars with
     | [] ->
       let inst_user_type =
@@ -607,7 +620,6 @@ let compile ~input =
       in
       ignore (c_type_of_user_type ~state inst_user_type)
     | _ -> ());
-  *)
   Hashtbl.iteri input.glob_vars ~f:(fun ~key:_ ~data ->
     (* inst all monomorphic thingos *)
     match data with

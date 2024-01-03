@@ -16,24 +16,68 @@ let print_int(i) := {
   fputc(unsafe_cast(curr + unsafe_cast("0"[0])), stdout)
 }
 
+let print_string(s) := {
+  if s^ != unsafe_cast(0) then {
+    fputc(unsafe_cast(s^), stdout);
+    print_string(&s[1])
+  }
+}
+
 
 let print_hashmap_elements(it) := {
   match hashmap_iterator_next(it) with
   | None -> ()
-  | Some(&x) -> {
-      print_int(x);
+  | Some((&k, &v)) -> {
+      print_int(k);
+      print_string(" ");
+      print_int(v);
       print_endline("");
-      ()
+      print_hashmap_elements(it)
     }
 }
 
 let main() := {
   let t := hashmap_create(i64_hash, i64_equal);
 
-  [*
   hashmap_insert(&t, 1, 2);
-  *]
+  hashmap_insert(&t, 7, 9);
+  hashmap_insert(&t, 7, 9);
+  hashmap_insert(&t, 1, 3);
+  hashmap_insert(&t, 2, 3);
 
   print_hashmap_elements(&hashmap_iterator(&t));
+  print_endline("");
+
+  (match hashmap_remove(&t, 7) with
+  | Some(9) -> ()
+  | _ -> assert(false));
+
+  print_hashmap_elements(&hashmap_iterator(&t));
+  print_endline("");
+
+  (match hashmap_remove(&t, 1) with
+  | Some(2) -> ()
+  | _ -> assert(false));
+
+  print_hashmap_elements(&hashmap_iterator(&t));
+  print_endline("");
+
+  (match hashmap_remove(&t, 2) with
+  | Some(3) -> ()
+  | _ -> assert(false));
+
+  print_hashmap_elements(&hashmap_iterator(&t));
+
+  [* expected:
+     1 2
+     7 9
+     2 3
+
+     1 2
+     2 3
+
+     2 3
+  *]
+
   0
 }

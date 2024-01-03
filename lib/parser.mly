@@ -16,7 +16,7 @@
 %token MATCH WITH
 %token TRUE FALSE
 %token <char> CHAR
-%token LET TYPE EXTERN IMPLICIT_EXTERN
+%token LET TYPE EXTERN IMPLICIT_EXTERN ASSERT
 %token UNSAFE_CAST
 
 %left EQUALS
@@ -168,6 +168,8 @@ expr_ops:
     { `Size_of (`Type b) }
   | SIZE_OF; LPAREN; b = expr; RPAREN
     { `Size_of (`Expr b) }
+  | ASSERT; LPAREN; b = expr; RPAREN
+    { `Assert b }
   | RETURN; LPAREN; b = expr; RPAREN
     { `Return b }
   | UNSAFE_CAST; LPAREN; b = expr; RPAREN

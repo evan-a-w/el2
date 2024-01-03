@@ -35,6 +35,7 @@ rule read =
   | "null"   { NULL }
   | "return" { RETURN }
   | "sizeof" { SIZE_OF }
+  | "assert" { ASSERT }
   | "match"  { MATCH }
   | "with"   { WITH }
   | "unsafe_cast"   { UNSAFE_CAST }
@@ -104,6 +105,7 @@ and read_string buf =
   | '\\' 'n'  (* { Buffer.add_char buf '\n'; read_string buf lexbuf } *)
   | '\\' 'r'  (* { Buffer.add_char buf '\r'; read_string buf lexbuf } *)
   | '\\' 't'  (* { Buffer.add_char buf '\t'; read_string buf lexbuf } *)
+  | '\\' '0'  (* { Buffer.add_char buf '\0'; read_string buf lexbuf } *)
   | [^ '"' '\\']+
     { Buffer.add_string buf (Lexing.lexeme lexbuf);
       read_string buf lexbuf
@@ -113,13 +115,15 @@ and read_string buf =
 
 and read_char =
   parse
-  | '\\' '/' '\''  { CHAR '/' }
-  | '\\' '\\' '\'' { CHAR '\\' }
-  | '\\' 'b' '\''  { CHAR '\b' }
-  | '\\' 'n' '\''  { CHAR '\n' }
-  | '\\' 'r' '\''  { CHAR '\r' }
-  | '\\' 't' '\''  { CHAR '\t' }
-  | '\\' ''' '\''  { CHAR '\'' }
+  (* NOTE: because we print this stuff to a C file, we don't need to do this *)
+  | '\\' '/' '\''  (* { CHAR '/'  } *) 
+  | '\\' '\\' '\'' (* { CHAR '\\' } *)
+  | '\\' 'b' '\''  (* { CHAR '\b' } *)
+  | '\\' 'n' '\''  (* { CHAR '\n' } *)
+  | '\\' 'r' '\''  (* { CHAR '\r' } *)
+  | '\\' 't' '\''  (* { CHAR '\t' } *)
+  | '\\' ''' '\''  (* { CHAR '\'' } *)
+  | '\\' '0' '\''  (* { CHAR '\0' } *)
   | [^ '\'' '\\']  { CHAR (Lexing.lexeme_char lexbuf 0) }
   | _ { raise (Syntax_error ("Illegal char character: " ^ Lexing.lexeme lexbuf)) }
   | eof { raise (Syntax_error ("Char is not terminated")) }
