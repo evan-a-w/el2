@@ -211,8 +211,13 @@ expr_ops:
     { `Pref_op (o, e) }
   | a = expr_ops; o = binop; b = expr_ops
     { `Inf_op (o, a, b) }
-  | e = expr_ops; DOT; l = dot_upper_list; i = name
-    { `Field_access (e, Ast.{ module_path = l; inner = i }) }
+  | e = expr_ops; DOT; l = option(dot_upper_list); i = name
+    { `Field_access
+         (e,
+          Ast.{ module_path = (match l with | Some l -> l | None -> [])
+              ; inner = i }) }
+  | i = ID
+    { `Var Ast.{ module_path = []; inner = i }}
   | l = dot_upper_list; i = ID
     { `Var Ast.{ module_path = l; inner = i }}
   | l = dot_upper_list; i = UPPER_ID

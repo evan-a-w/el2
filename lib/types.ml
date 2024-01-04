@@ -56,7 +56,8 @@ type mono =
 and mono_var_replacements = (string * mono) list
 
 and user_type =
-  { repr_name : string
+  { name : string
+  ; repr_name : string
   ; ty_vars : string list
   ; info : all_user option ref
   }
@@ -203,14 +204,17 @@ let rec sexp_of_mono_seen ~seen m =
   | `Opaque m -> Sexp.List [ [%sexp "Opaque"]; sexp_of_mono m ]
   | `Pointer m -> Sexp.List [ [%sexp "Pointer"]; sexp_of_mono m ]
 
-and sexp_of_user_type_seen ~seen ({ repr_name; ty_vars; info } as user_type) =
+and sexp_of_user_type_seen
+  ~seen
+  ({ repr_name; ty_vars; info; name } as user_type)
+  =
   let sexp_of_all_user = sexp_of_all_user_seen ~seen in
   match Hash_set.mem seen user_type.repr_name with
-  | true -> Sexp.Atom user_type.repr_name
+  | true -> [%sexp_of: string * string] (repr_name, name)
   | false ->
     Hash_set.add seen user_type.repr_name;
     Sexp.List
-      [ sexp_of_string repr_name
+      [ [%sexp_of: string * string] (repr_name, name)
       ; [%sexp (ty_vars : string list)]
       ; [%sexp (info : all_user option ref)]
       ]
@@ -268,8 +272,10 @@ and user_type_of_sexp_seen ~seen sexp =
      | None -> failwith [%string "Invalid user_type sexp %{sexp#Sexp}"]
      | Some x -> x)
   | List [ repr_name; ty_vars; info ] ->
+    let repr_name, name = [%of_sexp: string * string] repr_name in
     let initial =
-      { repr_name = string_of_sexp repr_name
+      { repr_name
+      ; name
       ; ty_vars = [%of_sexp: string list] ty_vars
       ; info = ref None
       }
@@ -302,6 +308,7 @@ let user_type_of_sexp user_type =
 let%expect_test "recursive_types_sexp" =
   let rec user_type_a =
     { repr_name = "A"
+    ; name = "A"
     ; ty_vars = []
     ; info =
         ref
@@ -315,6 +322,7 @@ let%expect_test "recursive_types_sexp" =
     }
   and user_type_b =
     { repr_name = "B"
+    ; name = "B"
     ; ty_vars = []
     ; info =
         ref

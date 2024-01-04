@@ -177,20 +177,13 @@ let rec typed_ast (t : _ Typed_ast.expr) =
       (match e with
        | None -> string s
        | Some e -> string s ^^ wrap (typed_ast e))
-    | `Struct (n, l) ->
+    | `Struct l ->
       let inner =
         List.map l ~f:(fun (s, e) ->
           string s ^^ space ^^ string "=" ^^ space ^^ typed_ast e)
         |> separate (semi ^^ space)
       in
-      char '#'
-      ^^ string n
-      ^^ space
-      ^^ lbrace
-      ^^ space
-      ^^ mynest 4 inner
-      ^^ space
-      ^^ rbrace
+      lbrace ^^ space ^^ mynest 4 inner ^^ space ^^ rbrace
     | `Apply (a, b) ->
       wrap (typed_ast a)
       ^^ wrap (break 0 ^^ (mynest 4 @@ typed_ast b) ^^ break 0)

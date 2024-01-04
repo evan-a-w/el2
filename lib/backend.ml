@@ -14,7 +14,7 @@ module Inst_map = Map.Make (struct
 
 type var =
   { name : string
-  ; gen_expr : Typed_ast.gen_expr
+  ; gen_expr : gen_expr
   ; mutable cache : string Inst_map.t
   }
 
@@ -25,7 +25,7 @@ module Mono_list_map = Map.Make (struct
 type type_cache = string Mono_list_map.t ref
 
 type state =
-  { input : Type_check.output
+  { input : Type_state.t
   ; extern_vars : string String.Table.t
   ; vars : var String.Table.t
   ; inst_user_types : type_cache String.Table.t
@@ -215,15 +215,15 @@ let declare_extern ~state ~name ~mono =
     Bigbuffer.add_string state.decl_buf [%string {|extern %{c_type} %{name};|}]
 ;;
 
-let rec var_to_string_inner ~state ~inst_map (var : Var.var) =
+let rec var_to_string_inner ~state ~inst_map (var : Type_check.var) =
   let gen_expr =
-    match var.Var.typed_expr with
+    match var.typed_expr with
     | None -> failwith "untyped var!"
     | Some x -> x
   in
   let comp_var =
-    Hashtbl.find_or_add state.vars var.Var.name ~default:(fun () ->
-      { name = var.Var.name; gen_expr; cache = Inst_map.empty })
+    Hashtbl.find_or_add state.vars var.unique_name ~default:(fun () ->
+      { name = var.unique_name; gen_expr; cache = Inst_map.empty })
   in
   let expr_inner, poly = gen_expr in
   let ((_, mono) as expr) =
@@ -247,7 +247,7 @@ let rec var_to_string_inner ~state ~inst_map (var : Var.var) =
         | _ -> comp_var.name ^ "_inst_" ^ suffix
       in
       comp_var.cache <- Map.set comp_var.cache ~key:inst_map ~data:name;
-      (match var.Var.args with
+      (match var.args with
        | `Non_func ->
          (match mono with
           | `Unit -> ""
@@ -288,13 +288,13 @@ and print_var_comp_error var inst_map mono exn =
     |> String.concat ~sep:",\n"
   in
   print_endline
-    [%string {| while compiling %{var.Var.name} with type %{show_mono mono} |}];
+    [%string {| while compiling %{var.name} with type %{show_mono mono} |}];
   print_endline [%string {| with inst_map `%{inst_map}` |}];
   print_exn_backtrace exn
 
 and var_to_string ~state ~inst_map var =
   match var with
-  | Var.El var -> var_to_string_inner ~state ~inst_map var
+  | Typed_ast.El var -> var_to_string_inner ~state ~inst_map var
   | Implicit_extern (_, extern_name, _) -> extern_name
   | Extern (internal_name, extern_name, mono) ->
     (match mono with
@@ -368,7 +368,7 @@ and create_inner_val_with_name ~state ~buf ~name expr =
   define_inner_val_with_name ~state ~buf ~name expr
 
 and create_inner_val ~state ~buf expr =
-  let name = unique_name state.var_counter in
+  let name = Type_state.unique_name state.input in
   create_inner_val_with_name ~state ~buf ~name expr
 
 and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
@@ -392,7 +392,7 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
         List.map l ~f:(fun expr -> expr_to_string ~state ~buf ~expr)
         |> String.concat ~sep:","
       in
-      let name = unique_name state.var_counter in
+      let name = Type_state.unique_name state.input in
       let typ = c_type_of_mono ~state (List.hd_exn l |> snd) in
       Bigbuffer.add_string buf [%string {| %{typ} %{name}[] = { %{inners} }; |}];
       name
@@ -425,17 +425,16 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
       let a = nameify a ~expr:b in
       let b = expr_to_string ~state ~expr:b ~buf in
       [%string {| %{add_equal a}%{b}; |}]
-    | `Glob_var (name, inst_map) ->
-      let var = Hashtbl.find_exn state.input.glob_vars name in
+    | `Glob_var (var, inst_map) ->
       let inst_map =
         match var, inst_map with
         | _, Some x -> x
-        | Var.El var, None ->
-          (match var.Var.poly with
+        | El var, None ->
+          (match var.poly with
            | `Mono _ -> String.Map.empty
            | _ ->
              let inst_map' =
-               recover_inst_map (poly_inner var.Var.poly) mono String.Map.empty
+               recover_inst_map (poly_inner var.poly) mono String.Map.empty
              in
              inst_map')
         | _ -> String.Map.empty
@@ -519,7 +518,7 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
              [%string {| , .data = { .%{s} = %{var} } |}])
       in
       [%string {| (%{typ}){ .tag = %{variant}%{union} } |}]
-    | `Struct (_, fields) ->
+    | `Struct fields ->
       let typ, _ = get_typ_no_struct mono in
       let fields =
         List.map fields ~f:(fun (s, expr) ->
@@ -585,7 +584,7 @@ and unique_name_or_empty ~state ~buf ~mono =
   match reach_end mono with
   | `Unit -> ""
   | _ ->
-    let name = unique_name state.var_counter in
+    let name = Type_state.unique_name state.input in
     declare_inner_val ~state ~buf ~name ~mono;
     name
 ;;
@@ -615,23 +614,24 @@ let headers =
 
 let compile ~input =
   let state = state_of_input input in
-  Hashtbl.iteri input.types ~f:(fun ~key:_ ~data ->
-    match data.ty_vars with
-    | [] ->
-      let inst_user_type =
-        { monos = []
-        ; orig_user_type = data
-        ; insted_user_type = ref (Some data)
-        }
-      in
-      ignore (c_type_of_user_type ~state inst_user_type)
-    | _ -> ());
-  Hashtbl.iteri input.glob_vars ~f:(fun ~key:_ ~data ->
-    (* inst all monomorphic thingos *)
-    match data with
-    | Var.El { poly = `Mono _; _ } | Extern _ ->
-      ignore (var_to_string ~state ~inst_map:String.Map.empty data)
-    | _ -> ());
+  Hashtbl.iter input.seen_modules ~f:(fun input ->
+    Hashtbl.iteri input.types ~f:(fun ~key:_ ~data ->
+      match data.ty_vars with
+      | [] ->
+        let inst_user_type =
+          { monos = []
+          ; orig_user_type = data
+          ; insted_user_type = ref (Some data)
+          }
+        in
+        ignore (c_type_of_user_type ~state inst_user_type)
+      | _ -> ());
+    Hashtbl.iteri input.glob_vars ~f:(fun ~key:_ ~data ->
+      (* inst all monomorphic thingos *)
+      match data with
+      | Typed_ast.El { poly = `Mono _; _ } | Extern _ ->
+        ignore (var_to_string ~state ~inst_map:String.Map.empty data)
+      | _ -> ()));
   Out_channel.output_string Out_channel.stdout headers;
   Bigbuffer.contents state.type_decl_buf
   |> Out_channel.output_string Out_channel.stdout;
@@ -643,18 +643,19 @@ let compile ~input =
   |> Out_channel.output_string Out_channel.stdout
 ;;
 
-let print_typed_ast toplevels =
-  let input = Type_check.type_check toplevels in
-  Hashtbl.iter input.glob_vars ~f:(fun var ->
-    match var with
-    | Var.El { poly; name; typed_expr; _ } ->
-      let expr_inner, poly' = Option.value_exn typed_expr in
-      let mono = poly_inner poly' in
-      Pretty_print.print ~name ~poly ~typed_ast:(expr_inner, mono)
-    | _ -> ())
+let print_typed_ast filename =
+  let input = Type_check.type_check_and_output filename in
+  Hashtbl.iter input.seen_modules ~f:(fun input ->
+    Hashtbl.iter input.glob_vars ~f:(fun var ->
+      match var with
+      | Typed_ast.El { poly; name; typed_expr; _ } ->
+        let expr_inner, poly' = Option.value_exn typed_expr in
+        let mono = poly_inner poly' in
+        Pretty_print.print ~name ~poly ~typed_ast:(expr_inner, mono)
+      | _ -> ()))
 ;;
 
-let compile_fully toplevels =
-  let input = Type_check.type_check toplevels in
+let compile_fully filename =
+  let input = Type_check.type_check_and_output filename in
   compile ~input
 ;;

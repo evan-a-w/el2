@@ -9,6 +9,7 @@ type type_check_state =
   | `Done
   ]
 [@@deriving sexp, compare]
+
 type scc_state =
   { (* Stuff for Tarjan's SCC algo *)
     mutable index : int option
@@ -54,7 +55,7 @@ and 'a expr_inner =
   | `Local_var of string
   | `Tuple of 'a expr list
   | `Enum of string * 'a expr option
-  | `Struct of string * (string * 'a expr) list
+  | `Struct of (string * 'a expr) list
   | `Apply of 'a expr * 'a expr
   | `Inf_op of inf_op * 'a expr * 'a expr
   | `Pref_op of pref_op * 'a expr
@@ -132,7 +133,7 @@ let rec go_expr_map_rec
     | `Ref e -> `Ref (f e)
     | `Deref e -> `Deref (f e)
     | `Pref_op (a, b) -> `Pref_op (a, f b)
-    | `Struct (n, l) -> `Struct (n, List.map l ~f:(fun (a, b) -> a, f b))
+    | `Struct l -> `Struct (List.map l ~f:(fun (a, b) -> a, f b))
     | `Apply (a, b) -> `Apply (f a, f b)
     | `Let (a, b, c) -> `Let (a, f b, f c)
     | `If (a, b, c) -> `If (f a, f b, f c)
@@ -254,8 +255,8 @@ let rec expr_map_monos (expr_inner, mono) ~f =
     | `Ref e -> `Ref (expr_map_monos ~f e)
     | `Deref e -> `Deref (expr_map_monos ~f e)
     | `Pref_op (a, b) -> `Pref_op (a, expr_map_monos ~f b)
-    | `Struct (n, l) ->
-      `Struct (n, List.map l ~f:(fun (a, b) -> a, expr_map_monos ~f b))
+    | `Struct l ->
+      `Struct (List.map l ~f:(fun (a, b) -> a, expr_map_monos ~f b))
     | `Apply (a, b) -> `Apply (expr_map_monos ~f a, expr_map_monos ~f b)
     | `Let (a, b, c) -> `Let (a, expr_map_monos ~f b, expr_map_monos ~f c)
     | `If (a, b, c) ->
@@ -308,4 +309,10 @@ let create_non_func ~ty_var_counter:_ ~name ~expr ~data ~unique_name =
   ; scc = { vars = Stack.create (); type_check_state = `Untouched }
   ; scc_st = { on_stack = false; lowlink = -1; index = None }
   }
+;;
+
+let unique_name = function
+  | Extern (_, unique_name, _)
+  | Implicit_extern (_, unique_name, _)
+  | El { unique_name; _ } -> unique_name
 ;;

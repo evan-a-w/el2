@@ -6,6 +6,11 @@ type 'a path =
   }
 [@@deriving compare, equal]
 
+let show_path show_a = function
+  | { module_path = []; inner } -> show_a inner
+  | { module_path; inner } ->
+    String.concat ~sep:"." module_path ^ "." ^ show_a inner
+
 let empty_path inner = { module_path = []; inner }
 
 let path_fst = function

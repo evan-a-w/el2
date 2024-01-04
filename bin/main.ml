@@ -1,12 +1,11 @@
 open Core
 open El2
 
-
 let make_cmd ~summary ~f =
   Command.basic_spec
     ~summary
     Command.Spec.(empty +> anon ("filename" %: string))
-    (Frontend.do_stuff ~f)
+    (fun n () -> f n)
 ;;
 
 let () =
