@@ -1,50 +1,5 @@
 $include(hashmap.el2)
 
-let test_size := 1000
-let random_inserts := 100
-let random_max := 1000
-
-let i64_equal(a, b) := a^ == b^
-let i64_hash(a) := a^
-
-let print_int(i) := {
-  let curr := i % 10;
-
-  if i / 10 > 0 then print_int(i / 10);
-
-  [* for some reason, chars are a bit borked in parsing so i do this jank string thing *]
-  fputc(unsafe_cast(curr + unsafe_cast("0"[0])), stdout)
-}
-
-let print_string(s) := {
-  if s^ != unsafe_cast(0) then {
-    fputc(unsafe_cast(s^), stdout);
-    print_string(&s[1])
-  }
-}
-
-
-let print_hashmap_elements(it) := {
-  match hashmap_iterator_next(it) with
-  | None -> ()
-  | Some((&k, &v)) -> {
-      print_int(k);
-      print_string(" ");
-      print_int(v);
-      print_endline("");
-      print_hashmap_elements(it)
-    }
-}
-
-let print_hashmap_elements_unit(it) := {
-  match hashmap_iterator_next(it) with
-  | None -> ()
-  | Some((&k, &())) -> {
-      print_int(k);
-      print_hashmap_elements_unit(it)
-    }
-}
-
 let main() := {
   {
     let t := hashmap_create(i64_hash, i64_equal);
@@ -96,7 +51,6 @@ let main() := {
      2 3
   *]
 
-  [* Currently, it doesn't work when data is unit type
   {
     let t := hashmap_create(i64_hash, i64_equal);
 
@@ -131,7 +85,51 @@ let main() := {
 
     hashmap_destroy(&t)
   };
-  *]
 
   0
+}
+
+let test_size := 1000
+let random_inserts := 100
+let random_max := 1000
+
+let i64_equal(a, b) := a^ == b^
+let i64_hash(a) := a^
+
+let print_int(i) := {
+  let curr := i % 10;
+
+  if i / 10 > 0 then print_int(i / 10);
+
+  [* for some reason, chars are a bit borked in parsing so i do this jank string thing *]
+  fputc(unsafe_cast(curr + unsafe_cast("0"[0])), stdout)
+}
+
+let print_string(s) := {
+  if s^ != unsafe_cast(0) then {
+    fputc(unsafe_cast(s^), stdout);
+    print_string(&s[1])
+  }
+}
+
+
+let print_hashmap_elements(it) := {
+  match hashmap_iterator_next(it) with
+  | None -> ()
+  | Some((&k, &v)) -> {
+      print_int(k);
+      print_string(" ");
+      print_int(v);
+      print_endline("");
+      print_hashmap_elements(it)
+    }
+}
+
+let print_hashmap_elements_unit(it) := {
+  match hashmap_iterator_next(it) with
+  | None -> ()
+  | Some((&k, &())) -> {
+      print_int(k);
+      print_hashmap_elements_unit(it)
+    }
 }

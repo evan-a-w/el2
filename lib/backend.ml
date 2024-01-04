@@ -24,10 +24,6 @@ module Mono_list_map = Map.Make (struct
 
 type type_cache = string Mono_list_map.t ref
 
-(* TODO: make the mem expr thingos work for sure
-   (lvalues and such)
-   Currently borked because we unintentionally copy shit a lot *)
-
 type state =
   { input : Type_check.output
   ; extern_vars : string String.Table.t
@@ -375,7 +371,6 @@ and create_inner_val ~state ~buf expr =
   let name = unique_name state.var_counter in
   create_inner_val_with_name ~state ~buf ~name expr
 
-(* TODO: special case &unit to have mem location of other member, or NULL *)
 and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
   try
     let get_typ_no_struct mono =
@@ -488,7 +483,11 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
        | _ -> [%string {| (%{expr_to_string ~state ~expr ~buf}).%{field} |}])
     | `Float x -> Float.to_string x
     | `Unit -> ""
-    | `Ref expr -> [%string "&(%{expr_to_lvalue_string ~state ~buf ~expr})"]
+    | `Ref expr ->
+      let expr = expr_to_lvalue_string ~state ~buf ~expr in
+      (match expr with
+       | "" -> "NULL"
+       | _ -> [%string "&(%{expr})"])
     | `Deref e -> [%string "(*(%{expr_to_string ~state ~buf ~expr:e }))"]
     | `Char x -> [%string "'%{x#Char}'"]
     | `String s -> [%string {| "%{s}" |}]
