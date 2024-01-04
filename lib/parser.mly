@@ -213,8 +213,6 @@ expr_ops:
     { `Inf_op (o, a, b) }
   | e = expr_ops; DOT; l = dot_upper_list; i = name
     { `Field_access (e, Ast.{ module_path = l ; inner = i }) }
-  | i = ID
-    { `Var Ast.{ module_path = []; inner = i }}
   | l = dot_upper_list; i = ID
     { `Var Ast.{ module_path = l; inner = i }}
   | l = dot_upper_list; i = UPPER_ID
@@ -245,7 +243,7 @@ expr_ops:
 
 dot_upper_list_rev:
   | 
-    { [] }
+    { [ ] }
   | l = dot_upper_list_rev; i = UPPER_ID; DOT
     { i :: l }
 

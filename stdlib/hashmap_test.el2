@@ -1,4 +1,4 @@
-$include(hashmap.el2)
+open Hashmap
 
 let main() := {
   {

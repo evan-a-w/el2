@@ -1,6 +1,6 @@
-$include(stdlib.el2)
-$include(primes.el2)
-$include(types.el2)
+open Stdlib
+open Primes
+open Types
 
 type hashmap_error :=
   | Not_found

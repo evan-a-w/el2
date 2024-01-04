@@ -18,15 +18,6 @@ let rec show_unification_error = function
   | End -> "End"
 ;;
 
-exception Name_linked_multiple_times of string
-exception Duplicate_type_name of string
-exception Duplicate_field of string
-exception Duplicate_variant of string
-exception Unknown_type of string path
-exception Unknown_module of string * string list
-exception No_type_args of string list
-exception Refutable_pattern of string
-exception Unbound_var of string path
 exception Unification_error of unification_error
 
 exception
@@ -37,23 +28,22 @@ exception
 
 exception Early_exit
 
-let unel2_file name =
+let unel2_file filename =
   try
-    let pref, name = Filename.split name in
+    let name = Filename.basename filename in
     let rex = Re.Pcre.regexp {|[a-z]([a-z0-9_]*)\.el2$|} in
     let group = Re.Pcre.exec ~rex name in
     let rest = Re.Group.get group 1 in
     let fst_char = name.[0] |> Char.uppercase in
-    Filename.concat pref [%string "%{fst_char#Char}%{rest}"]
+    [%string "%{fst_char#Char}%{rest}"]
   with
-  | _ -> failwith [%string {|Invalid filename: `%{name}`|}]
+  | _ -> failwith [%string {|Invalid filename: `%{filename}`|}]
 ;;
 
-let el2_file name =
-  let pref, name = Filename.split name in
-  let fst_char = name.[0] |> Char.uppercase in
+let el2_file dir name =
+  let fst_char = name.[0] |> Char.lowercase in
   let rest_chars = String.sub name ~pos:1 ~len:(String.length name - 1) in
-  Filename.concat pref [%string "%{fst_char#Char}%{rest_chars}.el2"]
+  Filename.concat dir [%string "%{fst_char#Char}%{rest_chars}.el2"]
 ;;
 
 let rec unify a b =
@@ -165,13 +155,14 @@ module Type_state = struct
     let buf = Buffer.create 16 in
     List.iter state.module_stack ~f:(fun m -> Buffer.add_string buf m.name);
     Buffer.add_string buf state.current_module.name;
+    Buffer.add_char buf '_';
     Buffer.contents buf
   ;;
 
   let register_name ~state name =
     match Hash_set.mem state.seen_vars name with
     | false -> Hash_set.add state.seen_vars name
-    | true -> raise (Name_linked_multiple_times name)
+    | true -> failwith [%string "Name linked multiple times: `%{name}`"]
   ;;
 
   let make_unique_helper ~state name =
@@ -271,7 +262,11 @@ module Type_state = struct
   let lookup_module_in_exn names ~in_ =
     match lookup_module_in names ~in_ with
     | Ok a -> a
-    | Error name -> raise (Unknown_module (name, names))
+    | Error name ->
+      failwith
+        [%string
+          "Unknown module `%{name}` in chain `%{String.concat ~sep:\" \" \
+           names}`"]
   ;;
 
   let lookup_module_exn ~state ~if_missing names =
@@ -327,7 +322,7 @@ let get_non_user_type ~make_ty_vars ~state name =
   | "_" when make_ty_vars -> make_indir ()
   | _ ->
     (match Map.find state.Type_state.ty_vars name with
-     | None -> raise (Unknown_type (empty_path name))
+     | None -> failwith [%string "Unknown type `%{name}`"]
      | Some a -> a)
 ;;
 
@@ -437,7 +432,9 @@ let state_add_local state ~name ~mono =
 let rec try_make_module ~state module_path () =
   match module_path with
   | fst :: _ ->
-    let filename = el2_file fst in
+    let filename =
+      el2_file (Filename.dirname state.Type_state.current_module.filename) fst
+    in
     (match Stdlib.Sys.file_exists filename with
      | false -> ()
      | true -> ignore (process_module ~state filename))
@@ -511,13 +508,16 @@ and get_user_type_field_exn ~field inst_user_type =
 and lookup_var ~state ({ inner = name; module_path } as p) =
   let f module_t = Hashtbl.find module_t.Type_state.glob_vars name in
   match find_module_in_submodules ~try_make_module ~state ~f module_path with
-  | None -> raise (Unbound_var p)
+  | None -> failwith [%string "Unknown variable %{show_path Fn.id p}"]
   | Some x -> x
 
-and lookup_user_type ~state ({ module_path; inner = name } as p : string path) =
+and lookup_user_type_opt ~state ({ module_path; inner = name } : string path) =
   let f module_t = Hashtbl.find module_t.Type_state.types name in
-  match find_module_in_submodules ~try_make_module ~state module_path ~f with
-  | None -> raise (Unknown_type p)
+  find_module_in_submodules ~try_make_module ~state module_path ~f
+
+and lookup_user_type ~state (p : string path) =
+  match lookup_user_type_opt ~state p with
+  | None -> failwith [%string "Unknown type %{show_path Fn.id p}"]
   | Some x -> x
 
 and lookup_variant ~state { module_path; inner = name } =
@@ -533,13 +533,12 @@ and lookup_field ~state { module_path; inner = name } =
   | Some x -> x
 
 and lookup_mono ~make_ty_vars ~state name =
-  try
-    let r = lookup_user_type ~state (empty_path name) in
-    match r.ty_vars with
-    | [] -> `User (inst_user_type_gen r)
-    | _ -> raise (No_type_args r.ty_vars)
-  with
-  | Unknown_type _ -> get_non_user_type ~make_ty_vars ~state name
+  match lookup_user_type_opt ~state (empty_path name) with
+  | None -> get_non_user_type ~make_ty_vars ~state name
+  | Some r ->
+    (match r.ty_vars with
+     | [] -> `User (inst_user_type_gen r)
+     | _ -> failwith [%string "Type %{name} requires type arguments"])
 
 and mono_of_type_expr ?(make_ty_vars = true) ~state (type_expr : type_expr)
   : mono
@@ -552,7 +551,8 @@ and mono_of_type_expr ?(make_ty_vars = true) ~state (type_expr : type_expr)
     let r = lookup_user_type ~state path in
     (match r.ty_vars with
      | [] -> `User (inst_user_type_gen r)
-     | _ -> raise (No_type_args r.ty_vars))
+     | _ ->
+       failwith [%string "Type %{show_path Fn.id path} requires type arguments"])
   | `Pointer m -> `Pointer (f m)
   | `Tuple l -> `Tuple (List.map l ~f)
   | `Named_args (s, l) ->
@@ -566,7 +566,8 @@ and all_user_of_enum ~state l =
   let variants = String.Hash_set.create () in
   ( `Enum
       (List.map l ~f:(fun (s, t) ->
-         if Hash_set.mem variants s then raise (Duplicate_variant s);
+         if Hash_set.mem variants s
+         then failwith [%string "Duplicate variant %{s}"];
          let mono_opt =
            Option.map t ~f:(mono_of_type_expr ~make_ty_vars:false ~state)
          in
@@ -578,7 +579,7 @@ and all_user_of_struct ~state l =
   let set = Hash_set.create (module String) in
   ( `Struct
       (List.map l ~f:(fun (s, t) ->
-         if Hash_set.mem set s then raise (Duplicate_field s);
+         if Hash_set.mem set s then failwith [%string "Duplicate field %{s}"];
          Hash_set.add set s;
          s, mono_of_type_expr ~make_ty_vars:false ~state t))
   , set )
@@ -606,7 +607,7 @@ and process_types ~(state : Type_state.t) types =
               ~data:user_type
           with
           | `Ok -> ()
-          | `Duplicate -> raise (Duplicate_variant s));
+          | `Duplicate -> failwith [%string "Duplicate variant %{s}"]);
         all_user
       | `Struct l ->
         let all_user, fields = all_user_of_struct ~state l in
@@ -618,7 +619,7 @@ and process_types ~(state : Type_state.t) types =
               ~data:user_type
           with
           | `Ok -> ()
-          | `Duplicate -> raise (Duplicate_variant s));
+          | `Duplicate -> failwith [%string "Duplicate field %{s}"]);
         all_user
     in
     user_type.info := Some all_user)
@@ -632,7 +633,9 @@ and breakup_patterns ~state ~vars (pattern : pattern) (expr : Ast.expr) =
   in
   match pattern with
   | `Bool _ | `Float _ | `Char _ | `String _ | `Int _ | `Null ->
-    raise (Refutable_pattern (Sexp.to_string_hum [%sexp (pattern : pattern)]))
+    failwith
+      [%string
+        "Refutable pattern `%{Sexp.to_string_hum [%sexp (pattern : pattern)]}`"]
   | `Var name -> Stack.push vars (name, expand_expr ~state expr)
   | `Unit ->
     (ignore : string path -> unit)
@@ -752,18 +755,17 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
   match expr with
   | `Bool _ | `Int _ | `Float _ | `Char _ | `String _ | `Enum _ | `Unit | `Null
   | `Size_of (`Type _) -> ()
-  | `Var { inner = name'; module_path = [] } ->
-    (match Set.mem locals name' with
-     | true -> ()
-     | false ->
-       Typed_ast.(edge.used_globals <- Set.add edge.used_globals name');
-       if not (Hashtbl.mem state.Type_state.current_module.glob_vars name')
-       then Hash_set.add not_found_vars name')
-  | `Var ({ inner; module_path } as var) ->
-    let f module_t = Hashtbl.find module_t.Type_state.glob_vars inner in
+  | `Var { inner = name'; module_path = [] } when Set.mem locals name' -> ()
+  | `Var { inner = name'; module_path } ->
+    let f module_t =
+      Hashtbl.find module_t.Type_state.glob_vars name'
+      |> Option.map ~f:(Fn.const module_t)
+    in
     (match find_module_in_submodules ~try_make_module ~state ~f module_path with
-     | Some _ -> ()
-     | None -> raise (Unbound_var var))
+     | None -> Hash_set.add not_found_vars name'
+     | Some module_t when phys_equal state.Type_state.current_module module_t ->
+       Typed_ast.(edge.used_globals <- Set.add edge.used_globals name')
+     | Some _ -> ())
   | `Match (a, l) ->
     rep ~locals a;
     List.iter l ~f:(fun (p, e) -> rep ~locals:(pattern_vars p ~locals) e)
@@ -823,7 +825,9 @@ and process_module ~state filename =
 and process_module_path ~state path =
   match path with
   | fst :: rest ->
-    let filename = el2_file fst in
+    let filename =
+      el2_file (Filename.dirname state.Type_state.current_module.filename) fst
+    in
     let in_ = process_module ~state filename in
     Type_state.lookup_module_in_exn ~in_ rest
   | _ -> failwith "impossible"
@@ -860,7 +864,11 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
            with
            | `Ok ->
              Hashtbl.add_exn type_defs ~key:name ~data:(ty_vars, type_decl, acc)
-           | `Duplicate -> raise (Duplicate_type_name name));
+           | `Duplicate ->
+             failwith
+               [%string
+                 "Duplicate type %{name} in file \
+                  %{state.current_module.filename}"]);
           acc
         | `Let_fn x ->
           Queue.enqueue let_toplevels (`Let_fn x);
@@ -880,7 +888,7 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
   let find_references ~edge ~state ~locals expr =
     let open Typed_ast in
     match Hashtbl.find state.Type_state.current_module.glob_vars edge.name with
-    | Some _ -> raise (Duplicate_type_name edge.name)
+    | Some _ -> failwith [%string "Duplicate variable %{edge.name}"]
     | None ->
       Hashtbl.add_exn
         state.current_module.glob_vars
@@ -937,7 +945,7 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
              Hashtbl.add state.current_module.glob_vars ~key:name ~data:edge
            with
            | `Ok -> opened_modules
-           | _ -> raise (Duplicate_type_name name))
+           | _ -> failwith [%string "Duplicate variable %{name}"])
         | `Implicit_extern (name, t, extern_name) ->
           let mono = mono_of_type_expr ~state t in
           Type_state.register_name ~state extern_name;
@@ -946,14 +954,14 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
              Hashtbl.add state.current_module.glob_vars ~key:name ~data:edge
            with
            | `Ok -> opened_modules
-           | _ -> raise (Duplicate_type_name name)))
+           | _ -> failwith [%string "Duplicate variable %{name}"]))
   in
   match Hash_set.is_empty not_found_vars with
   | false ->
-    raise
-      (Unbound_var
-         (empty_path
-            (Hash_set.find ~f:(Fn.const true) not_found_vars |> Option.value_exn)))
+    failwith
+      [%string
+        "Unknown variables: `%{Hash_set.to_list not_found_vars |> \
+         String.concat ~sep:\", \"}`"]
   | true -> state
 
 and get_sccs glob_vars =
@@ -1011,7 +1019,7 @@ and mono_of_var ~state name =
   | None ->
     (match Hashtbl.find state.Type_state.current_module.glob_vars name with
      | Some var -> `Global (var, infer_var ~state var)
-     | None -> raise (Unbound_var (empty_path name)))
+     | None -> failwith [%string "Unknown variable %{name}"])
 
 and infer_var ~state (var : Type_state.module_t list Typed_ast.top_var) =
   match var with
@@ -1437,6 +1445,10 @@ let type_check_and_output filename =
   try type_check_starting_with ~filename with
   | Unification_error e ->
     show_unification_error e |> print_endline;
+    exit 1
+  | Failure s ->
+    print_endline "Fatal error:";
+    print_endline s;
     exit 1
 ;;
 
