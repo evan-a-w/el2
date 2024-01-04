@@ -17,6 +17,7 @@
 %token TRUE FALSE
 %token <char> CHAR
 %token LET TYPE EXTERN IMPLICIT_EXTERN ASSERT
+%token OPEN
 %token UNSAFE_CAST
 
 %left EQUALS
@@ -50,8 +51,6 @@ atom:
     { `Float f }
   | i = INT
     { `Int i }
-  | i = name
-    { `Var i }
   | s = STRING
     { `String s }
   | c = CHAR
@@ -63,8 +62,14 @@ atom:
   | FALSE
     { `Bool false }
 
+pattern_atom:
+  | a = atom
+    { (a :> Ast.pattern) }
+  | name
+    { `Var $1 }
+
 struct_name:
-  | HASH; n = name
+  | HASH; n = name_path
     { n }
 
 type_expr_wrapped:
@@ -73,14 +78,32 @@ type_expr_wrapped:
   | LPAREN; a = type_expr; RPAREN
     { a }
 
+name_path:
+  | l = list(dot_and_upper); n = ID
+    { Ast.{ module_path = l; inner = n } }
+
+dot_and_upper:
+  | UPPER_ID; DOT
+    { $1 }
+
+upper_name_list_with_last:
+  | UPPER_ID
+    { [ $1 ] }
+  | l = upper_name_list_with_last; next = UPPER_ID
+    { next :: l }
+
+upper_name_path:
+  | l = upper_name_list_with_last
+    { Ast.{ module_path = List.tl l; inner = List.hd l } }
+
 type_expr_no_whitespace:
-  | n = name
+  | n = name_path
     { `Named n }
   | type_expr_wrapped
     { $1 }
 
 type_expr:
-  | n = name; LPAREN; l = separated_nonempty_list(COMMA, type_expr); RPAREN
+  | n = name_path; LPAREN; l = separated_nonempty_list(COMMA, type_expr); RPAREN
     { `Named_args (n, l) }
   | a = type_expr; ARROW; b = type_expr
     { `Function (a, b) }
@@ -98,21 +121,19 @@ pattern_wrapped:
     { `Typed (p, t) }
 
 pattern_no_whitespace:
-  | a = atom
-    { (a :> Ast.pattern) }
+  | pattern_atom
+    { $1 }
   | pattern_wrapped
     { $1 }
-  | n = struct_name; LBRACE; l = separated_nonempty_list(SEMICOLON, pattern_struct_element); RBRACE
+  | n = struct_name; LBRACE; l = separated_list(SEMICOLON, pattern_struct_element); RBRACE
     { `Struct (n, l) }
-  | n = struct_name; LBRACE; RBRACE 
-    { `Struct (n, []) }
   | AMP; p = pattern_no_whitespace
     { `Ref p }
 
 pattern:
   | p = pattern_no_whitespace
     { p }
-  | i = UPPER_ID; p = option(pattern_wrapped)
+  | i = upper_name_path; p = option(pattern_wrapped)
     { `Enum (i, p) }
 
 pattern_struct_rhs:
@@ -190,16 +211,19 @@ expr_ops:
     { `Pref_op (o, e) }
   | a = expr_ops; o = binop; b = expr_ops
     { `Inf_op (o, a, b) }
-  | e = expr_ops; DOT; i = INT
-    { `Tuple_access (e, i) }
-  | e = expr_ops; DOT; i = ID
-    { `Field_access (e, i) }
+  | e = expr_ops; DOT; l = dot_upper_list; i = name
+    { `Field_access (e, Ast.{ module_path = l; inner = i }) }
+  | l = dot_upper_list; i = ID
+    { `Var Ast.{ module_path = l; inner = i }}
+  | l = dot_upper_list; i = UPPER_ID
+    { `Enum Ast.{ module_path = l; inner = i }}
   | e = expr_ops; LBRACK; i = expr; RBRACK
     { `Index (e, i) }
-  | i = UPPER_ID
-    { `Enum i }
   | a = expr_ops; EQUALS; b = expr_ops
     { `Assign (a, b) }
+%inline dot_upper_list:
+  | dot_upper_list_rev
+    { List.rev $1 }
 %inline unop:
   | MINUS { `Minus }
 %inline binop:
@@ -216,6 +240,12 @@ expr_ops:
   | REM { `Rem }
   | AND { `And }
   | OR { `Or }
+
+dot_upper_list_rev:
+  | UPPER_ID; DOT
+    { [ $1 ] }
+  | l = dot_upper_list_rev; i = UPPER_ID
+    { i :: l }
 
 match_each:
   | p = pattern; ARROW; e = expr_ops
@@ -315,3 +345,5 @@ toplevel:
     { $1 }
   | implicit_extern
     { $1 }
+  | OPEN; l = separated_nonempty_list(DOT, UPPER_ID)
+    { `Open l }

@@ -383,7 +383,9 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
     | `Bool false -> "false"
     | `Size_of mono ->
       let typ = c_type_of_mono ~state mono in
-      [%string {| sizeof(%{typ}) |}]
+      (match mono with
+       | `Unit -> "0"
+       | _ -> [%string {| sizeof(%{typ}) |}])
     | `Return x -> [%string {| return %{expr_to_string ~state ~buf ~expr:x}; |}]
     | `Array_lit l ->
       let inners =

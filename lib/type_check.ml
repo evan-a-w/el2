@@ -1,6 +1,7 @@
 open! Core
 open! Ast
 open! Types
+open Type_common
 
 type unification_error =
   | Failed_to_match of
@@ -21,115 +22,17 @@ exception Duplicate_type_name of string
 exception Duplicate_field of string
 exception Duplicate_variant of string
 exception Unknown_type of string
+exception Unknown_module of string * string list
 exception No_type_args of string list
 exception Refutable_pattern of string
-exception Unbound_var of string
+exception Unbound_var of string path
 exception Unification_error of unification_error
 
-type expanded_expr =
-  [ `Unit
-  | `Null
-  | `Int of int
-  | `Float of float
-  | `String of string
-  | `Bool of bool
-  | `Char of char
-  | `Var of name
-  | `Tuple of expanded_expr list
-  | `Array_lit of expanded_expr list
-  | `Enum of upper_name
-  | `Struct of name * (string * expanded_expr option) list
-  | `Apply of expanded_expr * expanded_expr
-  | `Inf_op of inf_op * expanded_expr * expanded_expr
-  | `Pref_op of pref_op * expanded_expr
-  | `Deref of expanded_expr (* prefix * *)
-  | `Ref of expanded_expr (* prefix & *)
-  | `Tuple_access of expanded_expr * int (* postfix . *)
-  | `Field_access of expanded_expr * string (* postfix . *)
-  | `Index of expanded_expr * expanded_expr (* postfix [] *)
-  | `If of expanded_expr * expanded_expr * expanded_expr
-  | `Match of expanded_expr * (pattern * expanded_expr) list
-  | `Let of string * expanded_expr * expanded_expr
-  | `Assign of expanded_expr * expanded_expr
-  | `Compound of expanded_expr
-  | `Size_of of [ `Type of type_expr | `Expr of expanded_expr ]
-  | `Assert of expanded_expr
-  | `Return of expanded_expr
-  | `Typed of expanded_expr * type_expr
-  | `Assert_struct of string * expanded_expr
-  | `Assert_empty_enum_field of string * expanded_expr
-  | `Access_enum_field of string * expanded_expr
-  | `Unsafe_cast of expanded_expr
-  ]
-[@@deriving sexp, compare]
-
-module Var = struct
-  type type_check_state =
-    [ `Untouched
-    | `In_checking
-    | `Done
-    ]
-  [@@deriving sexp, compare, variants]
-
-  type scc_state =
-    { (* Stuff for Tarjan's SCC algo *)
-      mutable index : int option
-    ; mutable lowlink : int
-    ; mutable on_stack : bool
+exception
+  Module_cycle of
+    { from_module : string
+    ; offending_module : string
     }
-  [@@deriving sexp, compare]
-
-  type var =
-    { name : string
-    ; mutable args : [ `Non_func | `Func of (string * mono) list ]
-    ; expr : expanded_expr
-    ; mutable typed_expr : Typed_ast.gen_expr option
-    ; mutable poly : poly
-    ; mutable used_globals : String.Set.t
-    ; mutable scc : scc
-    ; mutable scc_st : scc_state
-    }
-
-  and t =
-    | El of var
-    | Extern of string * string * mono
-    | Implicit_extern of string * string * mono
-
-  and scc =
-    { vars : var Stack.t [@compare.ignore]
-    ; mutable type_check_state : type_check_state
-    }
-  [@@deriving sexp, compare]
-
-  let t var = El var
-
-  let create_func ~ty_var_counter:_ ~name ~expr ~var_decls =
-    { name
-    ; expr
-    ; args = `Func var_decls
-    ; used_globals = String.Set.empty
-    ; typed_expr = None
-    ; poly =
-        (let a = make_indir () in
-         let b = make_indir () in
-         `Mono (`Function (a, b)))
-    ; scc = { vars = Stack.create (); type_check_state = `Untouched }
-    ; scc_st = { on_stack = false; lowlink = -1; index = None }
-    }
-  ;;
-
-  let create_non_func ~ty_var_counter:_ ~name ~expr =
-    { name
-    ; expr
-    ; typed_expr = None
-    ; args = `Non_func
-    ; used_globals = String.Set.empty
-    ; poly = `Mono (make_indir ())
-    ; scc = { vars = Stack.create (); type_check_state = `Untouched }
-    ; scc_st = { on_stack = false; lowlink = -1; index = None }
-    }
-  ;;
-end
 
 let get_user_type_field user_type field =
   match !(user_type.info) with
@@ -147,17 +50,37 @@ let get_user_type_variant user_type variant =
   | _ -> None
 ;;
 
+let internal_var counter = "internal_" ^ Counter.next_num counter
+
 module Type_state = struct
   module T = struct
-    type t =
-      { glob_vars : Var.t String.Table.t
+    type module_name = string [@@deriving sexp, compare]
+
+    module Module_name_set = Set.Make (struct
+        type t = module_name [@@deriving sexp, compare]
+      end)
+
+    type module_t =
+      { name : module_name
+      ; sub_modules : module_t String.Table.t
+      ; glob_vars : module_t list Typed_ast.top_var String.Table.t
       ; types : user_type String.Table.t
-      ; ty_var_counter : Counter.t
-      ; var_counter : Counter.t
       ; variant_to_type : user_type String.Table.t
       ; field_to_type : user_type String.Table.t
+      ; mutable in_eval : bool
+      }
+    [@@deriving sexp]
+
+    type t =
+      { current_module : module_t
+      ; seen_modules : module_t String.Table.t
+      ; opened_modules : module_t list
+      ; module_stack : module_t list
       ; locals : mono String.Map.t
       ; ty_vars : mono String.Map.t
+      ; ty_var_counter : Counter.t
+      ; var_counter : Counter.t
+      ; seen_vars : String.Hash_set.t
       }
     [@@deriving sexp]
   end
@@ -166,18 +89,95 @@ module Type_state = struct
 
   let default_types () = String.Table.of_alist_exn []
 
-  let create () =
-    { glob_vars = String.Table.create ()
+  let rec unique_name t =
+    let name = internal_var t.var_counter in
+    if Hash_set.mem t.seen_vars name
+    then unique_name t
+    else (
+      Hash_set.add t.seen_vars name;
+      name)
+  ;;
+
+  let module_create name =
+    { name
+    ; sub_modules = String.Table.create ()
+    ; glob_vars = String.Table.create ()
     ; types = default_types ()
-    ; ty_var_counter = Counter.create ()
-    ; var_counter = Counter.create ()
     ; variant_to_type = String.Table.create ()
     ; field_to_type = String.Table.create ()
-    ; locals = String.Map.empty
-    ; ty_vars = String.Map.empty
+    ; in_eval = false
     }
   ;;
+
+  let create filename =
+    { current_module = module_create filename
+    ; opened_modules = []
+    ; seen_modules = String.Table.create ()
+    ; module_stack = []
+    ; locals = String.Map.empty
+    ; ty_vars = String.Map.empty
+    ; ty_var_counter = Counter.create ()
+    ; var_counter = Counter.create ()
+    ; seen_vars = String.Hash_set.create ()
+    }
+  ;;
+
+  let push_module ~module_t t =
+    Hashtbl.set t.seen_modules ~key:module_t.name ~data:module_t;
+    { t with
+      module_stack = t.current_module :: t.module_stack
+    ; current_module = module_t
+    }
+  ;;
+
+  let lookup_module_in names ~in_:module_t =
+    let rec loop m names' =
+      match names' with
+      | [] -> Ok m
+      | name :: names' ->
+        (match Hashtbl.find m.sub_modules name with
+         | Some m -> loop m names'
+         | None -> Error name)
+    in
+    loop module_t names
+  ;;
+
+  let lookup_module_in_exn names ~in_ =
+    match lookup_module_in names ~in_ with
+    | Ok a -> a
+    | Error name -> raise (Unknown_module (name, names))
+  ;;
+
+  let lookup_module_exn ~state ~if_missing names =
+    match names with
+    | [] -> state.current_module
+    | fst :: _ ->
+      (match Hashtbl.find state.current_module.sub_modules fst with
+       | None -> if_missing fst
+       | _ -> ());
+      lookup_module_in_exn names ~in_:state.current_module
+  ;;
+
+  let try_on_all_modules state ~f ~on_first =
+    let rec loop opened_modules =
+      match opened_modules with
+      | [] -> None
+      | module_t :: opened_modules ->
+        (match f module_t with
+         | Some _ as res -> res
+         | None -> loop opened_modules)
+    in
+    match f state.current_module with
+    | None ->
+      on_first ();
+      loop state.opened_modules
+    | Some _ as res -> res
+  ;;
 end
+
+type expr = Type_state.module_t list Typed_ast.expr
+type expr_inner = Type_state.module_t list Typed_ast.expr_inner
+type gen_expr = Type_state.module_t list Typed_ast.gen_expr
 
 let make_user_type ~repr_name ~ty_vars = { repr_name; ty_vars; info = ref None }
 
@@ -201,29 +201,58 @@ let get_non_user_type ~make_ty_vars ~state name =
      | Some a -> a)
 ;;
 
-let lookup_user_type ~state name =
-  match Hashtbl.find state.Type_state.types name with
-  | None -> raise (Unknown_type name)
-  | Some a -> a
+let find_module_in_submodules ~state ~try_make_module ~f module_path =
+  Type_state.try_on_all_modules
+    ~f:(fun module_t ->
+      match Type_state.lookup_module_in ~in_:module_t module_path with
+      | Error _ -> None
+      | Ok module_t -> f module_t)
+    ~on_first:(try_make_module ~state module_path)
+    state
 ;;
 
-let lookup_mono ~make_ty_vars ~state name =
+let rec try_make_module ~state module_path () =
+  match module_path with
+  | fst :: _ ->
+    let filename = [%string "%{fst}.el2"] in
+    (match Stdlib.Sys.file_exists filename with
+     | false -> ()
+     | true -> ignore (process_module ~state filename))
+  | _ -> ()
+
+and lookup_var ~state ({ inner = name; module_path } as p) =
+  let f module_t = Hashtbl.find module_t.Type_state.glob_vars name in
+  match find_module_in_submodules ~try_make_module ~state ~f module_path with
+  | None -> raise (Unbound_var p)
+  | Some x -> x
+
+and lookup_user_type ~state { module_path; inner = name } =
+  let f module_t = Hashtbl.find module_t.Type_state.types name in
+  match find_module_in_submodules ~try_make_module ~state module_path ~f with
+  | None -> raise (Unknown_type name)
+  | Some x -> x
+
+and lookup_mono ~make_ty_vars ~state name =
   try
-    let r = lookup_user_type ~state name in
+    let r = lookup_user_type ~state (empty_path name) in
     match r.ty_vars with
     | [] -> `User (inst_user_type_gen r)
     | _ -> raise (No_type_args r.ty_vars)
   with
   | Unknown_type _ -> get_non_user_type ~make_ty_vars ~state name
-;;
 
-let rec mono_of_type_expr ?(make_ty_vars = true) ~state (type_expr : type_expr)
+and mono_of_type_expr ?(make_ty_vars = true) ~state (type_expr : type_expr)
   : mono
   =
   let f = mono_of_type_expr ~make_ty_vars ~state in
   match type_expr with
   | `Unit -> `Unit
-  | `Named s -> lookup_mono ~make_ty_vars ~state s
+  | `Named { inner; module_path = [] } -> lookup_mono ~make_ty_vars ~state inner
+  | `Named path ->
+    let r = lookup_user_type ~state path in
+    (match r.ty_vars with
+     | [] -> `User (inst_user_type_gen r)
+     | _ -> raise (No_type_args r.ty_vars))
   | `Pointer m -> `Pointer (f m)
   | `Tuple l -> `Tuple (List.map l ~f)
   | `Named_args (s, l) ->
@@ -232,9 +261,8 @@ let rec mono_of_type_expr ?(make_ty_vars = true) ~state (type_expr : type_expr)
     let inst = inst_user_type ~monos user_type in
     `User inst
   | `Function (a, b) -> `Function (f a, f b)
-;;
 
-let all_user_of_enum ~state l =
+and all_user_of_enum ~state l =
   let variants = String.Hash_set.create () in
   ( `Enum
       (List.map l ~f:(fun (s, t) ->
@@ -245,9 +273,8 @@ let all_user_of_enum ~state l =
          Hash_set.add variants s;
          s, mono_opt))
   , variants )
-;;
 
-let all_user_of_struct ~state l =
+and all_user_of_struct ~state l =
   let set = Hash_set.create (module String) in
   ( `Struct
       (List.map l ~f:(fun (s, t) ->
@@ -255,17 +282,16 @@ let all_user_of_struct ~state l =
          Hash_set.add set s;
          s, mono_of_type_expr ~make_ty_vars:false ~state t))
   , set )
-;;
 
-let process_types ~(state : Type_state.t) types =
-  Hashtbl.iteri state.types ~f:(fun ~key ~data:user_type ->
-    let ty_vars, decl = Hashtbl.find_exn types key in
+and process_types ~(state : Type_state.t) types =
+  Hashtbl.iteri state.current_module.types ~f:(fun ~key ~data:user_type ->
+    let ty_vars, decl, opened_modules = Hashtbl.find_exn types key in
     let ty_vars =
       List.fold ty_vars ~init:empty_ty_vars ~f:(fun acc s ->
         let mono = make_var_mono s in
         Map.add_exn acc ~key:s ~data:mono)
     in
-    let state = { state with ty_vars } in
+    let state = { state with ty_vars; opened_modules } in
     let all_user =
       match decl with
       | `Alias type_expr ->
@@ -273,36 +299,43 @@ let process_types ~(state : Type_state.t) types =
       | `Enum l ->
         let all_user, variants = all_user_of_enum ~state l in
         Hash_set.iter variants ~f:(fun s ->
-          match Hashtbl.add state.variant_to_type ~key:s ~data:user_type with
+          match
+            Hashtbl.add
+              state.current_module.variant_to_type
+              ~key:s
+              ~data:user_type
+          with
           | `Ok -> ()
           | `Duplicate -> raise (Duplicate_variant s));
         all_user
       | `Struct l ->
         let all_user, fields = all_user_of_struct ~state l in
         Hash_set.iter fields ~f:(fun s ->
-          match Hashtbl.add state.field_to_type ~key:s ~data:user_type with
+          match
+            Hashtbl.add
+              state.current_module.field_to_type
+              ~key:s
+              ~data:user_type
+          with
           | `Ok -> ()
           | `Duplicate -> raise (Duplicate_variant s));
         all_user
     in
     user_type.info := Some all_user)
-;;
 
-let unique_name counter = "internal_" ^ Counter.next_num counter
-
-let rec breakup_patterns ~counter ~vars (pattern : pattern) (expr : expr) =
+and breakup_patterns ~counter ~vars (pattern : pattern) (expr : expr) =
   let rep = breakup_patterns ~counter ~vars in
   let enqueue_new expanded_expr =
     let var = unique_name counter in
     Stack.push vars (var, expanded_expr);
-    var
+    empty_path var
   in
   match pattern with
   | `Bool _ | `Float _ | `Char _ | `String _ | `Int _ | `Null ->
     raise (Refutable_pattern (Sexp.to_string_hum [%sexp (pattern : pattern)]))
   | `Var name -> Stack.push vars (name, expand_expr ~counter expr)
   | `Unit ->
-    (ignore : string -> unit)
+    (ignore : string path -> unit)
       (enqueue_new (`Typed (expand_expr ~counter expr, `Unit)))
   | `Tuple l ->
     let var = enqueue_new (expand_expr ~counter expr) in
@@ -317,7 +350,7 @@ let rec breakup_patterns ~counter ~vars (pattern : pattern) (expr : expr) =
       enqueue_new (`Assert_struct (type_name, expand_expr ~counter expr))
     in
     List.iter l ~f:(fun (field, opt_p) ->
-      let expr = `Field_access (`Var var, field) in
+      let expr = `Field_access (`Var var, { type_name with inner = field }) in
       let p = Option.value opt_p ~default:(`Var field) in
       rep p expr)
   | `Typed (p, type_expr) ->
@@ -331,7 +364,7 @@ let rec breakup_patterns ~counter ~vars (pattern : pattern) (expr : expr) =
        in
        rep p (`Var var)
      | None ->
-       (ignore : string -> unit)
+       (ignore : string path -> unit)
          (enqueue_new
             (`Assert_empty_enum_field (name, expand_expr ~counter expr))))
 
@@ -389,16 +422,14 @@ and expand_expr ~counter (expr : expr) : expanded_expr =
   | `Let (p, a, b) ->
     let init = expand_expr ~counter b in
     expand_let ~counter ~init (p, a)
-;;
 
-let function_arg_set ~init l =
+and function_arg_set ~init l =
   List.fold l ~init ~f:(fun acc ->
       function
       | `Untyped s -> Set.add acc s
       | `Typed (s, _) -> Set.add acc s)
-;;
 
-let rec pattern_vars p ~locals =
+and pattern_vars p ~locals =
   match p with
   | `Bool _ | `Float _ | `Char _ | `String _ | `Int _ | `Null -> locals
   | `Var s -> Set.add locals s
@@ -416,26 +447,24 @@ let rec pattern_vars p ~locals =
     (match p with
      | Some p -> pattern_vars p ~locals
      | None -> locals)
-;;
 
-let rec traverse_expr
-  ~glob_vars
-  ~not_found_vars
-  ~edge
-  ~locals
-  (expr : expanded_expr)
-  =
-  let rep = traverse_expr ~glob_vars ~not_found_vars ~edge in
+and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
+  let rep = traverse_expr ~state ~not_found_vars ~edge in
   match expr with
   | `Bool _ | `Int _ | `Float _ | `Char _ | `String _ | `Enum _ | `Unit | `Null
   | `Size_of (`Type _) -> ()
-  | `Var name' ->
+  | `Var { inner = name'; module_path = [] } ->
     (match Set.mem locals name' with
      | true -> ()
      | false ->
        Var.(edge.used_globals <- Set.add edge.used_globals name');
-       if not (Hashtbl.mem glob_vars name')
+       if not (Hashtbl.mem state.Type_state.current_module.glob_vars name')
        then Hash_set.add not_found_vars name')
+  | `Var ({ inner; module_path } as var) ->
+    let f module_t = Hashtbl.find module_t.Type_state.glob_vars inner in
+    (match find_module_in_submodules ~try_make_module ~state ~f module_path with
+     | Some _ -> ()
+     | None -> raise (Unbound_var var))
   | `Match (a, l) ->
     rep ~locals a;
     List.iter l ~f:(fun (p, e) -> rep ~locals:(pattern_vars p ~locals) e)
@@ -466,90 +495,152 @@ let rec traverse_expr
     List.iter l ~f:(fun (field_name, o) ->
       match o with
       | Some p -> rep ~locals p
-      | None -> rep ~locals (`Var field_name))
+      | None -> rep ~locals (`Var { inner = field_name; module_path = [] }))
   | `If (a, b, c) ->
     rep ~locals a;
     rep ~locals b;
     rep ~locals c
-;;
 
-let process_toplevel_graph (toplevels : toplevel list) =
-  let state = Type_state.create () in
+and process_module ~state filename =
+  match Hashtbl.find state.Type_state.seen_modules filename with
+  | Some (Type_state.{ in_eval = false; _ } as m) -> m
+  | Some { in_eval = true; _ } ->
+    raise
+      (Module_cycle
+         { offending_module = filename
+         ; from_module = state.current_module.name
+         })
+  | None ->
+    In_channel.with_file filename ~f:(fun chan ->
+      let lexbuf = Lexing.from_channel chan in
+      Frontend.parse_and_do lexbuf ~f:(fun toplevels ->
+        let module_t = Type_state.module_create filename in
+        module_t.in_eval <- true;
+        let state = Type_state.push_module ~module_t state in
+        let _ = process_toplevel_graph ~state toplevels in
+        module_t.in_eval <- false;
+        module_t))
+
+and process_module_path ~state path =
+  match path with
+  | fst :: rest ->
+    let filename = [%string "%{fst}.el2"] in
+    let in_ = process_module ~state filename in
+    Type_state.lookup_module_in_exn ~in_ rest
+  | _ -> failwith "impossible"
+
+and process_toplevel_graph ~state (toplevels : toplevel list) =
   let type_defs = String.Table.create () in
   let let_toplevels = Queue.create () in
-  List.iter toplevels ~f:(function
-    | `Let_type ((repr_name, ty_vars), type_decl) ->
-      (match
-         Hashtbl.add
-           state.types
-           ~key:repr_name
-           ~data:(make_user_type ~repr_name ~ty_vars)
-       with
-       | `Ok ->
-         Hashtbl.add_exn type_defs ~key:repr_name ~data:(ty_vars, type_decl)
-       | `Duplicate -> raise (Duplicate_type_name repr_name))
-    | x -> Queue.enqueue let_toplevels x);
+  let _ =
+    List.fold toplevels ~init:[] ~f:(fun acc ->
+        function
+        | `Open path ->
+          let nek = process_module_path ~state path in
+          Queue.enqueue let_toplevels (`Open nek);
+          nek :: acc
+        | `Let_type ((repr_name, ty_vars), type_decl) ->
+          (match
+             Hashtbl.add
+               state.Type_state.current_module.types
+               ~key:repr_name
+               ~data:(make_user_type ~repr_name ~ty_vars)
+           with
+           | `Ok ->
+             Hashtbl.add_exn
+               type_defs
+               ~key:repr_name
+               ~data:(ty_vars, type_decl, acc)
+           | `Duplicate -> raise (Duplicate_type_name repr_name));
+          acc
+        | `Let_fn x ->
+          Queue.enqueue let_toplevels (`Let_fn x);
+          acc
+        | `Let x ->
+          Queue.enqueue let_toplevels (`Let x);
+          acc
+        | `Extern x ->
+          Queue.enqueue let_toplevels (`Extern x);
+          acc
+        | `Implicit_extern x ->
+          Queue.enqueue let_toplevels (`Implicit_extern x);
+          acc)
+  in
   let not_found_vars = String.Hash_set.create () in
   process_types ~state type_defs;
-  let find_references ~edge ~locals expr =
+  let find_references ~edge ~state ~locals expr =
     let open Var in
-    match Hashtbl.find state.glob_vars edge.name with
+    match Hashtbl.find state.Type_state.current_module.glob_vars edge.name with
     | Some _ -> raise (Duplicate_type_name edge.name)
     | None ->
-      Hashtbl.add_exn state.glob_vars ~key:edge.name ~data:(Var.El edge);
+      Hashtbl.add_exn
+        state.current_module.glob_vars
+        ~key:edge.name
+        ~data:(Var.El edge);
       Hash_set.remove not_found_vars edge.name;
-      traverse_expr
-        ~glob_vars:state.glob_vars
-        ~not_found_vars
-        ~edge
-        ~locals
-        expr
+      traverse_expr ~state ~not_found_vars ~edge ~locals expr
   in
-  Queue.iter let_toplevels ~f:(function
-    | `Let_fn (name, vars, expr) ->
-      let expr = expand_expr ~counter:state.var_counter expr in
-      let var_decls =
-        List.map vars ~f:(function
-          | `Typed (s, e) -> s, mono_of_type_expr ~state e
-          | `Untyped s -> s, make_indir ())
-      in
-      let edge =
-        Var.create_func
-          ~ty_var_counter:state.ty_var_counter
-          ~name
-          ~expr
-          ~var_decls
-      in
-      find_references
-        ~edge
-        ~locals:(function_arg_set ~init:String.Set.empty vars)
-        expr
-    | `Let (pattern, expr) ->
-      let vars = Stack.create () in
-      breakup_patterns ~counter:state.var_counter ~vars pattern expr;
-      Stack.iter vars ~f:(fun (name, expr) ->
-        let edge =
-          Var.create_non_func ~ty_var_counter:state.ty_var_counter ~name ~expr
-        in
-        find_references ~edge ~locals:String.Set.empty expr)
-    | `Extern (name, t, extern_name) ->
-      let mono = mono_of_type_expr ~state t in
-      let edge = Var.Extern (name, extern_name, mono) in
-      (match Hashtbl.add state.glob_vars ~key:name ~data:edge with
-       | `Ok -> ()
-       | _ -> raise (Duplicate_type_name name))
-    | `Implicit_extern (name, t, extern_name) ->
-      let mono = mono_of_type_expr ~state t in
-      let edge = Var.Implicit_extern (name, extern_name, mono) in
-      (match Hashtbl.add state.glob_vars ~key:name ~data:edge with
-       | `Ok -> ()
-       | _ -> raise (Duplicate_type_name name))
-    | _ -> failwith "impossible");
+  let _ =
+    Queue.fold let_toplevels ~init:[] ~f:(fun opened_modules ->
+        function
+        | `Open m -> m :: opened_modules
+        | `Let_fn (name, vars, expr) ->
+          let expr = expand_expr ~counter:state.var_counter expr in
+          let var_decls =
+            List.map vars ~f:(function
+              | `Typed (s, e) -> s, mono_of_type_expr ~state e
+              | `Untyped s -> s, make_indir ())
+          in
+          let edge =
+            Var.create_func
+              ~ty_var_counter:state.ty_var_counter
+              ~name
+              ~expr
+              ~var_decls
+              ~data:opened_modules
+          in
+          find_references
+            ~state:{ state with opened_modules }
+            ~edge
+            ~locals:(function_arg_set ~init:String.Set.empty vars)
+            expr;
+          opened_modules
+        | `Let (pattern, expr) ->
+          let vars = Stack.create () in
+          breakup_patterns ~counter:state.var_counter ~vars pattern expr;
+          Stack.iter vars ~f:(fun (name, expr) ->
+            let edge =
+              Var.create_non_func
+                ~ty_var_counter:state.ty_var_counter
+                ~name
+                ~expr
+                ~data:opened_modules
+            in
+            find_references ~state ~edge ~locals:String.Set.empty expr);
+          opened_modules
+        | `Extern (name, t, extern_name) ->
+          let mono = mono_of_type_expr ~state t in
+          let edge = Var.Extern (name, extern_name, mono) in
+          (match
+             Hashtbl.add state.current_module.glob_vars ~key:name ~data:edge
+           with
+           | `Ok -> opened_modules
+           | _ -> raise (Duplicate_type_name name))
+        | `Implicit_extern (name, t, extern_name) ->
+          let mono = mono_of_type_expr ~state t in
+          let edge = Var.Implicit_extern (name, extern_name, mono) in
+          (match
+             Hashtbl.add state.current_module.glob_vars ~key:name ~data:edge
+           with
+           | `Ok -> opened_modules
+           | _ -> raise (Duplicate_type_name name)))
+  in
   match Hash_set.is_empty not_found_vars with
   | false ->
     raise
       (Unbound_var
-         (Hash_set.find ~f:(Fn.const true) not_found_vars |> Option.value_exn))
+         (empty_path
+            (Hash_set.find ~f:(Fn.const true) not_found_vars |> Option.value_exn)))
   | true -> state
 ;;
 
@@ -746,9 +837,9 @@ let rec mono_of_var ~state name =
   match Map.find state.Type_state.locals name with
   | Some x -> `Local x
   | None ->
-    (match Hashtbl.find state.Type_state.glob_vars name with
+    (match Hashtbl.find state.Type_state.current_module.glob_vars name with
      | Some var -> infer_var ~state var
-     | None -> raise (Unbound_var name))
+     | None -> raise (Unbound_var (empty_path name)))
 
 and infer_var ~state var =
   match var with
@@ -849,10 +940,14 @@ and type_expr_ ~res_type ~state expr : Typed_ast.expr =
   | `Char c -> `Char c, `Char
   | `String s -> `String s, `Pointer `Char
   | `Unit -> `Unit, `Unit
-  | `Var name ->
+  | `Var { inner = name; module_path = [] } ->
     (match mono_of_var ~state name with
      | `Global (mono, inst_map) -> `Glob_var (name, inst_map), mono
      | `Local mono -> `Local_var name, mono)
+  | `Var p ->
+    let var = lookup_var ~state p in
+    let mono, inst_map = infer_var ~state var in
+    `Glob_var (p.inner, inst_map), mono
   | `Array_lit l ->
     let init = make_indir () in
     let res_type, l' =

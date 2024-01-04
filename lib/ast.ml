@@ -1,8 +1,36 @@
 open! Core
 
-type name = string module_path
-and upper_name = string module_path
-and 'a module_path = 'a
+type 'a path =
+  { module_path : string list
+  ; inner : 'a
+  }
+[@@deriving compare, equal]
+
+let empty_path inner = { module_path = []; inner }
+
+let path_fst = function
+  | { module_path = []; inner } -> inner
+  | { module_path = a :: _; _ } -> a
+
+let sexp_of_path sexp_of_inner { module_path; inner } =
+  Sexp.List
+    (sexp_of_inner inner :: List.map module_path ~f:(fun x -> Sexp.Atom x))
+;;
+
+let path_of_sexp inner_of_sexp sexp =
+  match sexp with
+  | Sexp.List (inner :: module_path) ->
+    { module_path =
+        List.map module_path ~f:(function
+          | Sexp.Atom x -> x
+          | _ -> failwith "path_of_sexp: expected atom")
+    ; inner = inner_of_sexp inner
+    }
+  | _ -> failwith "path_of_sexp: expected list"
+;;
+
+type name = string
+and upper_name = string
 
 and type_decl =
   [ `Alias of type_expr
@@ -12,8 +40,8 @@ and type_decl =
 
 and type_expr =
   [ `Unit
-  | `Named of name
-  | `Named_args of name * type_expr list
+  | `Named of name path
+  | `Named_args of name path * type_expr list
   | `Tuple of type_expr list
   | `Function of type_expr * type_expr
   | `Pointer of type_expr
@@ -37,8 +65,8 @@ type pattern =
   [ builtin_pattern
   | `Var of name
   | `Tuple of pattern list
-  | `Enum of upper_name * pattern option
-  | `Struct of name (* typename *) * (string * pattern option) list
+  | `Enum of upper_name path * pattern option
+  | `Struct of name path (* typename *) * (string * pattern option) list
   | `Typed of pattern * type_expr
   | `Ref of pattern
   ]
@@ -57,18 +85,18 @@ and expr =
   | `String of string
   | `Bool of bool
   | `Char of char
-  | `Var of name
+  | `Var of name path
   | `Assert of expr
   | `Tuple of expr list
-  | `Enum of upper_name
-  | `Struct of name * (string * expr option) list
+  | `Enum of upper_name path
+  | `Struct of name path * (string * expr option) list
   | `Apply of expr * expr
   | `Inf_op of inf_op * expr * expr
   | `Pref_op of pref_op * expr
   | `Deref of expr (* prefix * *)
   | `Ref of expr (* prefix & *)
   | `Tuple_access of expr * int (* postfix . *)
-  | `Field_access of expr * string (* postfix . *)
+  | `Field_access of expr * string path (* postfix . *)
   | `Index of expr * expr (* postfix [] *)
   | `If of expr * expr * expr
   | `Match of expr * (pattern * expr) list
@@ -79,8 +107,7 @@ and expr =
   | `Unsafe_cast of expr (* sizeof[type_expr] or sizeof(expr) *)
   | `Size_of of [ `Type of type_expr | `Expr of expr ]
   | `Return of expr
-  | `Array_lit of
-    expr list
+  | `Array_lit of expr list
   ]
 
 and compound_inner =
@@ -120,6 +147,7 @@ and toplevel =
   | `Let_type of type_def
   | `Extern of string * type_expr * string
   | `Implicit_extern of string * type_expr * string
+  | `Open of string list
   ]
 [@@deriving sexp, compare]
 

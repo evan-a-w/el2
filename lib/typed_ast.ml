@@ -1,16 +1,48 @@
 open! Core
 open! Ast
 open! Types
+open Type_common
 
-type name = string module_path
-and upper_name = string module_path
-and 'a module_path = 'a
-(* for now no modules, but in future will be list of qualifiers then 'a,
-   with syntax moda::modb::a *)
+type type_check_state =
+  [ `Untouched
+  | `In_checking
+  | `Done
+  ]
+[@@deriving sexp, compare]
+type scc_state =
+  { (* Stuff for Tarjan's SCC algo *)
+    mutable index : int option
+  ; mutable lowlink : int
+  ; mutable on_stack : bool
+  }
+[@@deriving sexp, compare]
+
+type 'data var =
+  { name : string
+  ; data : 'data
+  ; mutable args : [ `Non_func | `Func of (string * mono) list ]
+  ; expr : expanded_expr
+  ; mutable typed_expr : 'data gen_expr option
+  ; mutable poly : poly
+  ; mutable used_globals : String.Set.t
+  ; mutable scc : 'data scc
+  ; mutable scc_st : scc_state
+  ; unique_name : string
+  }
+
+and 'data top_var =
+  | El of 'data var
+  | Extern of string * string * mono
+  | Implicit_extern of string * string * mono
+
+and 'data scc =
+  { vars : 'data var Stack.t [@compare.ignore]
+  ; mutable type_check_state : type_check_state
+  }
 
 and var_decl = string * mono
 
-and expr_inner =
+and 'a expr_inner =
   [ `Unit
   | `Null
   | `Int of int
@@ -18,50 +50,50 @@ and expr_inner =
   | `String of string
   | `Bool of bool
   | `Char of char
-  | `Glob_var of string * mono String.Map.t option
+  | `Glob_var of 'a top_var * mono String.Map.t option
   | `Local_var of string
-  | `Tuple of expr list
-  | `Enum of upper_name * expr option
-  | `Struct of name * (string * expr) list
-  | `Apply of expr * expr
-  | `Inf_op of inf_op * expr * expr
-  | `Pref_op of pref_op * expr
-  | `Deref of expr (* prefix * *)
-  | `Ref of expr (* prefix & *)
-  | `Tuple_access of expr * int (* postfix . *)
-  | `Field_access of expr * string (* postfix . *)
-  | `Index of expr * expr (* postfix [] *)
-  | `If of expr * expr * expr
-  | (* getting this is where we process match expressions *)
-    (* | `Match of expr * (pattern * expr) list *)
+  | `Tuple of 'a expr list
+  | `Enum of string * 'a expr option
+  | `Struct of string * (string * 'a expr) list
+  | `Apply of 'a expr * 'a expr
+  | `Inf_op of inf_op * 'a expr * 'a expr
+  | `Pref_op of pref_op * 'a expr
+  | `Deref of 'a expr (* prefix * *)
+  | `Ref of 'a expr (* prefix & *)
+  | `Tuple_access of 'a expr * int
+  | `Field_access of 'a expr * string (* postfix . *)
+  | `Index of 'a expr * 'a expr (* postfix [] *)
+  | `If of 'a expr * 'a expr * 'a expr
+  | (* getting this is where we process match 'a expressions *)
+    (* | `Match of 'a expr * (pattern * 'a expr) list *)
     `Let of
-    string * expr * expr
-  | `Assign of expr * expr
-  | `Compound of expr
-  | `Access_enum_field of string * expr
-  | `Check_variant of string * expr
-  | `Assert of expr
-  | `Unsafe_cast of expr
-  | `Return of expr
-  | `Array_lit of expr list
+    string * 'a expr * 'a expr
+  | `Assign of 'a expr * 'a expr
+  | `Compound of 'a expr
+  | `Access_enum_field of string * 'a expr
+  | `Check_variant of string * 'a expr
+  | `Assert of 'a expr
+  | `Unsafe_cast of 'a expr
+  | `Return of 'a expr
+  | `Array_lit of 'a expr list
   | `Size_of of mono
   ]
 
-and expr = expr_inner * mono
-and gen_expr = expr_inner * poly
+and 'a expr = 'a expr_inner * mono
+and 'a gen_expr = 'a expr_inner * poly
 
-and mem_assignable_expr =
-  [ `Deref of expr
-  | `Glob_var of name * mono String.Map.t option ref
-  | `Local_var of name
-  | `Index of expr * expr
-  | `Field_access of expr * string
+and 'a mem_assignable_expr =
+  [ `Deref of 'a expr
+  | `Glob_var of string * mono String.Map.t option ref
+  | `Local_var of string
+  | `Index of 'a expr * 'a expr
+  | `Field_access of 'a expr * string
   ]
 [@@deriving sexp, compare]
 
 let rec go_expr_map_rec
   ~user_type_mem
-  ((expr_inner : expr_inner), (mono : mono))
+  ((expr_inner : 'a expr_inner), (mono : mono))
   ~on_expr_inner
   ~on_mono
   =
@@ -205,7 +237,7 @@ let rec decompose_into_pattern mono ~make_a : 'a pattern_branches =
 
 let rec expr_map_monos (expr_inner, mono) ~f =
   let expr_inner =
-    match (expr_inner : expr_inner) with
+    match (expr_inner : _ expr_inner) with
     | `Unsafe_cast e -> `Unsafe_cast (expr_map_monos ~f e)
     | `Array_lit l -> `Array_lit (List.map l ~f:(expr_map_monos ~f))
     | `Tuple l -> `Tuple (List.map l ~f:(expr_map_monos ~f))
@@ -243,4 +275,37 @@ let rec expr_map_monos (expr_inner, mono) ~f =
     | `Local_var _ -> expr_inner
   in
   expr_inner, f mono
+;;
+
+let var var = El var
+
+let create_func ~ty_var_counter:_ ~name ~expr ~var_decls ~data ~unique_name =
+  { name
+  ; unique_name
+  ; expr
+  ; data
+  ; args = `Func var_decls
+  ; used_globals = String.Set.empty
+  ; typed_expr = None
+  ; poly =
+      (let a = make_indir () in
+       let b = make_indir () in
+       `Mono (`Function (a, b)))
+  ; scc = { vars = Stack.create (); type_check_state = `Untouched }
+  ; scc_st = { on_stack = false; lowlink = -1; index = None }
+  }
+;;
+
+let create_non_func ~ty_var_counter:_ ~name ~expr ~data ~unique_name =
+  { name
+  ; unique_name
+  ; expr
+  ; data
+  ; typed_expr = None
+  ; args = `Non_func
+  ; used_globals = String.Set.empty
+  ; poly = `Mono (make_indir ())
+  ; scc = { vars = Stack.create (); type_check_state = `Untouched }
+  ; scc_st = { on_stack = false; lowlink = -1; index = None }
+  }
 ;;

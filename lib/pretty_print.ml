@@ -148,7 +148,14 @@ let pref_op (op : Ast.pref_op) : PPrint.document =
 
 let wrap x = lparen ^^ x ^^ rparen
 
-let rec typed_ast (t : Typed_ast.expr) =
+let top_var (var : _ Typed_ast.top_var) : PPrint.document =
+  match var with
+  | Typed_ast.El { name; _ }
+  | Typed_ast.Extern (name, _, _)
+  | Typed_ast.Implicit_extern (name, _, _) -> string name
+;;
+
+let rec typed_ast (t : _ Typed_ast.expr) =
   let expr_inner =
     match fst t with
     | `Unit -> string "()"
@@ -158,7 +165,7 @@ let rec typed_ast (t : Typed_ast.expr) =
     | `String s -> "\"" ^ s ^ "\"" |> string
     | `Bool b -> Bool.to_string b |> string
     | `Char c -> "'" ^ Char.to_string c ^ "'" |> string
-    | `Glob_var (s, _) -> string s
+    | `Glob_var (var, _) -> top_var var
     | `Local_var s -> string s
     | `Array_lit l ->
       let inner = List.map l ~f:typed_ast |> separate (semi ^^ space) in

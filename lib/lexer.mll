@@ -37,6 +37,7 @@ rule read =
   | "sizeof" { SIZE_OF }
   | "assert" { ASSERT }
   | "match"  { MATCH }
+  | "open"   { OPEN }
   | "with"   { WITH }
   | "unsafe_cast"   { UNSAFE_CAST }
   | "extern"   { EXTERN }
