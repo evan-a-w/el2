@@ -2,7 +2,7 @@ open Stdlib
 open Primes
 open Types
 
-type hashmap_error :=
+type error :=
   | Not_found
   | Duplicate
   | Failed_allocation
@@ -20,11 +20,11 @@ type bucket(key, data) := {
 }
 
 [* load out of 1000 *]
-let hashmap_max_load := 600
-let hashmap_min_load_after_remove := 100
-let hashmap_min_capacity := 17
+let max_load := 600
+let min_load_after_remove := 100
+let min_capacity := 17
 
-type hashmap(key, data) := {
+type t(key, data) := {
   size : i64;
   capacity : i64;
   buckets : &bucket(key, data);
@@ -32,23 +32,23 @@ type hashmap(key, data) := {
   compare_fn : (&key, &key) -> bool
 }
 
-let hashmap_create(hash_fn, compare_fn) :=
-  #hashmap { size : 0; capacity : 0; buckets : null; hash_fn; compare_fn }
+let create(hash_fn, compare_fn) :=
+  #t { size : 0; capacity : 0; buckets : null; hash_fn; compare_fn }
   
 
 let bucket_compare(t, key, h, i) :=
   t^.buckets[i].hash == h && t^.compare_fn(&t^.buckets[i].key, key)
 
-let hashmap_insert_elements(t, old_buckets, old_capacity, i) := {
+let insert_elements(t, old_buckets, old_capacity, i) := {
   if i >= old_capacity then return(());
   (match old_buckets[i].state with
-  | Bucket_used -> { hashmap_insert(t, old_buckets[i].key, old_buckets[i].data); () }
+  | Bucket_used -> { insert(t, old_buckets[i].key, old_buckets[i].data); () }
   | _ -> ());
-  hashmap_insert_elements(t, old_buckets, old_capacity, i + 1)
+  insert_elements(t, old_buckets, old_capacity, i + 1)
 }
 
-let hashmap_resize(t, new_capacity) := {
-  new_capacity = max(new_capacity, hashmap_min_capacity);
+let resize(t, new_capacity) := {
+  new_capacity = max(new_capacity, min_capacity);
   new_capacity = nearest_prime(new_capacity);
 
   let new_buckets := alloc_zeroed(new_capacity, sizeof(t^.buckets[0]));
@@ -61,18 +61,18 @@ let hashmap_resize(t, new_capacity) := {
   t^.capacity = new_capacity;
   t^.buckets = new_buckets;
 
-  hashmap_insert_elements(t, old_buckets, old_capacity, 0);
+  insert_elements(t, old_buckets, old_capacity, 0);
 
   free(old_buckets);
   Ok(())
 }
 
-type hashmap_insert_result(data) :=
-  | Hashmap_duplicate(&data)
-  | Hashmap_inserted(&data)
-  | Hashmap_failed(hashmap_error)
+type insert_result(data) :=
+  | Insert_duplicate(&data)
+  | Inserted(&data)
+  | Insert_failed(error)
 
-let hashmap_insert_loop(t, key, h, cnt, i, found_dead, dead_i)
+let insert_loop(t, key, h, cnt, i, found_dead, dead_i)
   : result(i64, &_)
 = {
   if cnt >= t^.capacity then return(Ok(if found_dead then dead_i else i));
@@ -90,44 +90,44 @@ let hashmap_insert_loop(t, key, h, cnt, i, found_dead, dead_i)
       }
     };
 
-  hashmap_insert_loop(t, key, h, cnt + 1, (i + 1) % t^.capacity, found_dead, dead_i)
+  insert_loop(t, key, h, cnt + 1, (i + 1) % t^.capacity, found_dead, dead_i)
 }
 
-let hashmap_insert(t, key, data) : hashmap_insert_result(_) = {
+let insert(t, key, data) : insert_result(_) = {
   let sz := max(t^.size, 1);
   let load := sz * 1000 / max(t^.capacity, 1);
-  if load > hashmap_max_load then {
-    match hashmap_resize(t, sz * 2) with
+  if load > max_load then {
+    match resize(t, sz * 2) with
     | Ok(()) -> ()
-    | Err(e) -> return(Hashmap_failed(e))
+    | Err(e) -> return(Insert_failed(e))
   };
 
   let h := t^.hash_fn(&key);
   let index := h % t^.capacity;
-  match hashmap_insert_loop(t, key, h, 0, index, false, 0) with
-  | Err(e) -> Hashmap_duplicate(e)
+  match insert_loop(t, key, h, 0, index, false, 0) with
+  | Err(e) -> Insert_duplicate(e)
   | Ok(i) -> {
       t^.buckets[i].hash = h;
       t^.buckets[i].state = Bucket_used;
       t^.buckets[i].key = key;
       t^.buckets[i].data = data;
       t^.size = t^.size + 1;
-      Hashmap_inserted(&t^.buckets[i].data)
+      Inserted(&t^.buckets[i].data)
     }
 }
 
-let hashmap_find(t, key) := {
+let find(t, key) := {
   let hash := t^.hash_fn(&key);
 
-  hashmap_find_helper(t, key, hash, hash % t^.capacity, 0)
+  find_helper(t, key, hash, hash % t^.capacity, 0)
 }
 
-type hashmap_iterator(key, data) := {
+type iterator(key, data) := {
   index : i64;
-  t : &hashmap(key, data)
+  t : &t(key, data)
 }
 
-let hashmap_iterator_next(state) := {
+let iterator_next(state) := {
   if state^.index >= state^.t^.capacity then
     return(None);
   let i := state^.index;
@@ -136,11 +136,11 @@ let hashmap_iterator_next(state) := {
   | Bucket_used -> {
       Some((&state^.t^.buckets[i].key, &state^.t^.buckets[i].data))
     }
-  | _ -> hashmap_iterator_next(state)
+  | _ -> iterator_next(state)
 }
 
 [* pre: cap != 0 *]
-let hashmap_remove_helper(t, key, initial_index, h, i) := {
+let remove_helper(t, key, initial_index, h, i) := {
   (match t^.buckets[i].state with
   | Bucket_free -> return(None)
   | Bucket_used -> { if bucket_compare(t, &key, h, i) then return(Some(i)) }
@@ -151,23 +151,23 @@ let hashmap_remove_helper(t, key, initial_index, h, i) := {
   if i == initial_index then
     None
   else
-    hashmap_remove_helper(t, key, initial_index, h, i)
+    remove_helper(t, key, initial_index, h, i)
 }
 
-let hashmap_remove(t, key) := {
+let remove(t, key) := {
   if t^.capacity == 0 then return(None);
 
   let h := t^.hash_fn(&key);
   let i := h % t^.capacity;
-  match hashmap_remove_helper(t, key, i, h, i) with
+  match remove_helper(t, key, i, h, i) with
   | None -> None
   | Some(x) -> {
       let new_load := (t^.size - 1) * 1000 / t^.capacity;
-      let min_load := (t^.size - 1) * 1000 / hashmap_min_capacity;
+      let min_load := (t^.size - 1) * 1000 / min_capacity;
 
-      if new_load < min_load && new_load < hashmap_min_load_after_remove then {
-        match hashmap_resize(t, max(t^.size - 1, 1) * 2) with
-	| Ok(_) -> return(hashmap_remove(t, key))
+      if new_load < min_load && new_load < min_load_after_remove then {
+        match resize(t, max(t^.size - 1, 1) * 2) with
+	| Ok(_) -> return(remove(t, key))
 	| _ [* if allocation fails, just don't resize *] -> ()
       };
 
@@ -179,14 +179,14 @@ let hashmap_remove(t, key) := {
     }
 }
 
-let hashmap_iterator(t) := #hashmap_iterator { index : 0; t : t }
+let iterator(t) := #iterator { index : 0; t : t }
 
-let hashmap_destroy(t) := free(t^.buckets)
+let destroy(t) := free(t^.buckets)
 
-let hashmap_find_helper(t, key, hash, i, it) := {
+let find_helper(t, key, hash, i, it) := {
   if it >= t^.capacity || t^.buckets[i].state != Bucket_free then
     return(null);
   if t^.buckets[i].state == Bucket_used && bucket_compare(t, &key, hash, i) then
     return(&t^.buckets[i]);
-  hashmap_find_helper(t, key, hash, (i + 1) % t^.capacity, it + 1)
+  find_helper(t, key, hash, (i + 1) % t^.capacity, it + 1)
 }

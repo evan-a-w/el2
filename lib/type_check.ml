@@ -288,20 +288,26 @@ module Type_state = struct
       lookup_module_in_exn names ~in_:state.current_module
   ;;
 
-  let try_on_all_modules state ~f ~on_first =
+  let try_on_all_modules state ~try_make_module ~module_path ~f =
     let rec loop opened_modules =
       match opened_modules with
       | [] -> None
       | module_t :: opened_modules ->
-        (match f module_t with
+        (match f module_path module_t with
          | Some _ as res -> res
          | None -> loop opened_modules)
     in
-    match f state.current_module with
-    | None ->
-      on_first ();
-      loop state.opened_modules
+    match f module_path state.current_module with
     | Some _ as res -> res
+    | None ->
+      let on_newly_created =
+        match module_path with
+        | [] -> None
+        | fst :: rest -> Option.bind (try_make_module ~state fst) ~f:(f rest)
+      in
+      (match on_newly_created with
+       | Some _ as res -> res
+       | None -> loop state.opened_modules)
   ;;
 end
 
@@ -337,11 +343,12 @@ let get_non_user_type ~make_ty_vars ~state name =
 
 let find_module_in_submodules ~state ~try_make_module ~f module_path =
   Type_state.try_on_all_modules
-    ~f:(fun module_t ->
+    ~f:(fun module_path module_t ->
       match Type_state.lookup_module_in ~in_:module_t module_path with
       | Error _ -> None
       | Ok module_t -> f module_t)
-    ~on_first:(try_make_module ~state module_path)
+    ~try_make_module
+    ~module_path
     state
 ;;
 
@@ -438,16 +445,13 @@ let state_add_local state ~name ~mono =
   }
 ;;
 
-let rec try_make_module ~state module_path () =
-  match module_path with
-  | fst :: _ ->
-    let filename =
-      el2_file (Filename.dirname state.Type_state.current_module.filename) fst
-    in
-    (match Stdlib.Sys.file_exists filename with
-     | false -> ()
-     | true -> ignore (process_module ~state filename))
-  | _ -> ()
+let rec try_make_module ~state name =
+  let filename =
+    el2_file (Filename.dirname state.Type_state.current_module.filename) name
+  in
+  match Stdlib.Sys.file_exists filename with
+  | false -> None
+  | true -> Some (process_module ~state filename)
 
 and inst_user_type_exn inst_user_type =
   get_insted_user_type inst_user_type
