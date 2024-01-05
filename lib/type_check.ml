@@ -120,6 +120,7 @@ module Type_state = struct
       ; variant_to_type : user_type String.Table.t
       ; field_to_type : user_type String.Table.t
       ; mutable in_eval : bool
+      ; parent : module_t option
       }
     [@@deriving sexp]
 
@@ -151,11 +152,16 @@ module Type_state = struct
       name)
   ;;
 
-  let module_prefix ~state =
+  let module_prefix module_t =
     let buf = Buffer.create 16 in
-    List.iter state.module_stack ~f:(fun m -> Buffer.add_string buf m.name);
-    Buffer.add_string buf state.current_module.name;
-    Buffer.add_char buf '_';
+    let rec go module_t =
+      (match module_t.parent with
+       | None -> ()
+       | Some p -> go p);
+      Buffer.add_string buf module_t.name;
+      Buffer.add_char buf '_'
+    in
+    go module_t;
     Buffer.contents buf
   ;;
 
@@ -166,7 +172,7 @@ module Type_state = struct
   ;;
 
   let make_unique_helper ~state name =
-    let prefix = module_prefix ~state in
+    let prefix = module_prefix state.current_module in
     let name = prefix ^ name in
     let rec loop i =
       let name = name ^ Int.to_string i in
@@ -194,7 +200,7 @@ module Type_state = struct
   ;;
 
   let make_unique_type ~state name =
-    let prefix = module_prefix ~state in
+    let prefix = module_prefix state.current_module in
     let name = prefix ^ name in
     let rec loop i =
       let name = name ^ Int.to_string i in
@@ -220,6 +226,7 @@ module Type_state = struct
     ; variant_to_type = String.Table.create ()
     ; field_to_type = String.Table.create ()
     ; in_eval = false
+    ; parent = None
     }
   ;;
 
@@ -818,7 +825,9 @@ and process_module ~state filename =
         let module_t = Type_state.module_create filename in
         module_t.in_eval <- true;
         let state = Type_state.push_module ~module_t state in
-        type_check ~state toplevels;
+        type_check
+          ~state:{ state with opened_modules = []; locals = String.Map.empty }
+          toplevels;
         module_t.in_eval <- false;
         module_t))
 
@@ -833,16 +842,23 @@ and process_module_path ~state path =
   | _ -> failwith "impossible"
 
 and type_check ~state toplevels =
-  let state = process_toplevel_graph ~state toplevels in
-  let _ = get_sccs state.Type_state.current_module.glob_vars in
-  Hashtbl.iter state.current_module.glob_vars ~f:(fun var ->
-    let state =
-      match var with
-      | Typed_ast.El { data = opened_modules; _ } ->
-        { state with opened_modules }
-      | _ -> state
-    in
-    ignore (infer_var ~state var))
+  try
+    let state = process_toplevel_graph ~state toplevels in
+    let _ = get_sccs state.Type_state.current_module.glob_vars in
+    Hashtbl.iter state.current_module.glob_vars ~f:(fun var ->
+      let state =
+        match var with
+        | Typed_ast.El { data = opened_modules; _ } ->
+          { state with opened_modules }
+        | _ -> state
+      in
+      ignore (infer_var ~state var))
+  with
+  | Failure s ->
+    print_endline
+      [%string
+        "Fatal error while evaluating %{state.current_module.filename}:\n%{s}"];
+    exit 1
 
 and process_toplevel_graph ~state (toplevels : toplevel list) =
   let type_defs = String.Table.create () in
@@ -864,11 +880,7 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
            with
            | `Ok ->
              Hashtbl.add_exn type_defs ~key:name ~data:(ty_vars, type_decl, acc)
-           | `Duplicate ->
-             failwith
-               [%string
-                 "Duplicate type %{name} in file \
-                  %{state.current_module.filename}"]);
+           | `Duplicate -> failwith [%string "Duplicate type %{name}"]);
           acc
         | `Let_fn x ->
           Queue.enqueue let_toplevels (`Let_fn x);
@@ -1017,9 +1029,8 @@ and mono_of_var ~state name =
   match Map.find state.Type_state.locals name with
   | Some x -> `Local x
   | None ->
-    (match Hashtbl.find state.Type_state.current_module.glob_vars name with
-     | Some var -> `Global (var, infer_var ~state var)
-     | None -> failwith [%string "Unknown variable %{name}"])
+    let var = lookup_var ~state (empty_path name) in
+    `Global (var, infer_var ~state var)
 
 and infer_var ~state (var : Type_state.module_t list Typed_ast.top_var) =
   match var with
@@ -1343,7 +1354,9 @@ and breakup_and_type_pattern ~state ~expr:(e, em) pattern =
     let _ = unify em `F64 in
     let conds = `Inf_op (`Eq, (e, em), (`Float f, `F64)), `Bool in
     conds, (fun expr -> expr), state
-  | `Unit -> true_cond, (fun expr -> expr), state
+  | `Unit ->
+    let _ = unify em `Unit in
+    true_cond, (fun expr -> expr), state
   | `Ref p ->
     let pointer_type, ty_var = make_pointer ~state in
     let em = unify em pointer_type in
@@ -1457,12 +1470,17 @@ let process_and_dump filename =
   Hashtbl.iter state.Type_state.seen_modules ~f:(fun module_t ->
     print_endline [%string "Module %{module_t.name}:"];
     Hashtbl.iter module_t.types ~f:(fun user_type ->
-      print_endline [%string "Inferred %{user_type.repr_name} to be:"];
-      Pretty_print.user_type_p user_type |> Pretty_print.output_endline);
+      print_endline [%string "    Inferred %{user_type.repr_name} to be:"];
+      Pretty_print.user_type_p user_type
+      |> Pretty_print.output_endline ~prefix:"    ");
     Hashtbl.iter module_t.glob_vars ~f:(fun var ->
       match var with
       | Typed_ast.El { name; poly; _ } ->
         print_endline
-          [%string "Inferred %{name} to have type %{show_poly poly}"]
-      | _ -> ()))
+          [%string "    Inferred %{name} to have type %{show_poly poly}"]
+      | Extern (name, _, mono) ->
+        print_endline [%string "    Extern %{name} has type %{show_mono mono}"]
+      | Implicit_extern (name, _, mono) ->
+        print_endline
+          [%string "    Implicit_extern %{name} has type %{show_mono mono}"]))
 ;;

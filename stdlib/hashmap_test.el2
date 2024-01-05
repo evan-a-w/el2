@@ -1,3 +1,5 @@
+open Stdlib
+open Types
 open Hashmap
 
 let main() := {
@@ -105,7 +107,7 @@ let print_int(i) := {
   fputc(unsafe_cast(curr + unsafe_cast("0"[0])), stdout)
 }
 
-let print_string(s) := {
+let print_string(s : &char) := {
   if s^ != unsafe_cast(0) then {
     fputc(unsafe_cast(s^), stdout);
     print_string(&s[1])

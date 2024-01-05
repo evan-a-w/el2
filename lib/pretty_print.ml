@@ -246,7 +246,12 @@ let to_string x =
   Buffer.contents buf
 ;;
 
-let output_endline x = PPrint.ToChannel.pretty 1. 80 stdout (x ^^ hardline)
+let output_endline ?prefix x =
+  let prefix =
+    Option.map prefix ~f:(fun x -> string x) |> Option.value ~default:empty
+  in
+  PPrint.ToChannel.pretty 1. 80 stdout (prefix ^^ x ^^ hardline)
+;;
 
 let print ~name ~poly ~typed_ast:t =
   let doc =
