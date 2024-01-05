@@ -41,9 +41,9 @@ let bucket_compare(t, key, h, i) :=
 
 let hashmap_insert_elements(t, old_buckets, old_capacity, i) := {
   if i >= old_capacity then return(());
-  match old_buckets[i].state with
+  (match old_buckets[i].state with
   | Bucket_used -> { hashmap_insert(t, old_buckets[i].key, old_buckets[i].data); () }
-  | _ -> ();
+  | _ -> ());
   hashmap_insert_elements(t, old_buckets, old_capacity, i + 1)
 }
 

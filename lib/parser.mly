@@ -179,6 +179,10 @@ expr_no_whitespace:
     { (a :> Ast.expr) }
   | expr_wrapped
     { $1 }
+  | l = dot_upper_list; i = ID
+    { `Var Ast.{ module_path = l; inner = i }}
+  | l = dot_upper_list; i = UPPER_ID
+    { `Enum Ast.{ module_path = l; inner = i }}
   | LBRACE; e = compound_expr; RBRACE
     { e }
 
@@ -213,10 +217,6 @@ expr_ops:
     { `Inf_op (o, a, b) }
   | e = expr_ops; DOT; l = dot_upper_list; i = name
     { `Field_access (e, Ast.{ module_path = l ; inner = i }) }
-  | l = dot_upper_list; i = ID
-    { `Var Ast.{ module_path = l; inner = i }}
-  | l = dot_upper_list; i = UPPER_ID
-    { `Enum Ast.{ module_path = l; inner = i }}
   | e = expr_ops; LBRACK; i = expr; RBRACK
     { `Index (e, i) }
   | a = expr_ops; EQUALS; b = expr_ops

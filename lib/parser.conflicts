@@ -1,0 +1,33 @@
+
+** Conflict (shift/reduce) in state 161.
+** Token involved: DOT
+** This state is reached from prog after reading:
+
+LET pattern COLON EQUALS dot_upper_list_rev UPPER_ID
+
+** The derivations that appear below have the following common factor:
+** (The question mark symbol (?) represents the spot where the derivations begin to differ.)
+
+prog 
+list(toplevel) EOF 
+toplevel list(toplevel) 
+let_ 
+LET pattern COLON EQUALS expr 
+                         expr_no_let 
+                         expr_ops 
+                         (?)
+
+** In state 161, looking ahead at DOT, shifting is permitted
+** because of the following sub-derivation:
+
+expr_no_whitespace 
+dot_upper_list_rev ID 
+dot_upper_list_rev UPPER_ID . DOT 
+
+** In state 161, looking ahead at DOT, reducing production
+** expr_no_whitespace -> dot_upper_list_rev UPPER_ID
+** is permitted because of the following sub-derivation:
+
+expr_ops DOT dot_upper_list_rev name // lookahead token appears
+expr_no_whitespace // lookahead token is inherited
+dot_upper_list_rev UPPER_ID . 

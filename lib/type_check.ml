@@ -18,6 +18,8 @@ let rec show_unification_error = function
   | End -> "End"
 ;;
 
+let print_sccs = false
+
 exception Unification_error of unification_error
 
 exception
@@ -769,8 +771,13 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
       |> Option.map ~f:(Fn.const module_t)
     in
     (match find_module_in_submodules ~try_make_module ~state ~f module_path with
-     | None -> Hash_set.add not_found_vars name'
-     | Some module_t when phys_equal state.Type_state.current_module module_t ->
+     | None ->
+       Typed_ast.(edge.used_globals <- Set.add edge.used_globals name');
+       Hash_set.add not_found_vars name'
+     | Some module_t
+       when String.equal
+              state.Type_state.current_module.filename
+              module_t.filename ->
        Typed_ast.(edge.used_globals <- Set.add edge.used_globals name')
      | Some _ -> ())
   | `Match (a, l) ->
@@ -1020,9 +1027,14 @@ and get_sccs glob_vars =
       (match v.scc_st.index with
        | None -> connect v
        | Some _ -> ()));
+  let num = ref 0 in
   Stack.iter res ~f:(fun vars ->
+    if print_sccs then print_endline [%string "SCC %{!num#Int}:"];
+    incr num;
     let scc = { vars; type_check_state = `Untouched } in
-    Stack.iter vars ~f:(fun v -> v.scc <- scc));
+    Stack.iter vars ~f:(fun v ->
+      if print_sccs then print_endline [%string "  %{v.name}"];
+      v.scc <- scc));
   res
 
 and mono_of_var ~state name =
