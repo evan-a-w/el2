@@ -38,7 +38,7 @@ let compile_cmd =
         flag
           "flags"
           (optional_with_default "" string)
-          ~doc:"arbitrary flags for cc"
+          ~doc:"string arbitrary flags for cc"
       and keep_temps = flag "keep-tmps" no_arg ~doc:"Keep temporary files" in
       fun () -> compile ~keep_temps ~filename ~c_flags]
 ;;
@@ -61,7 +61,7 @@ let transpile_cmd =
     ~summary:"output C code"
     [%map_open
       let filename = anon ("filename" %: string)
-      and no_format = flag "no-format" no_arg ~doc:"Don't format the output" in
+      and no_format = flag "no-format" no_arg ~doc:" Don't format the output" in
       fun () -> transpile ~no_format ~filename]
 ;;
 
