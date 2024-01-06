@@ -156,6 +156,7 @@ and toplevel =
   | `Implicit_extern of string * type_expr * string
   | `Open of string list
   | `Open_file of string
+  | `Module_decl of string * toplevel list
   ]
 [@@deriving sexp, compare]
 

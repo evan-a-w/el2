@@ -10,6 +10,7 @@
 
 # ocamlbuild working directory
 _build/
+.build.el2*
 
 # ocamlbuild targets
 *.byte

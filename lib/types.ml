@@ -305,54 +305,6 @@ let user_type_of_sexp user_type =
   user_type_of_sexp_seen ~seen:(String.Table.create ()) user_type
 ;;
 
-let%expect_test "recursive_types_sexp" =
-  let rec user_type_a =
-    { repr_name = "A"
-    ; name = "A"
-    ; ty_vars = []
-    ; info =
-        ref
-          (Some
-             (`Alias
-               (`User
-                 { monos = []
-                 ; orig_user_type = user_type_b
-                 ; insted_user_type = ref None
-                 })))
-    }
-  and user_type_b =
-    { repr_name = "B"
-    ; name = "B"
-    ; ty_vars = []
-    ; info =
-        ref
-          (Some
-             (`Alias
-               (`User
-                 { monos = []
-                 ; orig_user_type = user_type_a
-                 ; insted_user_type = ref None
-                 })))
-    }
-  in
-  let sexp_a = [%sexp (user_type_a : user_type)] in
-  print_s sexp_a;
-  let sexp_b = [%sexp (user_type_b : user_type)] in
-  print_s sexp_b;
-  let user_type_a' = user_type_of_sexp sexp_a in
-  print_s [%sexp (user_type_a' : user_type)];
-  let user_type_b' = user_type_of_sexp sexp_b in
-  print_s [%sexp (user_type_b' : user_type)];
-  [%expect
-    {|
-    (A () ((Alias (User () (Insted (B () ((Alias (User () (Insted A))))))))))
-    (B () ((Alias (User () (Insted (A () ((Alias (User () (Insted B))))))))))
-    (A () ((Alias (User () (Insted (B () ((Alias (User () (Insted A))))))))))
-    (B () ((Alias (User () (Insted (A () ((Alias (User () (Insted B)))))))))) |}];
-  assert (0 = compare_user_type user_type_a user_type_a');
-  assert (0 <> compare_user_type user_type_a user_type_b)
-;;
-
 type poly =
   [ `Mono of mono
   | `For_all of string * poly

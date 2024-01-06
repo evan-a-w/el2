@@ -32,12 +32,12 @@ exception Early_exit
 
 let unel2_file filename =
   try
-    let name = Filename.basename filename in
+    let dir, name = Filename.split filename in
     let rex = Re.Pcre.regexp {|[a-z]([a-z0-9_]*)\.el2$|} in
     let group = Re.Pcre.exec ~rex name in
     let rest = Re.Group.get group 1 in
     let fst_char = name.[0] |> Char.uppercase in
-    [%string "%{fst_char#Char}%{rest}"]
+    dir, [%string "%{fst_char#Char}%{rest}"]
   with
   | _ -> failwith [%string {|Invalid filename: `%{filename}`|}]
 ;;
@@ -116,7 +116,7 @@ module Type_state = struct
 
     type module_t =
       { name : module_name
-      ; filename : string
+      ; dir : string
       ; sub_modules : module_t String.Table.t
       ; glob_vars : module_t list Typed_ast.top_var String.Table.t
       ; types : user_type String.Table.t
@@ -127,11 +127,16 @@ module Type_state = struct
       }
     [@@deriving sexp]
 
+    let rec equal_module_t a b =
+      String.equal a.name b.name
+      && String.equal a.dir b.dir
+      && Option.equal equal_module_t a.parent b.parent
+    ;;
+
     type t =
       { current_module : module_t
-      ; seen_modules : module_t String.Table.t
+      ; seen_files : module_t String.Table.t
       ; opened_modules : module_t list
-      ; module_stack : module_t list
       ; locals : mono String.Map.t
       ; ty_vars : mono String.Map.t
       ; ty_var_counter : Counter.t
@@ -220,40 +225,31 @@ module Type_state = struct
     | true -> loop 0
   ;;
 
-  let module_create filename =
-    { name = unel2_file filename
-    ; filename
+  let module_create ~parent ~name ~dir =
+    { name
+    ; dir
     ; sub_modules = String.Table.create ()
     ; glob_vars = String.Table.create ()
     ; types = default_types ()
     ; variant_to_type = String.Table.create ()
     ; field_to_type = String.Table.create ()
     ; in_eval = false
-    ; parent = None
+    ; parent
     }
   ;;
 
   let create filename =
-    let current_module = module_create filename in
+    let dir, name = unel2_file filename in
+    let current_module = module_create ~parent:None ~name ~dir in
     { current_module
     ; opened_modules = []
-    ; seen_modules =
-        String.Table.of_alist_exn [ current_module.filename, current_module ]
-    ; module_stack = []
+    ; seen_files = String.Table.of_alist_exn [ filename, current_module ]
     ; locals = String.Map.empty
     ; ty_vars = String.Map.empty
     ; ty_var_counter = Counter.create ()
     ; var_counter = Counter.create ()
     ; seen_vars = String.Hash_set.create ()
     ; seen_types = String.Hash_set.create ()
-    }
-  ;;
-
-  let push_module ~module_t t =
-    Hashtbl.set t.seen_modules ~key:module_t.filename ~data:module_t;
-    { t with
-      module_stack = t.current_module :: t.module_stack
-    ; current_module = module_t
     }
   ;;
 
@@ -447,12 +443,10 @@ let state_add_local state ~name ~mono =
 ;;
 
 let rec try_make_module ~state name =
-  let filename =
-    el2_file (Filename.dirname state.Type_state.current_module.filename) name
-  in
+  let filename = el2_file state.Type_state.current_module.dir name in
   match Stdlib.Sys.file_exists filename with
   | false -> None
-  | true -> Some (process_module ~state filename)
+  | true -> Some (process_file ~state filename)
 
 and inst_user_type_exn inst_user_type =
   get_insted_user_type inst_user_type
@@ -782,10 +776,8 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
        Typed_ast.(edge.used_globals <- Set.add edge.used_globals name');
        Hash_set.add not_found_vars name'
      | Some module_t
-       when String.equal
-              state.Type_state.current_module.filename
-              module_t.filename ->
-       Typed_ast.(edge.used_globals <- Set.add edge.used_globals name')
+       when Type_state.equal_module_t state.Type_state.current_module module_t
+       -> Typed_ast.(edge.used_globals <- Set.add edge.used_globals name')
      | Some _ -> ())
   | `Match (a, l) ->
     rep ~locals a;
@@ -825,8 +817,17 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
     rep ~locals b;
     rep ~locals c
 
-and process_module ~state filename =
-  match Hashtbl.find state.Type_state.seen_modules filename with
+and process_module ~state ~module_t toplevels =
+  module_t.Type_state.in_eval <- true;
+  let state = { state with Type_state.current_module = module_t } in
+  type_check
+    ~state:{ state with opened_modules = []; locals = String.Map.empty }
+    toplevels;
+  module_t.in_eval <- false;
+  module_t
+
+and process_file ?parent ~state filename =
+  match Hashtbl.find state.Type_state.seen_files filename with
   | Some (Type_state.{ in_eval = false; _ } as m) -> m
   | Some { in_eval = true; _ } ->
     raise
@@ -838,22 +839,16 @@ and process_module ~state filename =
     In_channel.with_file filename ~f:(fun chan ->
       let lexbuf = Lexing.from_channel chan in
       Frontend.parse_and_do ~filename lexbuf ~f:(fun toplevels ->
-        let module_t = Type_state.module_create filename in
-        module_t.in_eval <- true;
-        let state = Type_state.push_module ~module_t state in
-        type_check
-          ~state:{ state with opened_modules = []; locals = String.Map.empty }
-          toplevels;
-        module_t.in_eval <- false;
-        module_t))
+        let dir, name = unel2_file filename in
+        let module_t = Type_state.module_create ~parent ~name ~dir in
+        Hashtbl.set state.seen_files ~key:filename ~data:module_t;
+        process_module ~state ~module_t toplevels))
 
-and process_module_path ~state path =
+and process_module_path ?parent ~state path =
   match path with
   | fst :: rest ->
-    let filename =
-      el2_file (Filename.dirname state.Type_state.current_module.filename) fst
-    in
-    let in_ = process_module ~state filename in
+    let filename = el2_file state.Type_state.current_module.dir fst in
+    let in_ = process_file ?parent ~state filename in
     Type_state.lookup_module_in_exn ~in_ rest
   | _ -> failwith "impossible"
 
@@ -873,18 +868,21 @@ and type_check ~state toplevels =
   | Failure s ->
     print_endline
       [%string
-        "Fatal error while evaluating %{state.current_module.filename}:\n%{s}"];
+        "Fatal error while evaluating %{state.current_module.name}:\n%{s}"];
     exit 1
 
 and process_toplevel_graph ~state (toplevels : toplevel list) =
   let type_defs = String.Table.create () in
   let let_toplevels = Queue.create () in
-  let curdir = state.Type_state.current_module.filename |> Filename.dirname in
   let _ =
     List.fold toplevels ~init:[] ~f:(fun acc ->
         function
         | `Open_file filename ->
-          let nek = process_module ~state (Filename.concat curdir filename) in
+          let nek =
+            process_file
+              ~state
+              (Filename.concat state.current_module.dir filename)
+          in
           Queue.enqueue let_toplevels (`Open nek);
           nek :: acc
         | `Open path ->
@@ -914,6 +912,9 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
           acc
         | `Implicit_extern x ->
           Queue.enqueue let_toplevels (`Implicit_extern x);
+          acc
+        | `Module_decl (name, toplevels) ->
+          Queue.enqueue let_toplevels (`Module_decl (name, toplevels));
           acc)
   in
   let not_found_vars = String.Hash_set.create () in
@@ -987,7 +988,33 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
              Hashtbl.add state.current_module.glob_vars ~key:name ~data:edge
            with
            | `Ok -> opened_modules
-           | _ -> failwith [%string "Duplicate variable %{name}"]))
+           | _ -> failwith [%string "Duplicate variable %{name}"])
+        | `Module_decl (name, toplevels) ->
+          (* define the submodule. it can use anything we've defined so far,
+             but not polymorphically (a bit weird but eh) *)
+          let module_t =
+            Type_state.module_create
+              ~parent:(Some state.current_module)
+              ~name
+              ~dir:state.current_module.dir
+          in
+          let module_t =
+            process_module
+              ~state:
+                { state with
+                  opened_modules = state.current_module :: opened_modules
+                }
+              ~module_t
+              toplevels
+          in
+          (match
+             Hashtbl.add
+               state.current_module.sub_modules
+               ~key:name
+               ~data:module_t
+           with
+           | `Ok -> opened_modules
+           | _ -> failwith [%string "Duplicate submodule %{name}"]))
   in
   match Hash_set.is_empty not_found_vars with
   | false ->
@@ -1506,22 +1533,52 @@ let type_check_and_output filename =
     exit 1
 ;;
 
+let rec pretty_print_module_t module_t =
+  let open PPrint in
+  let user_types =
+    Hashtbl.to_alist module_t.Type_state.types
+    |> List.map ~f:(fun (name, user_type) ->
+      string [%string "type %{name} ="]
+      ^^ space
+      ^^ Pretty_print.user_type_p user_type)
+    |> separate (break 1)
+  in
+  let glob_vars =
+    Hashtbl.to_alist module_t.glob_vars
+    |> List.map ~f:(fun (name, var) ->
+      match var with
+      | Typed_ast.El { poly; _ } ->
+        string "let"
+        ^^ space
+        ^^ string name
+        ^^ space
+        ^^ colon
+        ^^ space
+        ^^ Pretty_print.mono (poly_inner poly)
+      | Extern (name, _, mono) ->
+        string [%string "extern %{name} : %{show_mono mono}"]
+      | Implicit_extern (name, _, mono) ->
+        string [%string "implicit_extern %{name} : %{show_mono mono}"])
+    |> separate (break 1)
+  in
+  let modules =
+    Hashtbl.to_alist module_t.sub_modules
+    |> List.map ~f:(fun (name, module_t) ->
+      string [%string "module %{name} ="]
+      ^^ space
+      ^^ pretty_print_module_t module_t)
+    |> separate (break 1)
+  in
+  concat
+    [ string [%string "Module %{module_t.Type_state.name}:"]
+    ; nest 4 (hardline ^^ user_types)
+    ; nest 4 (hardline ^^ modules)
+    ; nest 4 (hardline ^^ glob_vars)
+    ]
+;;
+
 let process_and_dump filename =
   let state = type_check_and_output filename in
-  Hashtbl.iter state.Type_state.seen_modules ~f:(fun module_t ->
-    print_endline [%string "Module %{module_t.name}:"];
-    Hashtbl.iter module_t.types ~f:(fun user_type ->
-      print_endline [%string "    Inferred %{user_type.repr_name} to be:"];
-      Pretty_print.user_type_p user_type
-      |> Pretty_print.output_endline ~prefix:"    ");
-    Hashtbl.iter module_t.glob_vars ~f:(fun var ->
-      match var with
-      | Typed_ast.El { name; poly; _ } ->
-        print_endline
-          [%string "    Inferred %{name} to have type %{show_poly poly}"]
-      | Extern (name, _, mono) ->
-        print_endline [%string "    Extern %{name} has type %{show_mono mono}"]
-      | Implicit_extern (name, _, mono) ->
-        print_endline
-          [%string "    Implicit_extern %{name} has type %{show_mono mono}"]))
+  Hashtbl.iter state.Type_state.seen_files ~f:(fun module_t ->
+    pretty_print_module_t module_t |> Pretty_print.output_endline)
 ;;

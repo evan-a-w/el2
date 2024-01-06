@@ -39,6 +39,7 @@ rule read =
   | "sizeof" { SIZE_OF }
   | "assert" { ASSERT }
   | "match"  { MATCH }
+  | "module" { MODULE }
   | "open"   { OPEN }
   | "open_file" { OPEN_FILE }
   | "with"   { WITH }

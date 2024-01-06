@@ -4,7 +4,9 @@ open_file "../stdlib/stdlib.el2"
 [* This opens the Eg3 module, which is inferred to be the file
    [dir of current file] / eg3.el2
 *]
+
 open Eg3
+[* we will use Cool.f from Eg3 *]
 
 
 let main() := {
@@ -26,7 +28,7 @@ let main() := {
         count = count + 1
       };
 
-      i = i + 1;
+      i = Cool.f(i);
       [* the type of the block must be unit, so we need this at the end *]
       ()
     }

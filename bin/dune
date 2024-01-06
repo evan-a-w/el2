@@ -1,4 +1,6 @@
 (executable
  (public_name el2)
  (name main)
+ (preprocess
+  (pps ppx_jane ppx_deriving.show))
  (libraries el2 core core_unix.command_unix))

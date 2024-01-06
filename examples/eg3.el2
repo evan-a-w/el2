@@ -1,1 +1,5 @@
-[* empty file *]
+[* inner module *]
+
+module Cool := {
+  let f(x) := x + 1
+}

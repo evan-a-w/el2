@@ -1,0 +1,24 @@
+
+module Name(Arg1 : {
+    type t
+    type o(a)
+    let x : o(t)
+    let y : o(t) -> int
+  }) := {
+  let thingo() := {
+    y(x)
+  }
+   
+}
+
+produces either runtime module which is struct
+
+{
+  x : o(t)
+  y : o(t) -> int
+}
+
+and the functions take that struct
+
+
+or comptime thingo where the stuff is just inlined

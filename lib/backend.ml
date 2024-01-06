@@ -633,40 +633,41 @@ let headers =
    #include <stdio.h>\n"
 ;;
 
-let compile ~input =
+let rec compile_module ~state module_t =
+  Hashtbl.iter module_t.Type_state.sub_modules ~f:(fun module_t ->
+    compile_module ~state module_t);
+  Hashtbl.iteri module_t.types ~f:(fun ~key:_ ~data ->
+    match data.ty_vars with
+    | [] ->
+      let inst_user_type =
+        { monos = []
+        ; orig_user_type = data
+        ; insted_user_type = ref (Some data)
+        }
+      in
+      ignore (c_type_of_user_type ~state inst_user_type)
+    | _ -> ());
+  Hashtbl.iteri module_t.glob_vars ~f:(fun ~key:_ ~data ->
+    (* inst all monomorphic thingos *)
+    match data with
+    | Typed_ast.El { poly = `Mono _; _ } | Extern _ ->
+      ignore (var_to_string ~state ~inst_map:String.Map.empty data)
+    | _ -> ())
+;;
+
+let compile ~input ~chan =
   let state = state_of_input input in
-  Hashtbl.iter input.seen_modules ~f:(fun input ->
-    Hashtbl.iteri input.types ~f:(fun ~key:_ ~data ->
-      match data.ty_vars with
-      | [] ->
-        let inst_user_type =
-          { monos = []
-          ; orig_user_type = data
-          ; insted_user_type = ref (Some data)
-          }
-        in
-        ignore (c_type_of_user_type ~state inst_user_type)
-      | _ -> ());
-    Hashtbl.iteri input.glob_vars ~f:(fun ~key:_ ~data ->
-      (* inst all monomorphic thingos *)
-      match data with
-      | Typed_ast.El { poly = `Mono _; _ } | Extern _ ->
-        ignore (var_to_string ~state ~inst_map:String.Map.empty data)
-      | _ -> ()));
-  Out_channel.output_string Out_channel.stdout headers;
-  Bigbuffer.contents state.type_decl_buf
-  |> Out_channel.output_string Out_channel.stdout;
-  Bigbuffer.contents state.type_buf
-  |> Out_channel.output_string Out_channel.stdout;
-  Bigbuffer.contents state.decl_buf
-  |> Out_channel.output_string Out_channel.stdout;
-  Bigbuffer.contents state.def_buf
-  |> Out_channel.output_string Out_channel.stdout
+  Hashtbl.iter input.seen_files ~f:(compile_module ~state);
+  Out_channel.output_string chan headers;
+  Bigbuffer.contents state.type_decl_buf |> Out_channel.output_string chan;
+  Bigbuffer.contents state.type_buf |> Out_channel.output_string chan;
+  Bigbuffer.contents state.decl_buf |> Out_channel.output_string chan;
+  Bigbuffer.contents state.def_buf |> Out_channel.output_string chan
 ;;
 
 let print_typed_ast filename =
   let input = Type_check.type_check_and_output filename in
-  Hashtbl.iter input.seen_modules ~f:(fun input ->
+  Hashtbl.iter input.seen_files ~f:(fun input ->
     Hashtbl.iter input.glob_vars ~f:(fun var ->
       match var with
       | Typed_ast.El { poly; name; typed_expr; _ } ->
@@ -676,7 +677,7 @@ let print_typed_ast filename =
       | _ -> ()))
 ;;
 
-let compile_fully filename =
+let transpile_fully ~chan filename =
   let input = Type_check.type_check_and_output filename in
-  compile ~input
+  compile ~input ~chan
 ;;

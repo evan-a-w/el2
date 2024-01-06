@@ -17,7 +17,7 @@
 %token TRUE FALSE
 %token <char> CHAR
 %token LET TYPE EXTERN IMPLICIT_EXTERN ASSERT
-%token OPEN OPEN_FILE LOOP BREAK
+%token OPEN OPEN_FILE LOOP BREAK MODULE
 %token UNSAFE_CAST
 
 %left EQUALS
@@ -353,3 +353,5 @@ toplevel:
     { `Open l }
   | OPEN_FILE; file = STRING
     { `Open_file file }
+  | MODULE; name = UPPER_ID; COLON; EQUALS; LBRACE; l = list(toplevel); RBRACE
+    { `Module_decl (name, l) }
