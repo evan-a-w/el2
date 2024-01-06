@@ -35,5 +35,7 @@ type expanded_expr =
   | `Assert_empty_enum_field of string path * expanded_expr
   | `Access_enum_field of string path * expanded_expr
   | `Unsafe_cast of expanded_expr
+  | `Loop of expanded_expr
+  | `Break of expanded_expr
   ]
 [@@deriving sexp, compare]

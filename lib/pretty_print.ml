@@ -167,6 +167,8 @@ let rec typed_ast (t : _ Typed_ast.expr) =
     | `Char c -> "'" ^ Char.to_string c ^ "'" |> string
     | `Glob_var (var, _) -> top_var var
     | `Local_var s -> string s
+    | `Break a -> string "break" ^^ space ^^ typed_ast a
+    | `Loop a -> string "loop" ^^ space ^^ typed_ast a
     | `Array_lit l ->
       let inner = List.map l ~f:typed_ast |> separate (semi ^^ space) in
       lbrace ^^ char '|' ^^ mynest 4 inner ^^ char '|' ^^ rbrace

@@ -105,6 +105,7 @@ and expr =
   | `Index of expr * expr (* postfix [] *)
   | `If of expr * expr * expr
   | `Match of expr * (pattern * expr) list
+  | `Loop of expr
   | `Let of pattern * expr * expr
   | `Assign of expr * expr
   | `Compound of compound_inner list
@@ -112,6 +113,7 @@ and expr =
   | `Unsafe_cast of expr (* sizeof[type_expr] or sizeof(expr) *)
   | `Size_of of [ `Type of type_expr | `Expr of expr ]
   | `Return of expr
+  | `Break of expr
   | `Array_lit of expr list
   ]
 
@@ -153,6 +155,7 @@ and toplevel =
   | `Extern of string * type_expr * string
   | `Implicit_extern of string * type_expr * string
   | `Open of string list
+  | `Open_file of string
   ]
 [@@deriving sexp, compare]
 
@@ -209,6 +212,8 @@ let rec expr_fold_rec expr ~init ~f =
     | `Field_access (a, _)
     | `Assert a
     | `Unsafe_cast a
+    | `Break a
+    | `Loop a
     | `Ref a
     | `Deref a
     | `Pref_op (_, a)

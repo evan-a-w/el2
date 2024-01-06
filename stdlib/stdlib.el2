@@ -43,3 +43,16 @@ let ptr_cast(x : &_) : &_ = unsafe_cast(x)
 
 let max(a, b) := if a > b then a else b
 let min(a, b) := if a < b then a else b
+
+let print_int(i) := {
+  let curr := i % 10;
+
+  if i / 10 > 0 then print_int(i / 10);
+
+  [* for some reason, chars are a bit borked in parsing so i do this jank string thing *]
+  fputc(unsafe_cast(curr + unsafe_cast("0"[0])), stdout)
+}
+
+let print_string(s : &char) := {
+  fputs(s, stdout)
+}

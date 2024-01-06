@@ -1,8 +1,46 @@
+[* this lets us open a module at an arbitrary path *]
+open_file "../stdlib/stdlib.el2"
+
+[* This opens the Eg3 module, which is inferred to be the file
+   [dir of current file] / eg3.el2
+*]
+open Eg3
+
+
+let main() := {
+
+  let num_evens := {
+    let i := 0;
+    let count := 0;
+
+    [* loops are also expressions, res is
+       determined by [break res]
+    *]
+    loop {
+      if i > 15 then break(count);
+
+      if is_even(i) then {
+        print_string("Found even number: ");
+	print_int(i);
+	print_endline("");
+        count = count + 1
+      };
+
+      i = i + 1;
+      [* the type of the block must be unit, so we need this at the end *]
+      ()
+    }
+  };
+
+  print_int(num_evens);
+  0
+}
+
 [* mutual recursion is chilling
    and order of functions does not matter
+   (obviously this is an inefficient implementation of
+    checking parity...)
 *]
-
-let main() := is_odd(1) && is_even(2)
 
 let is_even(x) :=
   match x with

@@ -35,6 +35,7 @@ type state =
   ; decl_buf : Bigbuffer.t
   ; def_buf : Bigbuffer.t
   ; var_counter : Counter.t
+  ; loop_value_name : string option
   }
 
 type c_type_error =
@@ -543,6 +544,25 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
     | `Let (name, a, b) ->
       let (_ : string) = create_inner_val_with_name ~state ~buf ~name a in
       expr_to_string ~state ~buf ~expr:b
+    | `Loop a ->
+      let name = unique_name_or_empty ~state ~buf ~mono in
+      Bigbuffer.add_string buf [%string {| while (true) { |}];
+      let a =
+        expr_to_string
+          ~state:{ state with loop_value_name = Some name }
+          ~buf
+          ~expr:a
+      in
+      Bigbuffer.add_string buf a;
+      Bigbuffer.add_string buf ";}";
+      name
+    | `Break expr ->
+      (match state.loop_value_name with
+       | None -> failwith "break outside of loop"
+       | Some name ->
+         let a = expr_to_string ~state ~buf ~expr in
+         Bigbuffer.add_string buf [%string {| %{add_equal name}%{a}; break; |}];
+         "")
     | `If (a, b, c) ->
       let name = unique_name_or_empty ~state ~buf ~mono:(snd b) in
       let b_name = nameify name ~expr:b in
@@ -600,6 +620,7 @@ let state_of_input input =
   ; decl_buf = Bigbuffer.create 100
   ; def_buf = Bigbuffer.create 100
   ; var_counter = input.var_counter
+  ; loop_value_name = None
   }
 ;;
 

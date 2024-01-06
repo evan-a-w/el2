@@ -29,6 +29,8 @@ rule read =
   | "type"   { TYPE }
   | "if"     { IF }
   | "then"   { THEN }
+  | "loop"   { LOOP }
+  | "break"  { BREAK }
   | "else"   { ELSE }
   | "true"   { TRUE }
   | "false"  { FALSE }
@@ -38,6 +40,7 @@ rule read =
   | "assert" { ASSERT }
   | "match"  { MATCH }
   | "open"   { OPEN }
+  | "open_file" { OPEN_FILE }
   | "with"   { WITH }
   | "unsafe_cast"   { UNSAFE_CAST }
   | "extern"   { EXTERN }

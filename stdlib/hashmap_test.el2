@@ -97,23 +97,6 @@ let random_max := 1000
 let i64_equal(a, b) := a^ == b^
 let i64_hash(a) := a^
 
-let print_int(i) := {
-  let curr := i % 10;
-
-  if i / 10 > 0 then print_int(i / 10);
-
-  [* for some reason, chars are a bit borked in parsing so i do this jank string thing *]
-  fputc(unsafe_cast(curr + unsafe_cast("0"[0])), stdout)
-}
-
-let print_string(s : &char) := {
-  if s^ != unsafe_cast(0) then {
-    fputc(unsafe_cast(s^), stdout);
-    print_string(&s[1])
-  }
-}
-
-
 let print_hashmap_elements(it) := {
   match Hashmap.iterator_next(it) with
   | None -> ()

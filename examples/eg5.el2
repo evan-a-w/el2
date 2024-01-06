@@ -1,4 +1,4 @@
-$include(../stdlib/stdlib.el2)
+open_file "../stdlib/stdlib.el2"
 
 let main() := {
   [* alloc : i64 -> &a *]

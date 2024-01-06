@@ -17,7 +17,7 @@
 %token TRUE FALSE
 %token <char> CHAR
 %token LET TYPE EXTERN IMPLICIT_EXTERN ASSERT
-%token OPEN
+%token OPEN OPEN_FILE LOOP BREAK
 %token UNSAFE_CAST
 
 %left EQUALS
@@ -179,10 +179,6 @@ expr_no_whitespace:
     { (a :> Ast.expr) }
   | expr_wrapped
     { $1 }
-  | l = dot_upper_list; i = ID
-    { `Var Ast.{ module_path = l; inner = i }}
-  | l = dot_upper_list; i = UPPER_ID
-    { `Enum Ast.{ module_path = l; inner = i }}
   | LBRACE; e = compound_expr; RBRACE
     { e }
 
@@ -197,6 +193,8 @@ expr_ops:
     { `Assert b }
   | RETURN; LPAREN; b = expr; RPAREN
     { `Return b }
+  | BREAK; LPAREN; b = expr; RPAREN
+    { `Break b }
   | UNSAFE_CAST; LPAREN; b = expr; RPAREN
     { `Unsafe_cast b }
   | a = expr_ops; LPAREN; RPAREN
@@ -215,12 +213,16 @@ expr_ops:
     { `Pref_op (o, e) }
   | a = expr_ops; o = binop; b = expr_ops
     { `Inf_op (o, a, b) }
-  | e = expr_ops; DOT; l = dot_upper_list; i = name
-    { `Field_access (e, Ast.{ module_path = l ; inner = i }) }
   | e = expr_ops; LBRACK; i = expr; RBRACK
     { `Index (e, i) }
   | a = expr_ops; EQUALS; b = expr_ops
     { `Assign (a, b) }
+  | l = dot_upper_list; i = ID
+    { `Var Ast.{ module_path = l; inner = i }}
+  | l = dot_upper_list; i = UPPER_ID
+    { `Enum Ast.{ module_path = l; inner = i }}
+  | e = expr_ops; DOT; l = dot_upper_list; i = name
+    { `Field_access (e, Ast.{ module_path = l ; inner = i }) }
 %inline dot_upper_list:
   | dot_upper_list_rev
     { List.rev $1 }
@@ -265,6 +267,8 @@ expr_no_let:
     { `If (a, b, c) }
   | MATCH; e = expr; WITH; PIPE; l = separated_nonempty_list(PIPE, match_each)
     { `Match (e, l) }
+  | LOOP; a = expr
+    { `Loop a }
 
 let_part:
   | LET; p = pattern; COLON; t = type_expr; EQUALS; e = expr
@@ -347,3 +351,5 @@ toplevel:
     { $1 }
   | OPEN; l = separated_nonempty_list(DOT, UPPER_ID)
     { `Open l }
+  | OPEN_FILE; file = STRING
+    { `Open_file file }

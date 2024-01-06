@@ -65,7 +65,7 @@ and 'a expr_inner =
   | `Field_access of 'a expr * string (* postfix . *)
   | `Index of 'a expr * 'a expr (* postfix [] *)
   | `If of 'a expr * 'a expr * 'a expr
-  | (* getting this is where we process match 'a expressions *)
+  | (* by here match expressions have been tranformed *)
     (* | `Match of 'a expr * (pattern * 'a expr) list *)
     `Let of
     string * 'a expr * 'a expr
@@ -76,6 +76,8 @@ and 'a expr_inner =
   | `Assert of 'a expr
   | `Unsafe_cast of 'a expr
   | `Return of 'a expr
+  | `Break of 'a expr
+  | `Loop of 'a expr
   | `Array_lit of 'a expr list
   | `Size_of of mono
   ]
@@ -130,6 +132,8 @@ let rec go_expr_map_rec
     | `Access_enum_field (en, e) -> `Access_enum_field (en, f e)
     | `Inf_op (a, b, c) -> `Inf_op (a, f b, f c)
     | `Field_access (e, fi) -> `Field_access (f e, fi)
+    | `Loop e -> `Loop (f e)
+    | `Break e -> `Break (f e)
     | `Ref e -> `Ref (f e)
     | `Deref e -> `Deref (f e)
     | `Pref_op (a, b) -> `Pref_op (a, f b)
@@ -243,6 +247,8 @@ let rec expr_map_monos (expr_inner, mono) ~f =
     | `Array_lit l -> `Array_lit (List.map l ~f:(expr_map_monos ~f))
     | `Tuple l -> `Tuple (List.map l ~f:(expr_map_monos ~f))
     | `Compound e -> `Compound (expr_map_monos ~f e)
+    | `Loop e -> `Loop (expr_map_monos ~f e)
+    | `Break e -> `Break (expr_map_monos ~f e)
     | `Index (a, b) -> `Index (expr_map_monos ~f a, expr_map_monos ~f b)
     | `Tuple_access (a, b) -> `Tuple_access (expr_map_monos ~f a, b)
     | `Glob_var (name, inst_map) ->

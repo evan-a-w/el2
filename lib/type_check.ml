@@ -84,6 +84,7 @@ let rec unify a b =
   with
   | Early_exit -> a
   | Unification_error sub -> fl sub a b
+  (* this is just to catch exns from List.zip_exn *)
   | Invalid_argument _ -> fl End a b
 ;;
 
@@ -704,6 +705,8 @@ and expand_expr ~state (expr : Ast.expr) : expanded_expr =
   | `Assert a -> `Assert (f a)
   | `Array_lit l -> `Array_lit (List.map l ~f)
   | `Tuple l -> `Tuple (List.map l ~f)
+  | `Loop a -> `Loop (f a)
+  | `Break a -> `Break (f a)
   | `Compound l ->
     let expr =
       List.fold_right l ~init:None ~f:(fun x acc ->
@@ -796,6 +799,8 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
     let rep = rep ~locals in
     rep a;
     rep b
+  | `Break a
+  | `Loop a
   | `Assert a
   | `Compound a
   | `Return a
@@ -874,9 +879,14 @@ and type_check ~state toplevels =
 and process_toplevel_graph ~state (toplevels : toplevel list) =
   let type_defs = String.Table.create () in
   let let_toplevels = Queue.create () in
+  let curdir = state.Type_state.current_module.filename |> Filename.dirname in
   let _ =
     List.fold toplevels ~init:[] ~f:(fun acc ->
         function
+        | `Open_file filename ->
+          let nek = process_module ~state (Filename.concat curdir filename) in
+          Queue.enqueue let_toplevels (`Open nek);
+          nek :: acc
         | `Open path ->
           let nek = process_module_path ~state path in
           Queue.enqueue let_toplevels (`Open nek);
@@ -1085,7 +1095,9 @@ and infer_scc ~state scc =
             state, b, `Function (a, b)
           | _, _ -> state, mono, mono
         in
-        let expr_inner, mono' = type_expr ~res_type:to_unify ~state v.expr in
+        let expr_inner, mono' =
+          type_expr ~res_type:to_unify ~break_type:None ~state v.expr
+        in
         v, (expr_inner, unify to_unify mono'), mono
       with
       | Unification_error e ->
@@ -1122,15 +1134,15 @@ and make_pointer ~state:_ =
   let ty_var = make_indir () in
   `Pointer ty_var, ty_var
 
-and type_expr ~res_type ~state expr =
-  try type_expr_ ~res_type ~state expr with
+and type_expr ~res_type ~break_type ~state expr =
+  try type_expr_ ~res_type ~break_type ~state expr with
   | Unification_error _ as exn ->
     print_endline "While evaluating:";
     print_s [%message (expr : expanded_expr)];
     raise exn
 
-and type_expr_ ~res_type ~state expr : expr =
-  let rep ~state = type_expr ~res_type ~state in
+and type_expr_ ~res_type ~break_type ~state expr : expr =
+  let rep ~state = type_expr ~res_type ~break_type ~state in
   match expr with
   | `Bool b -> `Bool b, `Bool
   | `Int i -> `Int i, `I64
@@ -1141,6 +1153,19 @@ and type_expr_ ~res_type ~state expr : expr =
     let a, am = rep ~state a in
     let am = unify res_type am in
     `Return (a, am), `Unit
+  | `Break a ->
+    (match break_type with
+     | Some break_type ->
+       let a, am = rep ~state a in
+       let am = unify break_type am in
+       `Break (a, am), `Unit
+     | None -> failwith "break outside of loop")
+  | `Loop a ->
+    let indir = make_indir () in
+    let break_type = Some indir in
+    let a, am = type_expr ~state ~res_type ~break_type a in
+    let am = unify am `Unit in
+    `Loop (a, am), indir
   | `Float f -> `Float f, `F64
   | `Char c -> `Char c, `Char
   | `String s -> `String s, `Pointer `Char
