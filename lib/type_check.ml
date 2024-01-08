@@ -769,16 +769,18 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
   | `Var { inner = name'; module_path } ->
     let f module_t =
       Hashtbl.find module_t.Type_state.glob_vars name'
-      |> Option.map ~f:(Fn.const module_t)
+      |> Option.map ~f:(fun var -> var, module_t)
     in
     (match find_module_in_submodules ~try_make_module ~state ~f module_path with
      | None ->
        Typed_ast.(edge.used_globals <- Set.add edge.used_globals name');
-       Hash_set.add not_found_vars name'
-     | Some module_t
+       Hashtbl.add_multi not_found_vars ~key:name' ~data:edge.comptime
+     | Some (var, module_t)
        when Type_state.equal_module_t state.Type_state.current_module module_t
-       -> Typed_ast.(edge.used_globals <- Set.add edge.used_globals name')
-     | Some _ -> ())
+       ->
+       Typed_ast.(edge.used_globals <- Set.add edge.used_globals name');
+       Typed_ast.unify_var_comptimes ~user:(El edge) ~used:var
+     | Some (var, _) -> Typed_ast.unify_var_comptimes ~user:(El edge) ~used:var)
   | `Match (a, l) ->
     rep ~locals a;
     List.iter l ~f:(fun (p, e) -> rep ~locals:(pattern_vars p ~locals) e)
@@ -791,6 +793,11 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
     let rep = rep ~locals in
     rep a;
     rep b
+  | `Ref a
+  | `Deref a
+    ->
+    Typed_ast.unify_comptime_var ~user:edge.comptime ~used:`False;
+    rep ~locals a
   | `Break a
   | `Loop a
   | `Assert a
@@ -803,8 +810,6 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
   | `Assert_empty_enum_field (_, a)
   | `Tuple_access (a, _)
   | `Field_access (a, _)
-  | `Ref a
-  | `Deref a
   | `Pref_op (_, a)
   | `Typed (a, _) -> rep ~locals a
   | `Struct (_, l) ->
@@ -917,7 +922,7 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
           Queue.enqueue let_toplevels (`Module_decl (name, toplevels));
           acc)
   in
-  let not_found_vars = String.Hash_set.create () in
+  let not_found_vars = String.Table.create () in
   process_types ~state type_defs;
   let find_references ~edge ~state ~locals expr =
     let open Typed_ast in
@@ -928,8 +933,15 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
         state.current_module.glob_vars
         ~key:edge.name
         ~data:(El edge);
-      Hash_set.remove not_found_vars edge.name;
-      traverse_expr ~state ~not_found_vars ~edge ~locals expr
+      (match Hashtbl.find_and_remove not_found_vars edge.name with
+       | None -> ()
+       | Some l ->
+         List.iter l ~f:(fun x ->
+           Typed_ast.unify_comptime_var ~used:edge.comptime ~user:x));
+      (try traverse_expr ~state ~not_found_vars ~edge ~locals expr with
+       | exn ->
+         print_endline [%string "Error while processing %{edge.name}:"];
+         raise exn)
   in
   let _ =
     Queue.fold let_toplevels ~init:[] ~f:(fun opened_modules ->
@@ -944,7 +956,6 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
           in
           let edge =
             Typed_ast.create_func
-              ~ty_var_counter:state.ty_var_counter
               ~name
               ~expr
               ~var_decls
@@ -963,7 +974,6 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
           Stack.iter vars ~f:(fun (name, expr) ->
             let edge =
               Typed_ast.create_non_func
-                ~ty_var_counter:state.ty_var_counter
                 ~name
                 ~expr
                 ~data:opened_modules
@@ -1016,12 +1026,12 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
            | `Ok -> opened_modules
            | _ -> failwith [%string "Duplicate submodule %{name}"]))
   in
-  match Hash_set.is_empty not_found_vars with
+  match Hashtbl.is_empty not_found_vars with
   | false ->
     failwith
       [%string
-        "Unknown variables: `%{Hash_set.to_list not_found_vars |> \
-         String.concat ~sep:\", \"}`"]
+        "Unknown variables: `%{Hashtbl.keys not_found_vars |> String.concat \
+         ~sep:\", \"}`"]
   | true -> state
 
 and get_sccs glob_vars =

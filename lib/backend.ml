@@ -253,6 +253,7 @@ let rec var_to_string_inner ~state ~inst_map (var : Type_check.var) =
          (match mono with
           | `Unit -> ""
           | _ ->
+            let expr = Tree_walk.eval ~state:state.input ~expr in
             define_toplevel_val_with_name ~state ~name expr;
             name)
        | `Func args ->

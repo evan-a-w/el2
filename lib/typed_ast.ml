@@ -10,6 +10,39 @@ type type_check_state =
   ]
 [@@deriving sexp, compare]
 
+type comptime_var =
+  [ `True
+  | `False
+  | `Var of string * comptime_var option ref
+  ]
+[@@deriving sexp, compare]
+
+let rec comptime_var_inner x =
+  match x with
+  | `True | `False | `Var (_, { contents = None }) -> x
+  | `Var (_, ({ contents = Some a } as r)) ->
+    let res = comptime_var_inner a in
+    r := Some res;
+    res
+;;
+
+let unify_comptime_var ~user ~used =
+  let a = comptime_var_inner user in
+  let b = comptime_var_inner used in
+  match phys_equal a b, a, b with
+  | true, _, _ -> ()
+  | _, `True, `True | _, `False, `False -> ()
+  | _, `True, `Var (_, b) -> b := Some `True
+  | _, `Var (_, _), `Var (_, _) | _, `Var (_, _), `True | _, `False, `Var (_, _)
+    -> ()
+  | _, `Var (_, b), `False -> b := Some `False
+  | _ ->
+    [%string
+      "Failed to unify comptime vars %{[%sexp (user : comptime_var)]#Sexp} and \
+       %{[%sexp (used : comptime_var)]#Sexp}"]
+    |> failwith
+;;
+
 type scc_state =
   { (* Stuff for Tarjan's SCC algo *)
     mutable index : int option
@@ -22,6 +55,7 @@ type 'data var =
   { name : string
   ; data : 'data
   ; mutable args : [ `Non_func | `Func of (string * mono) list ]
+  ; comptime : comptime_var
   ; expr : expanded_expr
   ; mutable typed_expr : 'data gen_expr option
   ; mutable poly : poly
@@ -148,6 +182,14 @@ let rec go_expr_map_rec
   let expr_inner = on_expr_inner expr_inner in
   let mono = mono_f mono in
   expr_inner, mono
+;;
+
+let unify_var_comptimes ~user ~used =
+  match user, used with
+  | El a, El b -> unify_comptime_var ~user:a.comptime ~used:b.comptime
+  | El a, _ -> unify_comptime_var ~user:a.comptime ~used:`False
+  | _, El a -> unify_comptime_var ~used:a.comptime ~user:`False
+  | _ -> ()
 ;;
 
 let ( && ) a b = `Inf_op (`And, a, b), `Bool
@@ -286,8 +328,9 @@ let rec expr_map_monos (expr_inner, mono) ~f =
 
 let var var = El var
 
-let create_func ~ty_var_counter:_ ~name ~expr ~var_decls ~data ~unique_name =
+let create_func ~name ~expr ~var_decls ~data ~unique_name =
   { name
+  ; comptime = `Var (name, ref None)
   ; unique_name
   ; expr
   ; data
@@ -303,8 +346,9 @@ let create_func ~ty_var_counter:_ ~name ~expr ~var_decls ~data ~unique_name =
   }
 ;;
 
-let create_non_func ~ty_var_counter:_ ~name ~expr ~data ~unique_name =
+let create_non_func ~name ~expr ~data ~unique_name =
   { name
+  ; comptime = `Var (name, ref (Some `True))
   ; unique_name
   ; expr
   ; data

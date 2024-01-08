@@ -3,3 +3,8 @@
 module Cool := {
   let f(x) := x + 1
 }
+
+let fib(x) := fib(x - 1) + fib(x - 2)
+
+[* this gets evaluated at compile time because it can *]
+let fib10 := fib(10)
