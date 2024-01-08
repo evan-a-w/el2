@@ -104,34 +104,52 @@ let get_user_type_variant user_type variant =
   | _ -> None
 ;;
 
+let anon_module counter = "anon_" ^ Counter.next_num counter
 let internal_var counter = "internal_" ^ Counter.next_num counter
 
 module Type_state = struct
   module T = struct
-    type module_name = string [@@deriving sexp, compare]
+    type module_ident =
+      [ `Named of string
+      | `From_functor of string * module_t list
+      | `Anon of string
+      ]
 
-    module Module_name_set = Set.Make (struct
-        type t = module_name [@@deriving sexp, compare]
-      end)
-
-    type module_t =
-      { name : module_name
+    and module_t =
+      { name : module_ident
       ; dir : string
-      ; sub_modules : module_t String.Table.t
-      ; glob_vars : module_t list Typed_ast.top_var String.Table.t
-      ; types : user_type String.Table.t
-      ; variant_to_type : user_type String.Table.t
-      ; field_to_type : user_type String.Table.t
-      ; mutable in_eval : bool
+      ; sub_modules : module_t String.Table.t [@compare.ignore]
+      ; sub_functors : functor_t String.Table.t [@compare.ignore]
+      ; glob_vars : module_t Typed_ast.top_var String.Table.t [@compare.ignore]
+      ; types : user_type String.Table.t [@compare.ignore]
+      ; variant_to_type : user_type String.Table.t [@compare.ignore]
+      ; field_to_type : user_type String.Table.t [@compare.ignore]
+      ; mutable in_eval : bool [@compare.ignore]
       ; parent : module_t option
       }
-    [@@deriving sexp]
 
-    let rec equal_module_t a b =
-      String.equal a.name b.name
-      && String.equal a.dir b.dir
-      && Option.equal equal_module_t a.parent b.parent
+    and functor_t =
+      { functor_name : string
+      ; functor_args : (string * module_t) list
+      ; functor_body : module_t
+      ; opened_modules : module_t list [@compare.ignore]
+      ; cached_insts : module_t String.Table.t [@compare.ignore]
+      ; ast : toplevel list
+      }
+    [@@deriving sexp, compare]
+
+    let rec show_module_ident = function
+      | `Named name -> name
+      | `From_functor (name, m) ->
+        let m =
+          List.map m ~f:(fun m -> m.name |> show_module_ident)
+          |> String.concat ~sep:"_"
+        in
+        [%string "%{name}_%{m}"]
+      | `Anon i -> i
     ;;
+
+    let equal_module_t a b = compare_module_t a b = 0
 
     type t =
       { current_module : module_t
@@ -143,6 +161,7 @@ module Type_state = struct
       ; var_counter : Counter.t
       ; seen_vars : String.Hash_set.t
       ; seen_types : String.Hash_set.t
+      ; module_name_counter : Counter.t
       }
     [@@deriving sexp]
   end
@@ -166,12 +185,14 @@ module Type_state = struct
       (match module_t.parent with
        | None -> ()
        | Some p -> go p);
-      Buffer.add_string buf module_t.name;
+      Buffer.add_string buf (show_module_ident module_t.name);
       Buffer.add_char buf '_'
     in
     go module_t;
     Buffer.contents buf
   ;;
+
+  let anon_module t = `Anon (anon_module t.module_name_counter)
 
   let register_name ~state name =
     match Hash_set.mem state.seen_vars name with
@@ -229,6 +250,7 @@ module Type_state = struct
     { name
     ; dir
     ; sub_modules = String.Table.create ()
+    ; sub_functors = String.Table.create ()
     ; glob_vars = String.Table.create ()
     ; types = default_types ()
     ; variant_to_type = String.Table.create ()
@@ -238,9 +260,15 @@ module Type_state = struct
     }
   ;;
 
+  let module_create_anon ~state ~parent =
+    let dir = state.current_module.dir in
+    let name = anon_module state in
+    module_create ~parent ~name ~dir
+  ;;
+
   let create filename =
     let dir, name = unel2_file filename in
-    let current_module = module_create ~parent:None ~name ~dir in
+    let current_module = module_create ~parent:None ~name:(`Named name) ~dir in
     { current_module
     ; opened_modules = []
     ; seen_files = String.Table.of_alist_exn [ filename, current_module ]
@@ -250,6 +278,7 @@ module Type_state = struct
     ; var_counter = Counter.create ()
     ; seen_vars = String.Hash_set.create ()
     ; seen_types = String.Hash_set.create ()
+    ; module_name_counter = Counter.create ()
     }
   ;;
 
@@ -285,6 +314,16 @@ module Type_state = struct
       lookup_module_in_exn names ~in_:state.current_module
   ;;
 
+  let lookup_functor_exn ~state ~if_missing names =
+    match names with
+    | [] -> state.current_module
+    | fst :: _ ->
+      (match Hashtbl.find state.current_module.sub_modules fst with
+       | None -> if_missing fst
+       | _ -> ());
+      lookup_module_in_exn names ~in_:state.current_module
+  ;;
+
   let try_on_all_modules state ~try_make_module ~module_path ~f =
     let rec loop opened_modules =
       match opened_modules with
@@ -308,11 +347,11 @@ module Type_state = struct
   ;;
 end
 
-type expr = Type_state.module_t list Typed_ast.expr
-type expr_inner = Type_state.module_t list Typed_ast.expr_inner
-type gen_expr = Type_state.module_t list Typed_ast.gen_expr
-type var = Type_state.module_t list Typed_ast.var
-type top_var = Type_state.module_t list Typed_ast.top_var
+type expr = Type_state.module_t Typed_ast.expr
+type expr_inner = Type_state.module_t Typed_ast.expr_inner
+type gen_expr = Type_state.module_t Typed_ast.gen_expr
+type var = Type_state.module_t Typed_ast.var
+type top_var = Type_state.module_t Typed_ast.top_var
 
 let make_user_type ~repr_name ~name ~ty_vars =
   { repr_name; name; ty_vars; info = ref None }
@@ -513,6 +552,22 @@ and get_user_type_field_exn ~field inst_user_type =
   | Some x -> x
   | None -> failwith [%string "Unknown field %{field}"]
 
+and lookup_module ~state path =
+  match path with
+  | [] -> state.Type_state.current_module
+  | fst :: rest ->
+    let f module_t = Hashtbl.find module_t.Type_state.sub_modules fst in
+    (match find_module_in_submodules ~try_make_module ~state ~f rest with
+     | None ->
+       failwith [%string "Unknown module %{String.concat ~sep:\".\" path}"]
+     | Some x -> Type_state.lookup_module_in_exn ~in_:x rest)
+
+and lookup_functor ~state p =
+  let f module_t = Hashtbl.find module_t.Type_state.sub_functors p.inner in
+  match find_module_in_submodules ~try_make_module ~state ~f p.module_path with
+  | None -> failwith [%string "Unknown module %{show_path Fn.id p}"]
+  | Some x -> x
+
 and lookup_var ~state ({ inner = name; module_path } as p) =
   let f module_t = Hashtbl.find module_t.Type_state.glob_vars name in
   match find_module_in_submodules ~try_make_module ~state ~f module_path with
@@ -643,7 +698,8 @@ and breakup_patterns ~state ~vars (pattern : pattern) (expr : Ast.expr) =
   | `Bool _ | `Float _ | `Char _ | `String _ | `Int _ | `Null ->
     failwith
       [%string
-        "Refutable pattern `%{Sexp.to_string_hum [%sexp (pattern : pattern)]}`"]
+        "Refutable pattern in let: `%{Sexp.to_string_hum [%sexp (pattern : \
+         pattern)]}`"]
   | `Var name -> Stack.push vars (name, expand_expr ~state expr)
   | `Unit ->
     (ignore : string path -> unit)
@@ -817,6 +873,96 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
     rep ~locals b;
     rep ~locals c
 
+and process_module_sig_decl ~state toplevel_decls =
+  let type_defs = String.Table.create () in
+  let let_toplevels = Queue.create () in
+  List.iter toplevel_decls ~f:(function
+    | `Type ((name, ty_vars), decl) ->
+      let repr_name = Type_state.make_unique_type ~state name in
+      (match
+         Hashtbl.add
+           state.Type_state.current_module.types
+           ~key:name
+           ~data:(make_user_type ~repr_name ~ty_vars ~name)
+       with
+       | `Ok ->
+         (match decl with
+          | Some type_decl ->
+            Hashtbl.add_exn type_defs ~key:name ~data:(ty_vars, type_decl, [])
+          | None -> ())
+       | `Duplicate -> failwith [%string "Duplicate type %{name}"])
+    | `Expr d -> Queue.enqueue let_toplevels d);
+  process_types ~state type_defs;
+  Queue.iter let_toplevels ~f:(fun (name, t) ->
+    let mono = mono_of_type_expr ~state t in
+    let poly =
+      gen
+        ~counter:state.Type_state.var_counter
+        ~vars:(String.Table.create ())
+        ~indirs:(Int.Table.create ())
+        mono
+    in
+    match
+      Hashtbl.add
+        state.Type_state.current_module.glob_vars
+        ~key:name
+        ~data:Typed_ast.(From_functor (name, poly))
+    with
+    | `Ok -> ()
+    | `Duplicate -> failwith [%string "Duplicate variable %{name}"])
+
+and process_module_expr ?parent ?name ~state = function
+  | `Decl toplevels ->
+    let name =
+      Option.value_or_thunk name ~default:(fun () ->
+        Type_state.anon_module state)
+    in
+    let module_t =
+      Type_state.module_create
+        ~parent:(Some state.Type_state.current_module)
+        ~name
+        ~dir:state.current_module.dir
+    in
+    process_module ~state ~module_t toplevels
+  | `Named path -> process_module_path ~state path
+  | `Named_args (path, l) ->
+    let modules = List.map l ~f:(process_module_path ?parent ~state) in
+    process_functor_inst_path ~state ~modules path
+
+and inst_functor ~state ~modules functor_t =
+  let name = `From_functor (functor_t.Type_state.functor_name, modules) in
+  let name_string = Type_state.show_module_ident name in
+  match Hashtbl.find functor_t.Type_state.cached_insts name_string with
+  | Some x -> x
+  | None ->
+    let res_module =
+      Type_state.module_create
+        ~name
+        ~dir:functor_t.functor_body.dir
+        ~parent:functor_t.functor_body.parent
+    in
+    let functor_args =
+      match List.zip functor_t.Type_state.functor_args modules with
+      | Ok x -> x
+      | _ -> failwith "Wrong number of functor arguments"
+    in
+    let empty_module = Type_state.module_create_anon ~state ~parent:None in
+    List.iter functor_args ~f:(fun ((key, _), data) ->
+      Hashtbl.set empty_module.sub_modules ~key ~data);
+    let opened_modules = empty_module :: functor_t.opened_modules in
+    let state =
+      { state with
+        current_module = res_module
+      ; opened_modules
+      ; locals = String.Map.empty
+      }
+    in
+    process_module ~state ~module_t:res_module functor_t.ast
+
+and process_functor_inst_path ~state ~modules path =
+  let functor_t = lookup_functor ~state path in
+  inst_functor ~state ~modules functor_t
+
 and process_module ~state ~module_t toplevels =
   module_t.Type_state.in_eval <- true;
   let state = { state with Type_state.current_module = module_t } in
@@ -868,7 +1014,9 @@ and type_check ~state toplevels =
   | Failure s ->
     print_endline
       [%string
-        "Fatal error while evaluating %{state.current_module.name}:\n%{s}"];
+        "Fatal error while evaluating %{Type_state.show_module_ident \
+         state.current_module.name}:\n\
+         %{s}"];
     exit 1
 
 and process_toplevel_graph ~state (toplevels : toplevel list) =
@@ -913,7 +1061,7 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
         | `Implicit_extern x ->
           Queue.enqueue let_toplevels (`Implicit_extern x);
           acc
-        | `Module_decl (name, toplevels) ->
+        | `Module_decl (name, signature, toplevels) ->
           Queue.enqueue let_toplevels (`Module_decl (name, toplevels));
           acc)
   in
@@ -995,7 +1143,7 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
           let module_t =
             Type_state.module_create
               ~parent:(Some state.current_module)
-              ~name
+              ~name:(`Named name)
               ~dir:state.current_module.dir
           in
           let module_t =
@@ -1085,7 +1233,7 @@ and mono_of_var ~state name =
     let var = lookup_var ~state (empty_path name) in
     `Global (var, infer_var ~state var)
 
-and infer_var ~state (var : Type_state.module_t list Typed_ast.top_var) =
+and infer_var ~state (var : Type_state.module_t Typed_ast.top_var) =
   match var with
   | El v ->
     (match v.scc.type_check_state with

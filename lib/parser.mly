@@ -326,8 +326,12 @@ type_decl:
     { `Struct l }
 
 
+let_type_rhs:
+  | COLON; EQUALS; t = type_decl
+    { t }
+
 let_type:
-  | TYPE; n = type_decl_name; COLON; EQUALS; t = type_decl
+  | TYPE; n = type_decl_name; t = let_type_rhs
     { `Let_type (n, t) }
 
 extern:
@@ -338,6 +342,19 @@ implicit_extern:
   | IMPLICIT_EXTERN; n = name; COLON; t = type_expr; EQUALS; s = STRING
     { `Implicit_extern (n, t, s) }
 
+toplevel_sig:
+  | TYPE; n = type_decl_name; t = option(let_type_rhs)
+    { `Type (n, t) }
+  | LET; n = name; COLON; t = type_expr
+    { `Expr (n, t) }
+
+module_sig:
+  | LBRACE; l = list(toplevel_sig); RBRACE
+    { `Decl l }
+
+module_expr:
+  | LBRACE; l = list(toplevel); RBRACE
+    { `Decl l }
 toplevel:
   | let_
     { $1 }
@@ -353,5 +370,5 @@ toplevel:
     { `Open l }
   | OPEN_FILE; file = STRING
     { `Open_file file }
-  | MODULE; name = UPPER_ID; COLON; EQUALS; LBRACE; l = list(toplevel); RBRACE
-    { `Module_decl (name, l) }
+  | MODULE; name = UPPER_ID; COLON; s = option(module_sig); EQUALS; me = module_expr
+    { `Module_decl (name, s, me) }

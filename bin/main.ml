@@ -1,4 +1,5 @@
 open Core open El2
+
 let make_cmd ~summary ~f =
   let open Command.Let_syntax in
   Command.basic

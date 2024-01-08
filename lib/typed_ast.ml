@@ -32,12 +32,13 @@ type 'data var =
   }
 
 and 'data top_var =
-  | El of 'data var
+  | El of 'data list var
   | Extern of string * string * mono
   | Implicit_extern of string * string * mono
+  | From_functor of string * poly
 
 and 'data scc =
-  { vars : 'data var Stack.t [@compare.ignore]
+  { vars : 'data list var Stack.t [@compare.ignore]
   ; mutable type_check_state : type_check_state
   }
 
@@ -321,4 +322,5 @@ let unique_name = function
   | Extern (_, unique_name, _)
   | Implicit_extern (_, unique_name, _)
   | El { unique_name; _ } -> unique_name
+  | From_functor (_, _) -> failwith "impossible"
 ;;

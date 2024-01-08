@@ -10,12 +10,14 @@ let show_path show_a = function
   | { module_path = []; inner } -> show_a inner
   | { module_path; inner } ->
     String.concat ~sep:"." module_path ^ "." ^ show_a inner
+;;
 
 let empty_path inner = { module_path = []; inner }
 
 let path_fst = function
   | { module_path = []; inner } -> inner
   | { module_path = a :: _; _ } -> a
+;;
 
 let sexp_of_path sexp_of_inner { module_path; inner } =
   Sexp.List
@@ -52,8 +54,6 @@ and type_expr =
   | `Pointer of type_expr
   ]
 [@@deriving sexp, compare]
-(* for now no modules, but in future will be list of qualifiers then 'a,
-   with syntax moda::modb::a *)
 
 type builtin_pattern =
   [ `Unit
@@ -81,6 +81,19 @@ type var_decl =
   [ `Typed of string * type_expr
   | `Untyped of string
   ]
+
+and module_expr =
+  [ `Decl of toplevel list
+  | `Named of string list
+  | `Named_args of string list * module_expr list
+  ]
+
+and toplevel_sig =
+  [ `Type of type_decl_name * type_decl option
+  | `Expr of name * type_expr
+  ]
+
+and module_sig = [ `Decl of toplevel_sig list ]
 
 and expr =
   [ `Unit
@@ -156,7 +169,8 @@ and toplevel =
   | `Implicit_extern of string * type_expr * string
   | `Open of string list
   | `Open_file of string
-  | `Module_decl of string * toplevel list
+  | `Module_decl of string * module_sig option * module_expr
+  | `Functor_decl of string * module_sig list * module_sig option * toplevel list
   ]
 [@@deriving sexp, compare]
 

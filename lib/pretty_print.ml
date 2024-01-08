@@ -153,6 +153,7 @@ let top_var (var : _ Typed_ast.top_var) : PPrint.document =
   | Typed_ast.El { name; _ }
   | Typed_ast.Extern (name, _, _)
   | Typed_ast.Implicit_extern (name, _, _) -> string name
+  | Typed_ast.From_functor (name, _) -> string name
 ;;
 
 let rec typed_ast (t : _ Typed_ast.expr) =

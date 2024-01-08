@@ -1,0 +1,84 @@
+[* constexpr evaluation of all terms in parse tree
+   (must evaluate to the expected type of ast node)
+   ast thingo in backticks *]
+
+type t := {
+  name : {| if true then `int` else `char *` |}
+}
+
+let is_max := true
+
+let max_or_min(a, b) := {| if is_max then `max(a, b)` else `min(a, b)` |}
+
+macro $apply_list(a) := list([| a |])
+
+[* combines with macros *]
+macro $make_struct_with_smallest (a : type_expr, b : type_expr) : type_decl =
+  {
+    useless : int;
+    [* [[ ... ]] is macro evaluation context
+       you can substitute macro arg variables, and call other macros
+       you can nest this stuff in eachother
+
+       %x is same but for simple things
+    *]
+    data : {| if sizeof(list(%a)) > sizeof([[ $apply_list(b) ]]) then
+                `%a`
+	      else 
+                `%b` |}
+  }
+
+macro $add(a : expr, b : expr, c : module_expr) : expr = [[c]].add([[a]], [[b]])
+
+usage: let x := $add(a, b, Int)
+
+macro $
+
+TODO: see if actually useful and workable
+
+[* macro that pattern matches the ast
+*]
+transform $name :=
+  [* %var captures the thingo into the var
+  if %a then %b else %c
+   ->
+  (%a, %b, %c)
+
+transform $first_two :=
+  [* %var... captures the list into the var (for all list things)
+  {
+     %a...
+  }
+  ->
+  [* fst gets one thing out of the list and mutates it *]
+  ([[ fst(%a) ]], [[ fst(%a) ]])
+  [* but the above is not well formed because let x = thing; is valid in compound *]
+
+
+[* $for(i, 0, 100) is for loop *]
+transform $for :=
+  [* match three tuple, %% = ident? *]
+  (%%var, %start, %end)
+  ->
+  {
+    [* for hygiene, mutates the identifier, turns into `()` *]
+    let () = [[ make_unique(var) ]];
+    let %var := %start;
+    loop {
+       if %var >= %end then break ();
+       %var = %var + 1;
+    }
+  }
+
+[* if name fails, then try other *]
+transforms $package := $name or $other
+
+token eating?
+
+macro $for[%(i : ident) in %(e : expr) %(c : compound_expr)] := {
+    let %i := %start;
+    loop {
+       if %var >= %end then break ();
+       %var = %var + 1;
+    }
+}
