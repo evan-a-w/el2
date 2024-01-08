@@ -20,7 +20,7 @@ type scc_state =
 
 type 'data var =
   { name : string
-  ; data : 'data
+  ; data : 'data list
   ; mutable args : [ `Non_func | `Func of (string * mono) list ]
   ; expr : expanded_expr
   ; mutable typed_expr : 'data gen_expr option
@@ -32,13 +32,13 @@ type 'data var =
   }
 
 and 'data top_var =
-  | El of 'data list var
+  | El of 'data var
   | Extern of string * string * mono
   | Implicit_extern of string * string * mono
   | From_functor of string * poly
 
 and 'data scc =
-  { vars : 'data list var Stack.t [@compare.ignore]
+  { vars : 'data var Stack.t [@compare.ignore]
   ; mutable type_check_state : type_check_state
   }
 

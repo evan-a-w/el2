@@ -297,6 +297,7 @@ and var_to_string ~state ~inst_map var =
   match var with
   | Typed_ast.El var -> var_to_string_inner ~state ~inst_map var
   | Implicit_extern (_, extern_name, _) -> extern_name
+  | From_functor _ -> failwith "should be no 'From_functor' vars in backend"
   | Extern (internal_name, extern_name, mono) ->
     (match mono with
      | `Unit -> ""

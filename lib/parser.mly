@@ -343,8 +343,8 @@ implicit_extern:
     { `Implicit_extern (n, t, s) }
 
 toplevel_sig:
-  | TYPE; n = type_decl_name; t = option(let_type_rhs)
-    { `Type (n, t) }
+  | TYPE; n = type_decl_name
+    { `Type (n) }
   | LET; n = name; COLON; t = type_expr
     { `Expr (n, t) }
 

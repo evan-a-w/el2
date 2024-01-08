@@ -1,0 +1,15 @@
+module Make (Arg : {
+  type t
+  let chunk_size : i64
+  let alloc_size : i64
+}) := {
+  type free_node := {
+    next : &free_node
+  }
+
+  type chunk := {
+    next : &chunk;
+    allocated_till : i64;
+    data : &t
+  }
+}

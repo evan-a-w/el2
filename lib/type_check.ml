@@ -118,6 +118,7 @@ module Type_state = struct
     and module_t =
       { name : module_ident
       ; dir : string
+      ; mutable signature : module_t option [@compare.ignore]
       ; sub_modules : module_t String.Table.t [@compare.ignore]
       ; sub_functors : functor_t String.Table.t [@compare.ignore]
       ; glob_vars : module_t Typed_ast.top_var String.Table.t [@compare.ignore]
@@ -130,7 +131,7 @@ module Type_state = struct
 
     and functor_t =
       { functor_name : string
-      ; functor_args : (string * module_t) list
+      ; functor_args : (string * module_sig * module_t) list
       ; functor_body : module_t
       ; opened_modules : module_t list [@compare.ignore]
       ; cached_insts : module_t String.Table.t [@compare.ignore]
@@ -147,6 +148,22 @@ module Type_state = struct
         in
         [%string "%{name}_%{m}"]
       | `Anon i -> i
+    ;;
+
+    let create_functor
+      ~functor_name
+      ~functor_args
+      ~functor_body
+      ~opened_modules
+      ~ast
+      =
+      { functor_name
+      ; functor_args
+      ; functor_body
+      ; opened_modules
+      ; cached_insts = String.Table.create ()
+      ; ast
+      }
     ;;
 
     let equal_module_t a b = compare_module_t a b = 0
@@ -257,6 +274,7 @@ module Type_state = struct
     ; field_to_type = String.Table.create ()
     ; in_eval = false
     ; parent
+    ; signature = None
     }
   ;;
 
@@ -873,11 +891,12 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
     rep ~locals b;
     rep ~locals c
 
-and process_module_sig_decl ~state toplevel_decls =
-  let type_defs = String.Table.create () in
+and module_of_sig_decl ~parent ~state toplevel_decls =
+  let module_t = Type_state.module_create_anon ~state ~parent in
+  let state = { state with Type_state.current_module = module_t } in
   let let_toplevels = Queue.create () in
   List.iter toplevel_decls ~f:(function
-    | `Type ((name, ty_vars), decl) ->
+    | `Type (name, ty_vars) ->
       let repr_name = Type_state.make_unique_type ~state name in
       (match
          Hashtbl.add
@@ -885,18 +904,14 @@ and process_module_sig_decl ~state toplevel_decls =
            ~key:name
            ~data:(make_user_type ~repr_name ~ty_vars ~name)
        with
-       | `Ok ->
-         (match decl with
-          | Some type_decl ->
-            Hashtbl.add_exn type_defs ~key:name ~data:(ty_vars, type_decl, [])
-          | None -> ())
+       | `Ok -> ()
        | `Duplicate -> failwith [%string "Duplicate type %{name}"])
     | `Expr d -> Queue.enqueue let_toplevels d);
-  process_types ~state type_defs;
   Queue.iter let_toplevels ~f:(fun (name, t) ->
     let mono = mono_of_type_expr ~state t in
     let poly =
-      gen
+      ge
+n
         ~counter:state.Type_state.var_counter
         ~vars:(String.Table.create ())
         ~indirs:(Int.Table.create ())
@@ -909,7 +924,8 @@ and process_module_sig_decl ~state toplevel_decls =
         ~data:Typed_ast.(From_functor (name, poly))
     with
     | `Ok -> ()
-    | `Duplicate -> failwith [%string "Duplicate variable %{name}"])
+    | `Duplicate -> failwith [%string "Duplicate variable %{name}"]);
+  module_t
 
 and process_module_expr ?parent ?name ~state = function
   | `Decl toplevels ->
@@ -926,7 +942,9 @@ and process_module_expr ?parent ?name ~state = function
     process_module ~state ~module_t toplevels
   | `Named path -> process_module_path ~state path
   | `Named_args (path, l) ->
-    let modules = List.map l ~f:(process_module_path ?parent ~state) in
+    let modules =
+      List.map l ~f:(fun x -> process_module_expr ?parent ~state x)
+    in
     process_functor_inst_path ~state ~modules path
 
 and inst_functor ~state ~modules functor_t =
@@ -947,7 +965,8 @@ and inst_functor ~state ~modules functor_t =
       | _ -> failwith "Wrong number of functor arguments"
     in
     let empty_module = Type_state.module_create_anon ~state ~parent:None in
-    List.iter functor_args ~f:(fun ((key, _), data) ->
+    List.iter functor_args ~f:(fun ((key, `Decl signature, _), data) ->
+      check_module_matches_sig ~state ~signature data;
       Hashtbl.set empty_module.sub_modules ~key ~data);
     let opened_modules = empty_module :: functor_t.opened_modules in
     let state =
@@ -979,14 +998,16 @@ and process_file ?parent ~state filename =
     raise
       (Module_cycle
          { offending_module = filename
-         ; from_module = state.current_module.name
+         ; from_module = Type_state.show_module_ident state.current_module.name
          })
   | None ->
     In_channel.with_file filename ~f:(fun chan ->
       let lexbuf = Lexing.from_channel chan in
       Frontend.parse_and_do ~filename lexbuf ~f:(fun toplevels ->
         let dir, name = unel2_file filename in
-        let module_t = Type_state.module_create ~parent ~name ~dir in
+        let module_t =
+          Type_state.module_create ~parent ~name:(`Named name) ~dir
+        in
         Hashtbl.set state.seen_files ~key:filename ~data:module_t;
         process_module ~state ~module_t toplevels))
 
@@ -1018,6 +1039,54 @@ and type_check ~state toplevels =
          state.current_module.name}:\n\
          %{s}"];
     exit 1
+
+and check_polys_match ~(sub : poly) ~(super : poly) =
+  let rec is_as_poly ~sub ~super =
+    match sub, super with
+    | `Mono _, _ -> ()
+    | _, `Mono _ -> raise (Unification_error End)
+    | `For_all (_, sub), `For_all (_, super) -> is_as_poly ~sub ~super
+  in
+  is_as_poly ~sub ~super;
+  let sub_mono, sub_map = inst sub in
+  let super_mono, sup_map = inst super in
+  ignore (unify sub_mono super_mono);
+  Map.iteri sub_map ~f:(fun ~key ~data ->
+    match Map.find sup_map key with
+    | Some super_mono -> ignore (unify data super_mono)
+    | None -> raise (Unification_error End))
+
+and check_module_matches_sig ~state ~signature module_t =
+  try
+    let state = { state with current_module = module_t } in
+    List.iter signature ~f:(function
+      | `Type (name, ty_vars) ->
+        let user_type = lookup_user_type ~state (empty_path name) in
+        (match List.zip ty_vars user_type.ty_vars with
+         | Ok _ -> ()
+         | _ ->
+           failwith
+             [%string
+               "Type %{name} requires type arguments %{String.concat ~sep:\", \
+                \"ty_vars}"])
+      | `Expr (name, t) ->
+        let mono = mono_of_type_expr ~state t in
+        let sub =
+          gen
+            ~counter:state.ty_var_counter
+            ~vars:(String.Table.create ())
+            ~indirs:(Int.Table.create ())
+            mono
+        in
+        let var = lookup_var ~state (empty_path name) in
+        let super = get_var_poly var in
+        check_polys_match ~sub ~super)
+  with
+  | exn ->
+    print_endline
+      [%string
+        {| Module does not match signature %{Type_state.show_module_ident module_t.name}|}];
+    raise exn
 
 and process_toplevel_graph ~state (toplevels : toplevel list) =
   let type_defs = String.Table.create () in
@@ -1061,8 +1130,11 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
         | `Implicit_extern x ->
           Queue.enqueue let_toplevels (`Implicit_extern x);
           acc
-        | `Module_decl (name, signature, toplevels) ->
-          Queue.enqueue let_toplevels (`Module_decl (name, toplevels));
+        | `Module_decl data ->
+          Queue.enqueue let_toplevels (`Module_decl data);
+          acc
+        | `Functor_decl data ->
+          Queue.enqueue let_toplevels (`Functor_decl data);
           acc)
   in
   let not_found_vars = String.Hash_set.create () in
@@ -1137,24 +1209,28 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
            with
            | `Ok -> opened_modules
            | _ -> failwith [%string "Duplicate variable %{name}"])
-        | `Module_decl (name, toplevels) ->
+        | `Module_decl (name, signature, toplevels) ->
           (* define the submodule. it can use anything we've defined so far,
              but not polymorphically (a bit weird but eh) *)
           let module_t =
-            Type_state.module_create
-              ~parent:(Some state.current_module)
-              ~name:(`Named name)
-              ~dir:state.current_module.dir
-          in
-          let module_t =
-            process_module
+            process_module_expr
+              ~parent:state.current_module
               ~state:
                 { state with
                   opened_modules = state.current_module :: opened_modules
                 }
-              ~module_t
               toplevels
           in
+          module_t.signature
+          <- (match signature with
+              | Some (`Decl signature) ->
+                check_module_matches_sig ~state ~signature module_t;
+                Some
+                  (module_of_sig_decl
+                     ~state
+                     ~parent:(Some state.current_module)
+                     signature)
+              | None -> None);
           (match
              Hashtbl.add
                state.current_module.sub_modules
@@ -1162,7 +1238,54 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
                ~data:module_t
            with
            | `Ok -> opened_modules
-           | _ -> failwith [%string "Duplicate submodule %{name}"]))
+           | _ -> failwith [%string "Duplicate submodule %{name}"])
+        | `Functor_decl (name, args, signature, toplevels) ->
+          let empty_module =
+            Type_state.module_create_anon ~state ~parent:None
+          in
+          let args =
+            List.map args ~f:(fun (name, (`Decl signature as s)) ->
+              let module_t =
+                module_of_sig_decl
+                  ~parent:(Some state.current_module)
+                  ~state
+                  signature
+              in
+              Hashtbl.set empty_module.sub_modules ~key:name ~data:module_t;
+              name, s, module_t)
+          in
+          let res_module =
+            Type_state.module_create_anon
+              ~state
+              ~parent:(Some state.current_module)
+          in
+          let functor_body =
+            process_module
+              ~state:
+                { state with opened_modules = empty_module :: opened_modules }
+              ~module_t:res_module
+              toplevels
+          in
+          (match signature with
+           | Some (`Decl signature) ->
+             check_module_matches_sig ~state ~signature res_module
+           | None -> ());
+          let functor_t =
+            Type_state.create_functor
+              ~functor_name:name
+              ~functor_body
+              ~opened_modules:(empty_module :: opened_modules)
+              ~functor_args:args
+              ~ast:toplevels
+          in
+          (match
+             Hashtbl.add
+               state.current_module.sub_functors
+               ~key:name
+               ~data:functor_t
+           with
+           | `Ok -> opened_modules
+           | _ -> failwith [%string "Duplicate functor %{name}"]))
   in
   match Hash_set.is_empty not_found_vars with
   | false ->
@@ -1186,7 +1309,7 @@ and get_sccs glob_vars =
     Set.iter v.used_globals ~f:(fun s ->
       let w = Hashtbl.find_exn glob_vars s in
       match w with
-      | Extern _ | Implicit_extern _ -> ()
+      | Extern _ | Implicit_extern _ | From_functor _ -> ()
       | El w ->
         if Option.is_none w.scc_st.index
         then (
@@ -1211,7 +1334,7 @@ and get_sccs glob_vars =
       Stack.push res scc)
   in
   Hashtbl.iter glob_vars ~f:(function
-    | Extern _ | Implicit_extern _ -> ()
+    | Extern _ | Implicit_extern _ | From_functor _ -> ()
     | El v ->
       (match v.scc_st.index with
        | None -> connect v
@@ -1233,6 +1356,12 @@ and mono_of_var ~state name =
     let var = lookup_var ~state (empty_path name) in
     `Global (var, infer_var ~state var)
 
+and get_var_poly (var : Type_state.module_t Typed_ast.top_var) =
+  match var with
+  | El v -> v.poly
+  | From_functor (_, poly) -> poly
+  | Extern (_, _, mono) | Implicit_extern (_, _, mono) -> `Mono mono
+
 and infer_var ~state (var : Type_state.module_t Typed_ast.top_var) =
   match var with
   | El v ->
@@ -1243,6 +1372,9 @@ and infer_var ~state (var : Type_state.module_t Typed_ast.top_var) =
     (match v.scc.type_check_state with
      | `Untouched | `In_checking -> mono, None
      | `Done -> mono, Some inst_map)
+  | From_functor (_, poly) ->
+    let mono, inst_map = inst poly in
+    mono, Some inst_map
   | Extern (_, _, mono) | Implicit_extern (_, _, mono) ->
     mono, Some String.Map.empty
 
@@ -1706,7 +1838,8 @@ let rec pretty_print_module_t module_t =
       | Extern (name, _, mono) ->
         string [%string "extern %{name} : %{show_mono mono}"]
       | Implicit_extern (name, _, mono) ->
-        string [%string "implicit_extern %{name} : %{show_mono mono}"])
+        string [%string "implicit_extern %{name} : %{show_mono mono}"]
+      | From_functor (name, _) -> string [%string "from_functor %{name}"])
     |> separate (break 1)
   in
   let modules =
@@ -1718,7 +1851,9 @@ let rec pretty_print_module_t module_t =
     |> separate (break 1)
   in
   concat
-    [ string [%string "Module %{module_t.Type_state.name}:"]
+    [ string
+        [%string
+          "Module %{Type_state.show_module_ident module_t.Type_state.name}:"]
     ; nest 4 (hardline ^^ user_types)
     ; nest 4 (hardline ^^ modules)
     ; nest 4 (hardline ^^ glob_vars)

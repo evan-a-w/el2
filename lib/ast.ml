@@ -85,11 +85,11 @@ type var_decl =
 and module_expr =
   [ `Decl of toplevel list
   | `Named of string list
-  | `Named_args of string list * module_expr list
+  | `Named_args of string path * module_expr list
   ]
 
 and toplevel_sig =
-  [ `Type of type_decl_name * type_decl option
+  [ `Type of type_decl_name
   | `Expr of name * type_expr
   ]
 
@@ -170,7 +170,7 @@ and toplevel =
   | `Open of string list
   | `Open_file of string
   | `Module_decl of string * module_sig option * module_expr
-  | `Functor_decl of string * module_sig list * module_sig option * toplevel list
+  | `Functor_decl of string * (string * module_sig) list * module_sig option * toplevel list
   ]
 [@@deriving sexp, compare]
 

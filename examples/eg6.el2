@@ -1,24 +1,39 @@
+open_file "../stdlib/stdlib.el2"
 
-module Name(Arg1 : {
-    type t
-    type o(a)
-    let x : o(t)
-    let y : o(t) -> int
-  }) := {
-  let thingo() := {
-    y(x)
-  }
-   
+module Cring := {
+  type t = i64
+
+  let g(x) := x + 1
+  let f(x) := g(g(x))
 }
 
-produces either runtime module which is struct
+module Functor (Arg1 : {
+  type t
 
-{
-  x : o(t)
-  y : o(t) -> int
+  let f : i64 -> t
+}) := {
+  let do_thing(x) := Arg1.f(x)
 }
 
-and the functions take that struct
+module Applied := Functor({
+  type t = { val : i64 }
 
+  let f(x) := #t { val : x }
+})
 
-or comptime thingo where the stuff is just inlined
+module Other := Functor({
+  type t = i64
+
+  let f(x) := x
+})
+
+module Third := Functor(Cring)
+
+let main() := {
+  let res := Applied.f(1);
+  print_int(res.Applied.val);
+  print_endline("");
+  print_int(Other.f(2));
+  print_endline("");
+  print_int(Third.f(0))
+}
