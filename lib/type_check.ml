@@ -311,7 +311,7 @@ end
 type expr = Type_state.module_t list Typed_ast.expr
 type expr_inner = Type_state.module_t list Typed_ast.expr_inner
 type gen_expr = Type_state.module_t list Typed_ast.gen_expr
-type var = Type_state.module_t list Typed_ast.var
+type var = Type_state.module_t list Typed_ast.var 
 type top_var = Type_state.module_t list Typed_ast.top_var
 
 let make_user_type ~repr_name ~name ~ty_vars =
@@ -760,13 +760,10 @@ and pattern_vars p ~locals =
      | Some p -> pattern_vars p ~locals
      | None -> locals)
 
-and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
-  let rep = traverse_expr ~state ~not_found_vars ~edge in
-  match expr with
-  | `Bool _ | `Int _ | `Float _ | `Char _ | `String _ | `Enum _ | `Unit | `Null
-  | `Size_of (`Type _) -> ()
-  | `Var { inner = name'; module_path = [] } when Set.mem locals name' -> ()
-  | `Var { inner = name'; module_path } ->
+and traverse_expr_var_part ~state ~not_found_vars ~edge ~locals var =
+  match var with
+  | { inner = name'; module_path = [] } when Set.mem locals name' -> `Local
+  | { inner = name'; module_path } ->
     let f module_t =
       Hashtbl.find module_t.Type_state.glob_vars name'
       |> Option.map ~f:(fun var -> var, module_t)
@@ -774,18 +771,36 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
     (match find_module_in_submodules ~try_make_module ~state ~f module_path with
      | None ->
        Typed_ast.(edge.used_globals <- Set.add edge.used_globals name');
-       Hashtbl.add_multi not_found_vars ~key:name' ~data:edge.comptime
+       Hashtbl.add_multi not_found_vars ~key:name' ~data:edge.comptime;
+       `Global
      | Some (var, module_t)
        when Type_state.equal_module_t state.Type_state.current_module module_t
        ->
        Typed_ast.(edge.used_globals <- Set.add edge.used_globals name');
-       Typed_ast.unify_var_comptimes ~user:(El edge) ~used:var
-     | Some (var, _) -> Typed_ast.unify_var_comptimes ~user:(El edge) ~used:var)
+       Typed_ast.unify_var_comptimes ~user:(El edge) ~used:var;
+       `Global
+     | Some (var, _) ->
+       Typed_ast.unify_var_comptimes ~user:(El edge) ~used:var;
+       `Global)
+
+and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
+  let rep = traverse_expr ~state ~not_found_vars ~edge in
+  match expr with
+  | `Bool _ | `Int _ | `Float _ | `Char _ | `String _ | `Enum _ | `Unit | `Null
+  | `Size_of (`Type _) -> ()
+  | `Var v ->
+    ignore (traverse_expr_var_part ~state ~not_found_vars ~edge ~locals v)
   | `Match (a, l) ->
     rep ~locals a;
     List.iter l ~f:(fun (p, e) -> rep ~locals:(pattern_vars p ~locals) e)
   | `Tuple l | `Array_lit l -> List.iter l ~f:(rep ~locals)
-  | `Index (a, b) | `Inf_op (_, a, b) | `Assign (a, b) | `Apply (a, b) ->
+  | `Assign (`Var v, b) ->
+     (* can only assign to locals *)
+    (match traverse_expr_var_part ~state ~not_found_vars ~edge ~locals v with
+     | `Local -> ()
+     | `Global -> Typed_ast.unify_comptime_var ~user:edge.comptime ~used:`False);
+    rep ~locals b
+  | `Index (a, b) | `Inf_op (_, a, b) | `Apply (a, b) | `Assign (a, b) ->
     rep ~locals a;
     rep ~locals b
   | `Let (s, a, b) ->
@@ -793,9 +808,7 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
     let rep = rep ~locals in
     rep a;
     rep b
-  | `Ref a
-  | `Deref a
-    ->
+  | `Ref a | `Deref a ->
     Typed_ast.unify_comptime_var ~user:edge.comptime ~used:`False;
     rep ~locals a
   | `Break a
@@ -1416,7 +1429,7 @@ and breakup_and_type_pattern ~state ~expr:(e, em) pattern =
         let conds', bindings_f', state =
           breakup_and_type_pattern ~state ~expr p
         in
-        let conds = Typed_ast.(conds && conds') in
+        let conds = Typed_ast.And.(conds && conds') in
         let bindings_f expr = bindings_f (bindings_f' expr) in
         conds, bindings_f, state)
   | `Var s ->
@@ -1496,7 +1509,7 @@ and breakup_and_type_pattern ~state ~expr:(e, em) pattern =
         let conds', bindings_f', state =
           breakup_and_type_pattern ~state ~expr pattern
         in
-        let conds = Typed_ast.(conds && conds') in
+        let conds = Typed_ast.And.(conds && conds') in
         let bindings_f expr = bindings_f (bindings_f' expr) in
         conds, bindings_f, state)
   | `Enum (name, opt_p) ->
@@ -1513,7 +1526,7 @@ and breakup_and_type_pattern ~state ~expr:(e, em) pattern =
        in
        let expr = `Access_enum_field (name.inner, (e, em)), arg_type in
        let conds', binding_f, state = breakup_and_type_pattern ~state ~expr p in
-       let conds = Typed_ast.(conds && conds') in
+       let conds = Typed_ast.And.(conds && conds') in
        conds, binding_f, state
      | None ->
        if Option.is_some arg_type

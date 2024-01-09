@@ -192,7 +192,9 @@ let unify_var_comptimes ~user ~used =
   | _ -> ()
 ;;
 
-let ( && ) a b = `Inf_op (`And, a, b), `Bool
+module And = struct
+  let ( && ) a b = `Inf_op (`And, a, b), `Bool
+end
 
 let expr_map_rec expr ~on_expr_inner ~on_mono =
   let user_type_mem = ref String.Map.empty in

@@ -26,6 +26,7 @@ type type_cache = string Mono_list_map.t ref
 
 type state =
   { input : Type_state.t
+  ; tree_walk_state : Tree_walk.state
   ; extern_vars : string String.Table.t
   ; vars : var String.Table.t
   ; inst_user_types : type_cache String.Table.t
@@ -253,7 +254,7 @@ let rec var_to_string_inner ~state ~inst_map (var : Type_check.var) =
          (match mono with
           | `Unit -> ""
           | _ ->
-            let expr = Tree_walk.eval ~state:state.input ~expr in
+            let expr = Tree_walk.eval ~state:state.tree_walk_state ~var expr in
             define_toplevel_val_with_name ~state ~name expr;
             name)
        | `Func args ->
@@ -612,6 +613,7 @@ and unique_name_or_empty ~state ~buf ~mono =
 
 let state_of_input input =
   { input
+  ; tree_walk_state = Tree_walk.make_state input
   ; vars = String.Table.create ()
   ; extern_vars = String.Table.create ()
   ; inst_user_types = String.Table.create ()

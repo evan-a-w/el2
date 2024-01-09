@@ -45,7 +45,7 @@ let compile_cmd =
 
 let transpile ~no_format ~filename =
   let clang_format_exists () =
-    Core_unix.system "which clang-format" |> Result.is_ok
+    Core_unix.system "which clang-format > /dev/null" |> Result.is_ok
   in
   match no_format || not (clang_format_exists ()) with
   | true -> Backend.transpile_fully ~chan:Out_channel.stdout filename
