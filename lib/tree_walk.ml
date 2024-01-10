@@ -200,107 +200,104 @@ and eval_op ~state (op : Ast.inf_op) a b =
 
 and eval_expr : 'a. state:state -> Type_check.expr -> (value, 'a) Ret.Cont.t =
   fun ~(state : state) ((expr_inner, mono) : Type_check.expr) ->
-  let%map.Cont res =
-    match expr_inner with
-    | `Char c -> return { value = Char c; mono }
-    | `Int i -> return { value = Int i; mono }
-    | `Float i -> return { value = Float i; mono }
-    | `String s -> return { value = String s; mono }
-    | `Bool b -> return { value = Bool b; mono }
-    | `Null -> return { value = Null; mono }
-    | `Unit -> return { value = Unit; mono }
-    | `Tuple l ->
-      let%map l = eval_list ~state l in
-      { value = Tuple l; mono }
-    | `Array_lit l ->
-      let%map l = eval_list ~state l in
-      { value = Array l; mono }
-    | `Index (a, b) ->
-      let%bind a = eval_array_lit ~state a in
-      let%map b = eval_i64 ~state b in
-      List.nth_exn a b
-    | `Tuple_access (a, i) ->
-      let%map a = eval_tuple ~state a in
-      List.nth_exn a i
-    (* special case assign to a var because its only for locals *)
-    | `Assign (x, o) ->
-      let%bind x = eval_expr ~state x in
-      let%map o = eval_expr ~state o in
-      x.value <- o.value;
-      { value = Unit; mono = `Unit }
-    | `Access_enum_field (field, x) ->
-      let%map x = eval_expr ~state x in
-      (match x.value with
-       | Enum (name, op) when String.equal name field -> Option.value_exn op
-       | _ -> failwith [%string "Expected enum with %{field} tag"])
-    | `Compound e -> eval_expr ~state e
-    | `Inf_op (op, a, b) -> eval_op ~state op a b
-    | `Field_access (a, field) ->
-      let%map a = eval_expr ~state a in
-      (match a.value with
-       | Struct l ->
-         (match List.Assoc.find l ~equal:String.equal field with
-          | Some x -> x
-          | None -> failwith [%string "Expected field %{field}"])
-       | _ -> failwith "Expected struct")
-    | `Local_var s ->
-      (match Map.find state.locals s with
-       | Some x -> return x
-       | None -> failwith [%string "Expected local var %{s}"])
-    | `Ref _ | `Deref _ -> failwith "not allowed"
-    | `Size_of m -> do_size_of ~state m
-    | `Assert e ->
-      let%map b = eval_bool ~state e in
-      if not b then failwith "assert" else { value = Unit; mono = `Unit }
-    | `Break x ->
-      let%bind a = eval_expr ~state x in
-      Cont.return @@ Ret.Break a
-    | `Return x ->
-      let%bind a = eval_expr ~state x in
-      Cont.return @@ Ret.Return a
-    | `Glob_var (var, o) ->
-      let var =
-        match var with
-        | El v -> v
-        | _ -> failwith "Expected el var"
-      in
-      (match var.args with
-       | `Func args -> return { value = Function (var, o, args); mono }
-       | `Non_func ->
-         let expr = Option.value_exn var.Typed_ast.typed_expr in
-         let expr = fst expr, snd expr |> Type_check.poly_inner in
-         eval ~state ~var expr)
-    | `Pref_op (op, x) ->
-      (match op with
-       | `Minus ->
-         let%map res = eval_i64 ~state x in
-         { value = Int (-res); mono = `I64 })
-    | `Struct l ->
-      let%map l = eval_named_list ~state l in
-      { value = Struct l; mono }
-    | `Enum (a, op) ->
-      (match op with
-       | None -> return { value = Enum (a, None); mono }
-       | Some x ->
-         let%map x = eval_expr ~state x in
-         { value = Enum (a, Some x); mono })
-    | `Loop e -> eval_loop ~state e
-    | `Unsafe_cast e -> do_unsafe_cast ~state ~to_:mono e
-    | `Check_variant (s, e) ->
-      let%map e = eval_expr ~state e in
-      (match e.value with
-       | Enum (name, _) -> { value = Bool (String.equal name s); mono = `Bool }
-       | _ -> failwith [%string "Expected enum"])
-    | `Let (a, b, c) ->
-      let%bind b = eval_expr ~state b in
-      let state = { state with locals = Map.set state.locals ~key:a ~data:b } in
-      eval_expr ~state c
-    | `If (a, b, c) ->
-      let%bind a = eval_bool ~state a in
-      if a then eval_expr ~state b else eval_expr ~state c
-    | `Apply (a, b) -> do_apply ~state a b mono
-  in
-  res
+  match expr_inner with
+  | `Char c -> return { value = Char c; mono }
+  | `Int i -> return { value = Int i; mono }
+  | `Float i -> return { value = Float i; mono }
+  | `String s -> return { value = String s; mono }
+  | `Bool b -> return { value = Bool b; mono }
+  | `Null -> return { value = Null; mono }
+  | `Unit -> return { value = Unit; mono }
+  | `Tuple l ->
+    let%map l = eval_list ~state l in
+    { value = Tuple l; mono }
+  | `Array_lit l ->
+    let%map l = eval_list ~state l in
+    { value = Array l; mono }
+  | `Index (a, b) ->
+    let%bind a = eval_array_lit ~state a in
+    let%map b = eval_i64 ~state b in
+    List.nth_exn a b
+  | `Tuple_access (a, i) ->
+    let%map a = eval_tuple ~state a in
+    List.nth_exn a i
+  (* special case assign to a var because its only for locals *)
+  | `Assign (x, o) ->
+    let%bind x = eval_expr ~state x in
+    let%map o = eval_expr ~state o in
+    x.value <- o.value;
+    { value = Unit; mono = `Unit }
+  | `Access_enum_field (field, x) ->
+    let%map x = eval_expr ~state x in
+    (match x.value with
+     | Enum (name, op) when String.equal name field -> Option.value_exn op
+     | _ -> failwith [%string "Expected enum with %{field} tag"])
+  | `Compound e -> eval_expr ~state e
+  | `Inf_op (op, a, b) -> eval_op ~state op a b
+  | `Field_access (a, field) ->
+    let%map a = eval_expr ~state a in
+    (match a.value with
+     | Struct l ->
+       (match List.Assoc.find l ~equal:String.equal field with
+        | Some x -> x
+        | None -> failwith [%string "Expected field %{field}"])
+     | _ -> failwith "Expected struct")
+  | `Local_var s ->
+    (match Map.find state.locals s with
+     | Some x -> return x
+     | None -> failwith [%string "Expected local var %{s}"])
+  | `Ref _ | `Deref _ -> failwith "not allowed"
+  | `Size_of m -> do_size_of ~state m
+  | `Assert e ->
+    let%map b = eval_bool ~state e in
+    if not b then failwith "assert" else { value = Unit; mono = `Unit }
+  | `Break x ->
+    let%bind a = eval_expr ~state x in
+    Cont.return @@ Ret.Break a
+  | `Return x ->
+    let%bind a = eval_expr ~state x in
+    Cont.return @@ Ret.Return a
+  | `Glob_var (var, o) ->
+    let var =
+      match var with
+      | El v -> v
+      | _ -> failwith "Expected el var"
+    in
+    (match var.args with
+     | `Func args -> return { value = Function (var, o, args); mono }
+     | `Non_func ->
+       let expr = Option.value_exn var.Typed_ast.typed_expr in
+       let expr = fst expr, snd expr |> Type_check.poly_inner in
+       eval ~state ~var expr)
+  | `Pref_op (op, x) ->
+    (match op with
+     | `Minus ->
+       let%map res = eval_i64 ~state x in
+       { value = Int (-res); mono = `I64 })
+  | `Struct l ->
+    let%map l = eval_named_list ~state l in
+    { value = Struct l; mono }
+  | `Enum (a, op) ->
+    (match op with
+     | None -> return { value = Enum (a, None); mono }
+     | Some x ->
+       let%map x = eval_expr ~state x in
+       { value = Enum (a, Some x); mono })
+  | `Loop e -> eval_loop ~state e
+  | `Unsafe_cast e -> do_unsafe_cast ~state ~to_:mono e
+  | `Check_variant (s, e) ->
+    let%map e = eval_expr ~state e in
+    (match e.value with
+     | Enum (name, _) -> { value = Bool (String.equal name s); mono = `Bool }
+     | _ -> failwith [%string "Expected enum"])
+  | `Let (a, b, c) ->
+    let%bind b = eval_expr ~state b in
+    let state = { state with locals = Map.set state.locals ~key:a ~data:b } in
+    eval_expr ~state c
+  | `If (a, b, c) ->
+    let%bind a = eval_bool ~state a in
+    if a then eval_expr ~state b else eval_expr ~state c
+  | `Apply (a, b) -> do_apply ~state a b mono
 
 and eval_loop ~state e =
   match%bind.Cont eval_expr ~state e with
