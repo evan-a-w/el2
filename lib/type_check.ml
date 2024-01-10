@@ -1202,7 +1202,7 @@ and type_expr_ ~res_type ~break_type ~state expr : expr =
   | `Return a ->
     let a, am = rep ~state a in
     let am = unify res_type am in
-    `Return (a, am), `Unit
+    `Return (a, am), make_indir ()
   | `Break a ->
     (match break_type with
      | Some break_type ->
@@ -1214,7 +1214,6 @@ and type_expr_ ~res_type ~break_type ~state expr : expr =
     let indir = make_indir () in
     let break_type = Some indir in
     let a, am = type_expr ~state ~res_type ~break_type a in
-    let am = unify am `Unit in
     `Loop (a, am), indir
   | `Float f -> `Float f, `F64
   | `Char c -> `Char c, `Char

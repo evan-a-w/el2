@@ -3,7 +3,11 @@ open! Ast
 open! Types
 open! Type_check
 
-let reach_end = Typed_ast.reach_end
+(* defaulting to unit is necessary here because
+   bottom types end up just being a ty var.
+   this happens for 'return'.
+   TODO?: make an actual bottom type *)
+let reach_end = Typed_ast.reach_end ~default:`Unit
 
 exception Invalid_type of mono
 exception Invalid_user_type of inst_user_type
@@ -37,6 +41,7 @@ type state =
   ; def_buf : Bigbuffer.t
   ; var_counter : Counter.t
   ; loop_value_name : string option
+  ; comptime_eval : bool
   }
 
 type c_type_error =
@@ -254,7 +259,11 @@ let rec var_to_string_inner ~state ~inst_map (var : Type_check.var) =
          (match mono with
           | `Unit -> ""
           | _ ->
-            let expr = Tree_walk.eval ~state:state.tree_walk_state ~var expr in
+            let expr =
+              match state.comptime_eval with
+              | true -> Tree_walk.eval ~state:state.tree_walk_state ~var expr
+              | false -> expr
+            in
             define_toplevel_val_with_name ~state ~name expr;
             name)
        | `Func args ->
@@ -347,7 +356,8 @@ and add_equal name =
 
 and nameify name ~expr =
   match name, fst expr, snd expr |> reach_end with
-  | "_", _, _ | _, _, `Unit | _, `Assert (`Bool false, _), _ -> ""
+  | "_", _, _ | _, _, `Unit | _, `Assert (`Bool false, _), _ | _, `Return _, _
+    -> ""
   | _ -> name
 
 and define_toplevel_val_with_name ~state ~name expr =
@@ -611,8 +621,9 @@ and unique_name_or_empty ~state ~buf ~mono =
     name
 ;;
 
-let state_of_input input =
+let state_of_input ~comptime_eval input =
   { input
+  ; comptime_eval
   ; tree_walk_state = Tree_walk.make_state input
   ; vars = String.Table.create ()
   ; extern_vars = String.Table.create ()
@@ -658,8 +669,8 @@ let rec compile_module ~state module_t =
     | _ -> ())
 ;;
 
-let compile ~input ~chan =
-  let state = state_of_input input in
+let compile ~comptime_eval ~input ~chan =
+  let state = state_of_input ~comptime_eval input in
   Hashtbl.iter input.seen_files ~f:(compile_module ~state);
   Out_channel.output_string chan headers;
   Bigbuffer.contents state.type_decl_buf |> Out_channel.output_string chan;
@@ -680,7 +691,7 @@ let print_typed_ast filename =
       | _ -> ()))
 ;;
 
-let transpile_fully ~chan filename =
+let transpile_fully ~comptime_eval ~chan filename =
   let input = Type_check.type_check_and_output filename in
-  compile ~input ~chan
+  compile ~comptime_eval ~input ~chan
 ;;

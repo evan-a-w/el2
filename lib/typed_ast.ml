@@ -31,10 +31,9 @@ let unify_comptime_var ~user ~used =
   let b = comptime_var_inner used in
   match phys_equal a b, a, b with
   | true, _, _ -> ()
-  | _, `True, `True | _, `False, `False -> ()
+  | _, `True, `True | _, `False, `False | _, `False, _ -> ()
   | _, `True, `Var (_, b) -> b := Some `True
-  | _, `Var (_, _), `Var (_, _) | _, `Var (_, _), `True | _, `False, `Var (_, _)
-    -> ()
+  | _, `Var (_, _), `Var (_, _) | _, `Var (_, _), `True -> ()
   | _, `Var (_, b), `False -> b := Some `False
   | _ ->
     [%string
@@ -227,7 +226,7 @@ let two_pow i = Big_int_Z.power (Big_int_Z.big_int_of_int 2) i
 exception Incomplete_type of mono
 exception Cannot_pattern_match of mono
 
-let rec reach_end (mono : mono) =
+let rec reach_end ?default (mono : mono) =
   let mono = inner_mono mono in
   match mono with
   | `Bool | `C_int | `I64 | `F64 | `Unit | `Char -> mono
@@ -239,7 +238,10 @@ let rec reach_end (mono : mono) =
   | `Opaque x -> reach_end x
   | `Pointer x -> `Pointer (reach_end x)
   | `Tuple l -> `Tuple (List.map l ~f:reach_end)
-  | `Indir _ | `Var _ -> raise (Incomplete_type mono)
+  | `Indir _ | `Var _ ->
+    (match default with
+     | None -> raise (Incomplete_type mono)
+     | Some x -> x)
 ;;
 
 let rec decompose_into_pattern mono ~make_a : 'a pattern_branches =
