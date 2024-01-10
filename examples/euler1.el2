@@ -1,0 +1,14 @@
+open_file "../stdlib/stdlib.el2"
+
+let solve(i, count) := {
+  if i >= 1000 then return(count);
+  if i % 3 == 0 || i % 5 == 0 then solve(i + 1, count + i) else solve(i + 1, count)
+}
+
+[* comptime eval *]
+let res := solve(0, 0)
+
+let main() := {
+  print_int(res);
+  0
+}

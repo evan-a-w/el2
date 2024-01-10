@@ -10,6 +10,38 @@ type type_check_state =
   ]
 [@@deriving sexp, compare]
 
+type comptime_var =
+  [ `True
+  | `False
+  | `Var of string * comptime_var option ref
+  ]
+[@@deriving sexp, compare]
+
+let rec comptime_var_inner x =
+  match x with
+  | `True | `False | `Var (_, { contents = None }) -> x
+  | `Var (_, ({ contents = Some a } as r)) ->
+    let res = comptime_var_inner a in
+    r := Some res;
+    res
+;;
+
+let unify_comptime_var ~user ~used =
+  let a = comptime_var_inner user in
+  let b = comptime_var_inner used in
+  match phys_equal a b, a, b with
+  | true, _, _ -> ()
+  | _, `True, `True | _, `False, `False | _, `False, _ -> ()
+  | _, `True, `Var (_, b) -> b := Some `True
+  | _, `Var (_, _), `Var (_, _) | _, `Var (_, _), `True -> ()
+  | _, `Var (_, b), `False -> b := Some `False
+  | _ ->
+    [%string
+      "Failed to unify comptime vars %{[%sexp (user : comptime_var)]#Sexp} and \
+       %{[%sexp (used : comptime_var)]#Sexp}"]
+    |> failwith
+;;
+
 type scc_state =
   { (* Stuff for Tarjan's SCC algo *)
     mutable index : int option
@@ -22,6 +54,7 @@ type 'data var =
   { name : string
   ; data : 'data
   ; mutable args : [ `Non_func | `Func of (string * mono) list ]
+  ; comptime : comptime_var
   ; expr : expanded_expr
   ; mutable typed_expr : 'data gen_expr option
   ; mutable poly : poly
@@ -150,7 +183,17 @@ let rec go_expr_map_rec
   expr_inner, mono
 ;;
 
-let ( && ) a b = `Inf_op (`And, a, b), `Bool
+let unify_var_comptimes ~user ~used =
+  match user, used with
+  | El a, El b -> unify_comptime_var ~user:a.comptime ~used:b.comptime
+  | El a, _ -> unify_comptime_var ~user:a.comptime ~used:`False
+  | _, El a -> unify_comptime_var ~used:a.comptime ~user:`False
+  | _ -> ()
+;;
+
+module And = struct
+  let ( && ) a b = `Inf_op (`And, a, b), `Bool
+end
 
 let expr_map_rec expr ~on_expr_inner ~on_mono =
   let user_type_mem = ref String.Map.empty in
@@ -183,7 +226,7 @@ let two_pow i = Big_int_Z.power (Big_int_Z.big_int_of_int 2) i
 exception Incomplete_type of mono
 exception Cannot_pattern_match of mono
 
-let rec reach_end (mono : mono) =
+let rec reach_end ?default (mono : mono) =
   let mono = inner_mono mono in
   match mono with
   | `Bool | `C_int | `I64 | `F64 | `Unit | `Char -> mono
@@ -195,7 +238,10 @@ let rec reach_end (mono : mono) =
   | `Opaque x -> reach_end x
   | `Pointer x -> `Pointer (reach_end x)
   | `Tuple l -> `Tuple (List.map l ~f:reach_end)
-  | `Indir _ | `Var _ -> raise (Incomplete_type mono)
+  | `Indir _ | `Var _ ->
+    (match default with
+     | None -> raise (Incomplete_type mono)
+     | Some x -> x)
 ;;
 
 let rec decompose_into_pattern mono ~make_a : 'a pattern_branches =
@@ -286,8 +332,9 @@ let rec expr_map_monos (expr_inner, mono) ~f =
 
 let var var = El var
 
-let create_func ~ty_var_counter:_ ~name ~expr ~var_decls ~data ~unique_name =
+let create_func ~name ~expr ~var_decls ~data ~unique_name =
   { name
+  ; comptime = `Var (name, ref None)
   ; unique_name
   ; expr
   ; data
@@ -303,8 +350,9 @@ let create_func ~ty_var_counter:_ ~name ~expr ~var_decls ~data ~unique_name =
   }
 ;;
 
-let create_non_func ~ty_var_counter:_ ~name ~expr ~data ~unique_name =
+let create_non_func ~name ~expr ~data ~unique_name =
   { name
+  ; comptime = `Var (name, ref (Some `True))
   ; unique_name
   ; expr
   ; data

@@ -1,0 +1,14 @@
+open_file "../stdlib/stdlib.el2"
+
+let fib(x) :=
+  match x == 0 || x == 1 with
+  | true -> return(1) [* return is just here for demonstration purposes, can also just be '1' *]
+  | false -> fib(x - 1) + fib(x - 2)
+
+[* this gets evaluated at compile time because it can *]
+let fib10 := fib(10)
+
+let main() := {
+  print_int(fib10);
+  0
+}
