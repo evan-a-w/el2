@@ -16,7 +16,7 @@ let compile ~comptime_eval ~keep_temps ~filename ~c_flags =
   let basename = Filename.basename filename in
   let name = [%string "%{dir}/%{basename}.c"] in
   let chan = Out_channel.create name in
-  Backend.transpile_fully ~comptime_eval ~chan filename;
+  Backend.transpile_fully ~for_header:false ~comptime_eval ~chan filename;
   Out_channel.close chan;
   let res =
     Core_unix.system [%string "cc -w -o %{basename}.o %{c_flags} %{name}"]
@@ -58,16 +58,16 @@ let compile_cmd =
           ~c_flags]
 ;;
 
-let transpile ~comptime_eval ~no_format ~filename =
+let transpile ~for_header ~comptime_eval ~no_format ~filename =
   let clang_format_exists () =
     Core_unix.system "which clang-format > /dev/null" |> Result.is_ok
   in
   match no_format || not (clang_format_exists ()) with
   | true ->
-    Backend.transpile_fully ~comptime_eval ~chan:Out_channel.stdout filename
+    Backend.transpile_fully ~for_header ~comptime_eval ~chan:Out_channel.stdout filename
   | _ ->
     let chan = Core_unix.open_process_out "clang-format" in
-    Backend.transpile_fully ~comptime_eval ~chan filename;
+    Backend.transpile_fully ~for_header ~comptime_eval ~chan filename;
     ignore @@ Core_unix.close_process_out chan
 ;;
 
@@ -82,9 +82,10 @@ let transpile_cmd =
           "skip-comptime-eval"
           no_arg
           ~doc:"Don't evaluate comptime expressions (can be slow)"
-      and no_format = flag "no-format" no_arg ~doc:" Don't format the output" in
+      and no_format = flag "no-format" no_arg ~doc:" Don't format the output"
+      and for_header = flag "header" no_arg ~doc:"Make only a header" in
       fun () ->
-        transpile ~comptime_eval:(not skip_comptime_eval) ~no_format ~filename]
+        transpile ~for_header ~comptime_eval:(not skip_comptime_eval) ~no_format ~filename]
 ;;
 
 let () =

@@ -669,14 +669,15 @@ let rec compile_module ~state module_t =
     | _ -> ())
 ;;
 
-let compile ~comptime_eval ~input ~chan =
+let compile ~for_header ~comptime_eval ~input ~chan =
   let state = state_of_input ~comptime_eval input in
   Hashtbl.iter input.seen_files ~f:(compile_module ~state);
   Out_channel.output_string chan headers;
   Bigbuffer.contents state.type_decl_buf |> Out_channel.output_string chan;
   Bigbuffer.contents state.type_buf |> Out_channel.output_string chan;
   Bigbuffer.contents state.decl_buf |> Out_channel.output_string chan;
-  Bigbuffer.contents state.def_buf |> Out_channel.output_string chan
+  if not for_header
+  then Bigbuffer.contents state.def_buf |> Out_channel.output_string chan
 ;;
 
 let print_typed_ast filename =
@@ -691,7 +692,7 @@ let print_typed_ast filename =
       | _ -> ()))
 ;;
 
-let transpile_fully ~comptime_eval ~chan filename =
+let transpile_fully ~for_header ~comptime_eval ~chan filename =
   let input = Type_check.type_check_and_output filename in
-  compile ~comptime_eval ~input ~chan
+  compile ~for_header ~comptime_eval ~input ~chan
 ;;
