@@ -10,12 +10,11 @@ module Chunk := {
   }
 }
 
-
 type t(a) := {
   a_per_chunk : i64;
   chunks : &Chunk.t(a);
   exhausted_chunks : &Chunk.t(a);
-  free_nodes : Free_node.t(a)
+  free_list : &Free_node.t(a)
 }
 
 let main() := {

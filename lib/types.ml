@@ -1,5 +1,8 @@
 open! Core
 
+(* TODO: add array types (stack allocated) - currently unsound because
+   array literals are shared basically *)
+
 (*SUA *)
 open! Ast
 
