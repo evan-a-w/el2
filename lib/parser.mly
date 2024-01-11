@@ -352,9 +352,22 @@ module_sig:
   | LBRACE; l = list(toplevel_sig); RBRACE
     { `Decl l }
 
-module_expr:
+functor_arg:
+  | n = UPPER_ID; COLON; t = module_sig
+    { n, t }
+
+module_expr_toplevels:
   | LBRACE; l = list(toplevel); RBRACE
-    { `Decl l }
+    { l }
+
+module_expr:
+  | module_expr_toplevels
+    { `Decl $1 }
+  | n = upper_name_path; LPAREN; l = separated_list(COMMA, module_expr); RPAREN
+    { `Named_args (n, l) }
+  | n = separated_nonempty_list(DOT, UPPER_ID)
+    { `Named (n) }
+
 toplevel:
   | let_
     { $1 }
@@ -372,3 +385,7 @@ toplevel:
     { `Open_file file }
   | MODULE; name = UPPER_ID; COLON; s = option(module_sig); EQUALS; me = module_expr
     { `Module_decl (name, s, me) }
+  | MODULE; name = UPPER_ID; LPAREN;
+    l = separated_list(COMMA, functor_arg);
+    RPAREN; COLON; s = option(module_sig); EQUALS; me = module_expr_toplevels
+    { `Functor_decl (name, l, s, me) }

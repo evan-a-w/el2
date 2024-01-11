@@ -1,11 +1,13 @@
 open_file "../stdlib/stdlib.el2"
 
+[*
 module Cring := {
-  type t = i64
+  type t := i64
 
   let g(x) := x + 1
   let f(x) := g(g(x))
 }
+*]
 
 module Functor (Arg1 : {
   type t
@@ -16,24 +18,29 @@ module Functor (Arg1 : {
 }
 
 module Applied := Functor({
-  type t = { val : i64 }
+  type t := { val : i64 }
 
   let f(x) := #t { val : x }
 })
 
+[*
 module Other := Functor({
-  type t = i64
+  type t := i64
 
   let f(x) := x
 })
 
 module Third := Functor(Cring)
+*]
 
 let main() := {
   let res := Applied.f(1);
   print_int(res.Applied.val);
+  [*
   print_endline("");
   print_int(Other.f(2));
   print_endline("");
-  print_int(Third.f(0))
+  print_int(Third.f(0));
+  *]
+  0
 }

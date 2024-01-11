@@ -342,10 +342,16 @@ module Type_state = struct
       lookup_module_in_exn names ~in_:state.current_module
   ;;
 
-  let try_on_all_modules state ~try_make_module ~module_path ~f =
+  let rec try_on_all_modules state ~try_make_module ~module_path ~f =
     let rec loop opened_modules =
       match opened_modules with
-      | [] -> None
+      | [] ->
+        Option.bind state.current_module.parent ~f:(fun module_t ->
+          try_on_all_modules
+            { state with current_module = module_t }
+            ~try_make_module
+            ~module_path
+            ~f)
       | module_t :: opened_modules ->
         (match f module_path module_t with
          | Some _ as res -> res
@@ -412,6 +418,53 @@ let poly_inner (poly : poly) =
     | `For_all (_, r) -> go r
   in
   go poly
+;;
+
+let rec pretty_print_module_t module_t =
+  let open PPrint in
+  let user_types =
+    Hashtbl.to_alist module_t.Type_state.types
+    |> List.map ~f:(fun (name, user_type) ->
+      string [%string "type %{name} ="]
+      ^^ space
+      ^^ Pretty_print.user_type_p user_type)
+    |> separate (break 1)
+  in
+  let glob_vars =
+    Hashtbl.to_alist module_t.glob_vars
+    |> List.map ~f:(fun (name, var) ->
+      match var with
+      | Typed_ast.El { poly; _ } ->
+        string "let"
+        ^^ space
+        ^^ string name
+        ^^ space
+        ^^ colon
+        ^^ space
+        ^^ Pretty_print.mono (poly_inner poly)
+      | Extern (name, _, mono) ->
+        string [%string "extern %{name} : %{show_mono mono}"]
+      | Implicit_extern (name, _, mono) ->
+        string [%string "implicit_extern %{name} : %{show_mono mono}"]
+      | From_functor (name, _) -> string [%string "from_functor %{name}"])
+    |> separate (break 1)
+  in
+  let modules =
+    Hashtbl.to_alist module_t.sub_modules
+    |> List.map ~f:(fun (name, module_t) ->
+      string [%string "module %{name} ="]
+      ^^ space
+      ^^ pretty_print_module_t module_t)
+    |> separate (break 1)
+  in
+  concat
+    [ string
+        [%string
+          "Module %{Type_state.show_module_ident module_t.Type_state.name}:"]
+    ; nest 4 (hardline ^^ user_types)
+    ; nest 4 (hardline ^^ modules)
+    ; nest 4 (hardline ^^ glob_vars)
+    ]
 ;;
 
 let gen_helper ~vars ~indirs ~counter ~used mono : mono =
@@ -910,8 +963,7 @@ and module_of_sig_decl ~parent ~state toplevel_decls =
   Queue.iter let_toplevels ~f:(fun (name, t) ->
     let mono = mono_of_type_expr ~state t in
     let poly =
-      ge
-n
+      gen
         ~counter:state.Type_state.var_counter
         ~vars:(String.Table.create ())
         ~indirs:(Int.Table.create ())
@@ -939,8 +991,11 @@ and process_module_expr ?parent ?name ~state = function
         ~name
         ~dir:state.current_module.dir
     in
-    process_module ~state ~module_t toplevels
-  | `Named path -> process_module_path ~state path
+    let res = process_module ~state ~module_t toplevels in
+    pretty_print_module_t res |> Pretty_print.output_endline;
+    res
+  (* TODO: prob broken *)
+  | `Named path -> lookup_module ~state path
   | `Named_args (path, l) ->
     let modules =
       List.map l ~f:(fun x -> process_module_expr ?parent ~state x)
@@ -964,29 +1019,20 @@ and inst_functor ~state ~modules functor_t =
       | Ok x -> x
       | _ -> failwith "Wrong number of functor arguments"
     in
-    let empty_module = Type_state.module_create_anon ~state ~parent:None in
     List.iter functor_args ~f:(fun ((key, `Decl signature, _), data) ->
       check_module_matches_sig ~state ~signature data;
-      Hashtbl.set empty_module.sub_modules ~key ~data);
-    let opened_modules = empty_module :: functor_t.opened_modules in
-    let state =
-      { state with
-        current_module = res_module
-      ; opened_modules
-      ; locals = String.Map.empty
-      }
-    in
-    process_module ~state ~module_t:res_module functor_t.ast
+      Hashtbl.set res_module.sub_modules ~key ~data);
+    let opened_modules = functor_t.opened_modules in
+    process_module ~opened_modules ~state ~module_t:res_module functor_t.ast
 
 and process_functor_inst_path ~state ~modules path =
   let functor_t = lookup_functor ~state path in
   inst_functor ~state ~modules functor_t
 
-and process_module ~state ~module_t toplevels =
+and process_module ?(opened_modules = []) ~state ~module_t toplevels =
   module_t.Type_state.in_eval <- true;
-  let state = { state with Type_state.current_module = module_t } in
   type_check
-    ~state:{ state with opened_modules = []; locals = String.Map.empty }
+    ~state:{ state with Type_state.current_module = module_t; opened_modules; locals = String.Map.empty }
     toplevels;
   module_t.in_eval <- false;
   module_t
@@ -1092,7 +1138,7 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
   let type_defs = String.Table.create () in
   let let_toplevels = Queue.create () in
   let _ =
-    List.fold toplevels ~init:[] ~f:(fun acc ->
+    List.fold toplevels ~init:state.opened_modules ~f:(fun acc ->
         function
         | `Open_file filename ->
           let nek =
@@ -1103,7 +1149,7 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
           Queue.enqueue let_toplevels (`Open nek);
           nek :: acc
         | `Open path ->
-          let nek = process_module_path ~state path in
+          let nek = lookup_module ~state path in
           Queue.enqueue let_toplevels (`Open nek);
           nek :: acc
         | `Let_type ((name, ty_vars), type_decl) ->
@@ -1240,9 +1286,13 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
            | `Ok -> opened_modules
            | _ -> failwith [%string "Duplicate submodule %{name}"])
         | `Functor_decl (name, args, signature, toplevels) ->
-          let empty_module =
-            Type_state.module_create_anon ~state ~parent:None
+          let res_module =
+            Type_state.module_create_anon
+              ~state
+              ~parent:(Some state.current_module)
           in
+          let res_name = Type_state.show_module_ident res_module.name in
+          print_endline [%string "Functor %{res_name}"];
           let args =
             List.map args ~f:(fun (name, (`Decl signature as s)) ->
               let module_t =
@@ -1251,20 +1301,11 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
                   ~state
                   signature
               in
-              Hashtbl.set empty_module.sub_modules ~key:name ~data:module_t;
+              Hashtbl.set res_module.sub_modules ~key:name ~data:module_t;
               name, s, module_t)
           in
-          let res_module =
-            Type_state.module_create_anon
-              ~state
-              ~parent:(Some state.current_module)
-          in
           let functor_body =
-            process_module
-              ~state:
-                { state with opened_modules = empty_module :: opened_modules }
-              ~module_t:res_module
-              toplevels
+            process_module ~opened_modules ~state ~module_t:res_module toplevels
           in
           (match signature with
            | Some (`Decl signature) ->
@@ -1274,7 +1315,7 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
             Type_state.create_functor
               ~functor_name:name
               ~functor_body
-              ~opened_modules:(empty_module :: opened_modules)
+              ~opened_modules
               ~functor_args:args
               ~ast:toplevels
           in
@@ -1811,53 +1852,6 @@ let type_check_and_output filename =
     print_endline "Fatal error:";
     print_endline s;
     exit 1
-;;
-
-let rec pretty_print_module_t module_t =
-  let open PPrint in
-  let user_types =
-    Hashtbl.to_alist module_t.Type_state.types
-    |> List.map ~f:(fun (name, user_type) ->
-      string [%string "type %{name} ="]
-      ^^ space
-      ^^ Pretty_print.user_type_p user_type)
-    |> separate (break 1)
-  in
-  let glob_vars =
-    Hashtbl.to_alist module_t.glob_vars
-    |> List.map ~f:(fun (name, var) ->
-      match var with
-      | Typed_ast.El { poly; _ } ->
-        string "let"
-        ^^ space
-        ^^ string name
-        ^^ space
-        ^^ colon
-        ^^ space
-        ^^ Pretty_print.mono (poly_inner poly)
-      | Extern (name, _, mono) ->
-        string [%string "extern %{name} : %{show_mono mono}"]
-      | Implicit_extern (name, _, mono) ->
-        string [%string "implicit_extern %{name} : %{show_mono mono}"]
-      | From_functor (name, _) -> string [%string "from_functor %{name}"])
-    |> separate (break 1)
-  in
-  let modules =
-    Hashtbl.to_alist module_t.sub_modules
-    |> List.map ~f:(fun (name, module_t) ->
-      string [%string "module %{name} ="]
-      ^^ space
-      ^^ pretty_print_module_t module_t)
-    |> separate (break 1)
-  in
-  concat
-    [ string
-        [%string
-          "Module %{Type_state.show_module_ident module_t.Type_state.name}:"]
-    ; nest 4 (hardline ^^ user_types)
-    ; nest 4 (hardline ^^ modules)
-    ; nest 4 (hardline ^^ glob_vars)
-    ]
 ;;
 
 let process_and_dump filename =
