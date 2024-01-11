@@ -5,9 +5,10 @@ module Free_node := {
 module Chunk := {
   type t(a) := {
     next : &t(a);
-    allocated_till : i64;
-    data_start : a
+    allocated_till : i64
   }
+
+  let data(t : &t(a)) : &a = unsafe_cast(&t[1])
 }
 
 type t(a) := {

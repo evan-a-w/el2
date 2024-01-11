@@ -3,6 +3,8 @@ open! Ast
 open! Types
 open Type_common
 
+(* TODO: actual named tyvars in type_exprs *)
+
 type unification_error =
   | Failed_to_match of
       { sub : unification_error
