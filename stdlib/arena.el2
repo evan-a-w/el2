@@ -1,0 +1,24 @@
+module Free_node := {
+  type t(a) := { next : &t(a) }
+}
+
+module Chunk := {
+  type t(a) := {
+    next : &t(a);
+    allocated_till : i64;
+    data_start : a
+  }
+}
+
+
+type t(a) := {
+  a_per_chunk : i64;
+  chunks : &Chunk.t(a);
+  exhausted_chunks : &Chunk.t(a);
+  free_nodes : Free_node.t(a)
+}
+
+let main() := {
+  Stdlib.print_int(sizeof[Chunk.t(i64)]);
+  0
+}

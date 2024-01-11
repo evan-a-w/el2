@@ -285,10 +285,15 @@ module Type_state = struct
       lookup_module_in_exn names ~in_:state.current_module
   ;;
 
-  let try_on_all_modules state ~try_make_module ~module_path ~f =
+  let rec try_on_all_modules state ~try_make_module ~module_path ~f =
     let rec loop opened_modules =
       match opened_modules with
-      | [] -> None
+      | [] ->
+        Option.bind state.current_module.parent ~f:(fun parent ->
+          let state =
+            { state with current_module = parent; opened_modules = [] }
+          in
+          try_on_all_modules state ~try_make_module ~module_path ~f)
       | module_t :: opened_modules ->
         (match f module_path module_t with
          | Some _ as res -> res
@@ -311,7 +316,7 @@ end
 type expr = Type_state.module_t list Typed_ast.expr
 type expr_inner = Type_state.module_t list Typed_ast.expr_inner
 type gen_expr = Type_state.module_t list Typed_ast.gen_expr
-type var = Type_state.module_t list Typed_ast.var 
+type var = Type_state.module_t list Typed_ast.var
 type top_var = Type_state.module_t list Typed_ast.top_var
 
 let make_user_type ~repr_name ~name ~ty_vars =
@@ -322,6 +327,58 @@ type ty_var_map = mono String.Map.t [@@deriving sexp]
 type locals_map = mono String.Map.t
 
 let empty_ty_vars : ty_var_map = String.Map.empty
+
+let poly_inner (poly : poly) =
+  let rec go = function
+    | `Mono mono -> mono
+    | `For_all (_, r) -> go r
+  in
+  go poly
+;;
+
+let rec pretty_print_module_t module_t =
+  let open PPrint in
+  let user_types =
+    Hashtbl.to_alist module_t.Type_state.types
+    |> List.map ~f:(fun (name, user_type) ->
+      string [%string "type %{name} ="]
+      ^^ space
+      ^^ Pretty_print.user_type_p user_type)
+    |> separate (break 1)
+  in
+  let glob_vars =
+    Hashtbl.to_alist module_t.glob_vars
+    |> List.map ~f:(fun (name, var) ->
+      match var with
+      | Typed_ast.El { poly; _ } ->
+        string "let"
+        ^^ space
+        ^^ string name
+        ^^ space
+        ^^ colon
+        ^^ space
+        ^^ Pretty_print.mono (poly_inner poly)
+      | Extern (name, _, mono) ->
+        string [%string "extern %{name} : %{show_mono mono}"]
+      | Implicit_extern (name, _, mono) ->
+        string [%string "implicit_extern %{name} : %{show_mono mono}"])
+    |> separate (break 1)
+  in
+  let modules =
+    Hashtbl.to_alist module_t.sub_modules
+    |> List.map ~f:(fun (name, module_t) ->
+      string [%string "module %{name} ="]
+      ^^ space
+      ^^ pretty_print_module_t module_t)
+    |> separate (break 1)
+  in
+  concat
+    [ string [%string "Module %{module_t.Type_state.name}:"]
+    ; nest 4 (hardline ^^ user_types)
+    ; nest 4 (hardline ^^ modules)
+    ; nest 4 (hardline ^^ glob_vars)
+    ]
+;;
 
 let get_non_user_type ~make_ty_vars ~state name =
   match name with
@@ -347,14 +404,6 @@ let find_module_in_submodules ~state ~try_make_module ~f module_path =
     ~try_make_module
     ~module_path
     state
-;;
-
-let poly_inner (poly : poly) =
-  let rec go = function
-    | `Mono mono -> mono
-    | `For_all (_, r) -> go r
-  in
-  go poly
 ;;
 
 let gen_helper ~vars ~indirs ~counter ~used mono : mono =
@@ -795,7 +844,7 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
     List.iter l ~f:(fun (p, e) -> rep ~locals:(pattern_vars p ~locals) e)
   | `Tuple l | `Array_lit l -> List.iter l ~f:(rep ~locals)
   | `Assign (`Var v, b) ->
-     (* can only assign to locals *)
+    (* can only assign to locals *)
     (match traverse_expr_var_part ~state ~not_found_vars ~edge ~locals v with
      | `Local -> ()
      | `Global -> Typed_ast.unify_comptime_var ~user:edge.comptime ~used:`False);
@@ -835,11 +884,15 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
     rep ~locals b;
     rep ~locals c
 
-and process_module ~state ~module_t toplevels =
+and process_module ~opened_modules ~state ~module_t toplevels =
   module_t.Type_state.in_eval <- true;
-  let state = { state with Type_state.current_module = module_t } in
   type_check
-    ~state:{ state with opened_modules = []; locals = String.Map.empty }
+    ~state:
+      { state with
+        Type_state.current_module = module_t
+      ; opened_modules
+      ; locals = String.Map.empty
+      }
     toplevels;
   module_t.in_eval <- false;
   module_t
@@ -860,7 +913,7 @@ and process_file ?parent ~state filename =
         let dir, name = unel2_file filename in
         let module_t = Type_state.module_create ~parent ~name ~dir in
         Hashtbl.set state.seen_files ~key:filename ~data:module_t;
-        process_module ~state ~module_t toplevels))
+        process_module ~opened_modules:[] ~state ~module_t toplevels))
 
 and process_module_path ?parent ~state path =
   match path with
@@ -883,17 +936,21 @@ and type_check ~state toplevels =
       in
       ignore (infer_var ~state var))
   with
-  | Failure s ->
+  | Failure s as exn ->
     print_endline
       [%string
         "Fatal error while evaluating %{state.current_module.name}:\n%{s}"];
+    Backtrace.Exn.most_recent_for_exn exn
+    |> Option.value_exn
+    |> Backtrace.to_string
+    |> print_endline;
     exit 1
 
 and process_toplevel_graph ~state (toplevels : toplevel list) =
   let type_defs = String.Table.create () in
   let let_toplevels = Queue.create () in
   let _ =
-    List.fold toplevels ~init:[] ~f:(fun acc ->
+    List.fold toplevels ~init:state.opened_modules ~f:(fun acc ->
         function
         | `Open_file filename ->
           let nek =
@@ -932,8 +989,25 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
           Queue.enqueue let_toplevels (`Implicit_extern x);
           acc
         | `Module_decl (name, toplevels) ->
-          Queue.enqueue let_toplevels (`Module_decl (name, toplevels));
-          acc)
+          (* define the submodule. it can use anything we've defined so far,
+             but not polymorphically (a bit weird but eh) *)
+          let module_t =
+            Type_state.module_create
+              ~parent:(Some state.current_module)
+              ~name
+              ~dir:state.current_module.dir
+          in
+          let module_t =
+            process_module ~opened_modules:acc ~state ~module_t toplevels
+          in
+          (match
+             Hashtbl.add
+               state.current_module.sub_modules
+               ~key:name
+               ~data:module_t
+           with
+           | `Ok -> acc
+           | _ -> failwith [%string "Duplicate submodule %{name}"]))
   in
   let not_found_vars = String.Table.create () in
   process_types ~state type_defs;
@@ -1011,33 +1085,7 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
              Hashtbl.add state.current_module.glob_vars ~key:name ~data:edge
            with
            | `Ok -> opened_modules
-           | _ -> failwith [%string "Duplicate variable %{name}"])
-        | `Module_decl (name, toplevels) ->
-          (* define the submodule. it can use anything we've defined so far,
-             but not polymorphically (a bit weird but eh) *)
-          let module_t =
-            Type_state.module_create
-              ~parent:(Some state.current_module)
-              ~name
-              ~dir:state.current_module.dir
-          in
-          let module_t =
-            process_module
-              ~state:
-                { state with
-                  opened_modules = state.current_module :: opened_modules
-                }
-              ~module_t
-              toplevels
-          in
-          (match
-             Hashtbl.add
-               state.current_module.sub_modules
-               ~key:name
-               ~data:module_t
-           with
-           | `Ok -> opened_modules
-           | _ -> failwith [%string "Duplicate submodule %{name}"]))
+           | _ -> failwith [%string "Duplicate variable %{name}"]))
   in
   match Hashtbl.is_empty not_found_vars with
   | false ->
@@ -1553,50 +1601,6 @@ let type_check_and_output filename =
     print_endline "Fatal error:";
     print_endline s;
     exit 1
-;;
-
-let rec pretty_print_module_t module_t =
-  let open PPrint in
-  let user_types =
-    Hashtbl.to_alist module_t.Type_state.types
-    |> List.map ~f:(fun (name, user_type) ->
-      string [%string "type %{name} ="]
-      ^^ space
-      ^^ Pretty_print.user_type_p user_type)
-    |> separate (break 1)
-  in
-  let glob_vars =
-    Hashtbl.to_alist module_t.glob_vars
-    |> List.map ~f:(fun (name, var) ->
-      match var with
-      | Typed_ast.El { poly; _ } ->
-        string "let"
-        ^^ space
-        ^^ string name
-        ^^ space
-        ^^ colon
-        ^^ space
-        ^^ Pretty_print.mono (poly_inner poly)
-      | Extern (name, _, mono) ->
-        string [%string "extern %{name} : %{show_mono mono}"]
-      | Implicit_extern (name, _, mono) ->
-        string [%string "implicit_extern %{name} : %{show_mono mono}"])
-    |> separate (break 1)
-  in
-  let modules =
-    Hashtbl.to_alist module_t.sub_modules
-    |> List.map ~f:(fun (name, module_t) ->
-      string [%string "module %{name} ="]
-      ^^ space
-      ^^ pretty_print_module_t module_t)
-    |> separate (break 1)
-  in
-  concat
-    [ string [%string "Module %{module_t.Type_state.name}:"]
-    ; nest 4 (hardline ^^ user_types)
-    ; nest 4 (hardline ^^ modules)
-    ; nest 4 (hardline ^^ glob_vars)
-    ]
 ;;
 
 let process_and_dump filename =
