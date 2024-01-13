@@ -1,0 +1,45 @@
+open Stdlib
+open Types
+
+type t(a) := {
+    size : i64;
+    capacity : i64;
+    arr : &a
+}
+
+let create() := #t {
+    size : 0;
+    capacity : 0;
+    arr : null
+}
+
+let push(t, a : a) := {
+    if t^.size == t^.capacity then {
+        t^.capacity = min(8, t^.capacity * 2);
+        t^.arr = realloc(t^.arr, t^.capacity * sizeof[a])
+    };
+    t^.arr[t^.size] = a;
+    t^.size = t^.size + 1;
+    ()
+}
+
+let pop(t) :=
+    if t^.size > 0 then {
+        t^.size = t^.size - 1;
+        Some(t^.arr[t^.size])
+    } else {
+        None
+    }
+
+let is_empty(t) := t^.size == 0
+
+let get(t, index) := t^.arr[index]
+let set(t, index, val) := t^.arr[index] = val
+let index(t, index) := &t^.arr[index]
+
+let free(t) := {
+    Stdlib.free(t^.arr);
+    t^.size = 0;
+    t^.capacity = 0;
+    ()
+}

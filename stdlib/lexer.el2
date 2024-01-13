@@ -1,0 +1,69 @@
+type t := {
+    intern : Intern.t;
+    buffer : Vector.t(char)
+}
+
+module Token := {
+    type t :=
+        | Int(i64)
+        | Float(f64)
+        | String(&char)
+        | Ident(&char)
+        | Upper_ident(&char)
+        | Eof
+        | Null
+        | Size_of
+        | Return
+        | If
+        | Else
+        | Then
+        | Eq
+        | Ge
+        | Gt
+        | Le
+        | Lt
+        | Ne
+        | And
+        | Or
+        | Arrow
+        | Plus
+        | Minus
+        | Times
+        | Div
+        | Rem
+        | Amp
+        | Caret
+        | Lparen
+        | Rparen
+        | Lbrace
+        | Rbrace
+        | Lbrack
+        | Rbrack
+        | Dot
+        | Lbracepipe
+        | Piperbrace
+        | Equals
+        | Semicolon
+        | Comma
+        | Hash
+        | Colon
+        | Pipe
+        | Match
+        | With
+        | True
+        | False
+        | Char(char)
+        | Let
+        | Type
+        | Extern
+        | Implicit_extern
+        | Assert
+        | Open
+        | Open_file
+        | Loop
+        | Break
+        | Module
+        | Unsafe_cast
+}
+
+let main() := 0

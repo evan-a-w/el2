@@ -1,0 +1,26 @@
+type t := { map : Hashmap.t(&char, &char) }
+
+let create() := #t { map : Hashmap.create(Hash.string_hash, Hash.string_equal) }
+
+[* returns the string and true if it is already interned *]
+let intern(t, x) : (&char, bool) = {
+    match Hashmap.find(&t^.map, x) with
+    | Types.Some(y) -> (y, true)
+    | Types.None -> {
+        let len := Stdlib.strlen(x);
+        let y := Stdlib.alloc(len + 1);
+        Stdlib.memcpy(y, x, len + 1);
+        let _ := Hashmap.insert(&t^.map, y, y);
+        (y, false)
+    }
+}
+
+let destroy(t) := {
+      let iterator := Hashmap.iterator(&t^.map);
+      loop {
+          match Hashmap.iterator_next(&iterator) with
+          | Types.Some((k, v)) -> Stdlib.free(k)
+          | Types.None -> break(())
+      };
+      Hashmap.destroy(&t^.map)
+}

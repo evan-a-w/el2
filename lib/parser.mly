@@ -86,16 +86,6 @@ dot_and_upper:
   | UPPER_ID; DOT
     { $1 }
 
-upper_name_list_with_last:
-  | UPPER_ID
-    { [ $1 ] }
-  | l = upper_name_list_with_last; next = UPPER_ID
-    { next :: l }
-
-upper_name_path:
-  | l = upper_name_list_with_last
-    { Ast.{ module_path = List.tl l; inner = List.hd l } }
-
 type_expr_no_whitespace:
   | n = name_path
     { `Named n }
@@ -133,8 +123,12 @@ pattern_no_whitespace:
 pattern:
   | p = pattern_no_whitespace
     { p }
-  | i = upper_name_path; p = option(pattern_wrapped)
-    { `Enum (i, p) }
+  | l = dot_upper_list_; i = UPPER_ID; p = option(pattern_wrapped)
+    { `Enum (Ast.{ module_path = l; inner = i }, p) }
+
+%inline dot_upper_list_:
+  | dot_upper_list_rev
+    { List.rev $1 }
 
 pattern_struct_rhs:
   | COLON; p = pattern
@@ -318,7 +312,7 @@ type_decl_struct_each:
     { (n, t) }
 
 type_decl:
-  | t = type_expr_no_whitespace
+  | t = type_expr
     { `Alias t }
   | PIPE; l = separated_list(PIPE, type_decl_enum_each)
     { `Enum l }

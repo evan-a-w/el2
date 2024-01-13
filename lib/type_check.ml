@@ -88,8 +88,21 @@ let rec unify a b =
   | Invalid_argument _ -> fl End a b
 ;;
 
+let inst_user_type_exn inst_user_type =
+  get_insted_user_type inst_user_type
+  |> Option.value_or_thunk ~default:(fun () -> failwith "Undefined type")
+;;
+
+let rec inner_info (info : all_user option) =
+  match info with
+  | Some (`Alias (`User u)) ->
+    inner_info
+      (get_insted_user_type u |> Option.bind ~f:(fun { info; _ } -> !info))
+  | _ -> info
+;;
+
 let get_user_type_field user_type field =
-  match !(user_type.info) with
+  match inner_info !(user_type.info) with
   | Some (`Struct l) ->
     List.find l ~f:(fun (a, _) -> String.equal a field)
     |> Option.map ~f:Tuple2.get2
@@ -97,7 +110,7 @@ let get_user_type_field user_type field =
 ;;
 
 let get_user_type_variant user_type variant =
-  match !(user_type.info) with
+  match inner_info !(user_type.info) with
   | Some (`Enum l) ->
     List.find l ~f:(fun (a, _) -> String.equal a variant)
     |> Option.map ~f:Tuple2.get2
@@ -513,10 +526,6 @@ let rec try_make_module ~state name =
   match Stdlib.Sys.file_exists filename with
   | false -> None
   | true -> Some (process_file ~state filename)
-
-and inst_user_type_exn inst_user_type =
-  get_insted_user_type inst_user_type
-  |> Option.value_or_thunk ~default:(fun () -> failwith "Undefined type")
 
 and get_user_type_variant_exn ~variant inst_user_type =
   let insted = inst_user_type_exn inst_user_type in
@@ -967,6 +976,8 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
   let type_defs = String.Table.create () in
   let let_toplevels = Queue.create () in
   let _ =
+    (* TODO: make type processing happen as we go, since this is now needed with
+       sub modules *)
     List.fold toplevels ~init:state.opened_modules ~f:(fun acc ->
         function
         | `Open_file filename ->
@@ -1186,9 +1197,7 @@ and mono_of_var ~state name =
 and infer_var ~state (var : Type_state.module_t list Typed_ast.top_var) =
   match var with
   | El v ->
-    (match v.scc.type_check_state with
-     | `Untouched -> infer_scc ~state v.scc
-     | `In_checking | `Done -> ());
+    infer_scc ~state v.scc;
     let mono, inst_map = inst v.poly in
     (match v.scc.type_check_state with
      | `Untouched | `In_checking -> mono, None
@@ -1197,6 +1206,11 @@ and infer_var ~state (var : Type_state.module_t list Typed_ast.top_var) =
     mono, Some String.Map.empty
 
 and infer_scc ~state scc =
+  match scc.type_check_state with
+  | `Done | `In_checking -> ()
+  | `Untouched -> infer_scc_ ~state scc
+
+and infer_scc_ ~state scc =
   let open Typed_ast in
   scc.type_check_state <- `In_checking;
   let monos =

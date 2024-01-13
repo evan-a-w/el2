@@ -1,0 +1,26 @@
+let i64_equal(a, b) := a^ == b^
+let i64_hash(a) := a^
+
+let string_hash(s : &(&char)) := {
+    let s := s^;
+    let hash := 5381;
+    let i := 0;
+    loop {
+        let sc : int = unsafe_cast(s^);
+        if sc == 0 then break(hash);
+        hash = (hash * 33) + sc
+    }
+}
+
+let string_equal(a : &(&char), b : &(&char)) := {
+    let a := a^;
+    let b := b^;
+    loop {
+        let ac : int = unsafe_cast(a^);
+        let bc : int = unsafe_cast(b^);
+        if ac != bc then break(false);
+        if ac == 0 || bc == 0 then break(true);
+        a = &a[1];
+        b = &b[1]
+    }
+}
