@@ -11,6 +11,12 @@ type unification_error =
   | End
 [@@deriving sexp]
 
+module type Iterable = sig
+  type 'a t
+
+  val iter : 'a t -> f:('a -> unit) -> unit
+end
+
 let rec show_unification_error = function
   | Failed_to_match { sub; failed = a, b } ->
     [%string
@@ -115,6 +121,15 @@ let get_user_type_variant user_type variant =
     List.find l ~f:(fun (a, _) -> String.equal a variant)
     |> Option.map ~f:Tuple2.get2
   | _ -> None
+;;
+
+let rec last_user_type_info_not_insted (mono : mono) =
+  match mono with
+  | `User u ->
+    (match !(u.orig_user_type.info) with
+     | Some (`Alias m) -> last_user_type_info_not_insted m
+     | o -> o)
+  | _ -> Some (`Alias mono)
 ;;
 
 let internal_var counter = "internal_" ^ Counter.next_num counter
@@ -676,33 +691,36 @@ and process_types ~(state : Type_state.t) types =
         Map.add_exn acc ~key:s ~data:mono)
     in
     let state = { state with ty_vars; opened_modules } in
+    let variants_f s =
+      match
+        Hashtbl.add state.current_module.variant_to_type ~key:s ~data:user_type
+      with
+      | `Ok -> ()
+      | `Duplicate -> failwith [%string "Duplicate variant %{s}"]
+    in
+    let fields_f s =
+      match
+        Hashtbl.add state.current_module.field_to_type ~key:s ~data:user_type
+      with
+      | `Ok -> ()
+      | `Duplicate -> failwith [%string "Duplicate field %{s}"]
+    in
     let all_user =
       match decl with
       | `Alias type_expr ->
-        `Alias (mono_of_type_expr ~state ~make_ty_vars:false type_expr)
+        let mono' = mono_of_type_expr ~make_ty_vars:false ~state type_expr in
+        (match last_user_type_info_not_insted mono' with
+         | Some (`Enum l) -> List.map ~f:fst l |> List.iter ~f:variants_f
+         | Some (`Struct l) -> List.map ~f:fst l |> List.iter ~f:fields_f
+         | _ -> ());
+        `Alias mono'
       | `Enum l ->
         let all_user, variants = all_user_of_enum ~state l in
-        Hash_set.iter variants ~f:(fun s ->
-          match
-            Hashtbl.add
-              state.current_module.variant_to_type
-              ~key:s
-              ~data:user_type
-          with
-          | `Ok -> ()
-          | `Duplicate -> failwith [%string "Duplicate variant %{s}"]);
+        Hash_set.iter ~f:variants_f variants;
         all_user
       | `Struct l ->
         let all_user, fields = all_user_of_struct ~state l in
-        Hash_set.iter fields ~f:(fun s ->
-          match
-            Hashtbl.add
-              state.current_module.field_to_type
-              ~key:s
-              ~data:user_type
-          with
-          | `Ok -> ()
-          | `Duplicate -> failwith [%string "Duplicate field %{s}"]);
+        Hash_set.iter ~f:fields_f fields;
         all_user
     in
     user_type.info := Some all_user)

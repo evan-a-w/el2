@@ -4,11 +4,11 @@ let i64_hash(a) := a^
 let string_hash(s : &(&char)) := {
     let s := s^;
     let hash := 5381;
-    let i := 0;
     loop {
         let sc : int = unsafe_cast(s^);
         if sc == 0 then break(hash);
-        hash = (hash * 33) + sc
+        hash = (hash * 33) + sc;
+	s = &s[1]
     }
 }
 
