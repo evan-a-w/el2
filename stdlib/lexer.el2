@@ -1,7 +1,4 @@
-type t := {
-    intern : Intern.t;
-    buffer : Vector.t(char)
-}
+open Types
 
 module Token := {
     type t :=
@@ -65,5 +62,12 @@ module Token := {
         | Module
         | Unsafe_cast
 }
+
+type t := {
+    intern : Intern.t;
+    buffer : Vector.t(char);
+    prev : option(Token.t)
+}
+
 
 let main() := 0
