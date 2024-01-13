@@ -7,6 +7,8 @@ open! Type_check
    bottom types end up just being a ty var.
    this happens for 'return'.
    TODO?: make an actual bottom type *)
+
+(* TODO: make variable shadowing work! important! *)
 let reach_end = Typed_ast.reach_end ~default:`Unit
 
 exception Invalid_type of mono
@@ -680,16 +682,23 @@ let compile ~for_header ~comptime_eval ~input ~chan =
   then Bigbuffer.contents state.def_buf |> Out_channel.output_string chan
 ;;
 
+let rec print_module input =
+  Hashtbl.iter input.Type_state.sub_modules ~f:(fun input ->
+      print_endline [%string "Submodule %{input.name}"];
+      print_module input
+    );
+  Hashtbl.iter input.Type_state.glob_vars ~f:(fun var ->
+    match var with
+    | Typed_ast.El { poly; name; typed_expr; _ } ->
+      let expr_inner, poly' = Option.value_exn typed_expr in
+      let mono = poly_inner poly' in
+      Pretty_print.print ~name ~poly ~typed_ast:(expr_inner, mono)
+    | _ -> ());
+;;
+
 let print_typed_ast filename =
   let input = Type_check.type_check_and_output filename in
-  Hashtbl.iter input.seen_files ~f:(fun input ->
-    Hashtbl.iter input.glob_vars ~f:(fun var ->
-      match var with
-      | Typed_ast.El { poly; name; typed_expr; _ } ->
-        let expr_inner, poly' = Option.value_exn typed_expr in
-        let mono = poly_inner poly' in
-        Pretty_print.print ~name ~poly ~typed_ast:(expr_inner, mono)
-      | _ -> ()))
+  Hashtbl.iter input.seen_files ~f:print_module
 ;;
 
 let transpile_fully ~for_header ~comptime_eval ~chan filename =

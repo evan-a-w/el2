@@ -28,7 +28,7 @@ module Chunk := {
     }
 
     let get_element(t) := {
-        let res := data(t)[t^.allocated_till];
+        let res := &data(t)[t^.allocated_till];
         t^.allocated_till = t^.allocated_till + 1;
         res
     }
@@ -43,7 +43,7 @@ type t(a) := {
     free_list : &Free_node.t(a)
 }
 
-let create(a_per_chunk : i64) : t(a) =
+let create(a_per_chunk : i64) : t(a) = {
     let calculated_chunk_size := a_per_chunk * sizeof[a] + sizeof[Chunk.t(unit)];
     let chunk_size := Stdlib.min(calculated_chunk_size, sizeof[Chunk.t(unit)] + sizeof[a]);
     let a_per_chunk := (chunk_size - sizeof[Chunk.t(unit)]) / sizeof[a];
@@ -54,6 +54,7 @@ let create(a_per_chunk : i64) : t(a) =
         exhausted_chunks : null;
         free_list : null
     }
+}
 
 let alloc_chunk(t) := {
     let ch := Stdlib.alloc(t^.chunk_size);
@@ -76,18 +77,7 @@ let release(t) := {
 let get_element_from_chunks(t : &t(a)) : &a = {
     let ch := t^.chunks;
     if ch == null then return(null);
-        [*
     let res := Chunk.get_element(ch);
-        let res := Chunk.data(ch)[ch^.Chunk.allocated_till];
-        ch^.Chunk.allocated_till = ch^.Chunk.allocated_till + 1;
-        *]
-    let d := Chunk.data(ch);
-        let res := d;
-   [*
-        let res := d[ch^.Chunk.allocated_till];
-            *]
-    let i := ch^.Chunk.allocated_till;
-        ch^.Chunk.allocated_till = ch^.Chunk.allocated_till + 1;
     if ch^.Chunk.allocated_till == t^.a_per_chunk then {
         t^.chunks = ch^.Chunk.next;
         ch^.Chunk.next = t^.exhausted_chunks;
@@ -95,7 +85,6 @@ let get_element_from_chunks(t : &t(a)) : &a = {
     };
     res
 }
-[*
 
 let alloc_null(t) := {
     if t^.free_list == null && t^.chunks == null then {
@@ -106,17 +95,17 @@ let alloc_null(t) := {
 
     if t^.free_list != null then {
         let res := Stdlib.ptr_cast(t^.free_list);
-        t^.free_list = t^.free_list^.Free_list.next;
+        t^.free_list = t^.free_list^.Free_node.next;
         return(res)
     };
 
     get_element_from_chunks(t)
 }
-*]
 
 let main() := {
     let t : t(i64) = create(10);
-    match alloc_chunk(&t) with
-    | Success -> 0
-    | Out_of_memory -> 1
+    let res := alloc_null(&t);
+    res^ = 10;
+    Stdlib.print_int(res^);
+    0
 }
