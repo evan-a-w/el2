@@ -86,16 +86,6 @@ dot_and_upper:
   | UPPER_ID; DOT
     { $1 }
 
-upper_name_list_with_last:
-  | UPPER_ID
-    { [ $1 ] }
-  | l = upper_name_list_with_last; next = UPPER_ID
-    { next :: l }
-
-upper_name_path:
-  | l = upper_name_list_with_last
-    { Ast.{ module_path = List.tl l; inner = List.hd l } }
-
 type_expr_no_whitespace:
   | n = name_path
     { `Named n }
@@ -133,8 +123,12 @@ pattern_no_whitespace:
 pattern:
   | p = pattern_no_whitespace
     { p }
-  | i = upper_name_path; p = option(pattern_wrapped)
-    { `Enum (i, p) }
+  | l = dot_upper_list_; i = UPPER_ID; p = option(pattern_wrapped)
+    { `Enum (Ast.{ module_path = l; inner = i }, p) }
+
+%inline dot_upper_list_:
+  | dot_upper_list_rev
+    { List.rev $1 }
 
 pattern_struct_rhs:
   | COLON; p = pattern
@@ -249,6 +243,12 @@ dot_upper_list_rev:
   | l = dot_upper_list_rev; i = UPPER_ID; DOT
     { i :: l }
 
+dot_upper_list_nonempty_rev:
+  | UPPER_ID
+    { [ $1 ] }
+  | l = dot_upper_list_rev; i = UPPER_ID; DOT
+    { i :: l }
+
 match_each:
   | p = pattern; ARROW; e = expr_ops
     { (p, e) }
@@ -318,7 +318,7 @@ type_decl_struct_each:
     { (n, t) }
 
 type_decl:
-  | t = type_expr_no_whitespace
+  | t = type_expr
     { `Alias t }
   | PIPE; l = separated_list(PIPE, type_decl_enum_each)
     { `Enum l }
@@ -363,10 +363,10 @@ module_expr_toplevels:
 module_expr:
   | module_expr_toplevels
     { `Decl $1 }
-  | n = upper_name_path; LPAREN; l = separated_list(COMMA, module_expr); RPAREN
-    { `Named_args (n, l) }
-  | n = separated_nonempty_list(DOT, UPPER_ID)
-    { `Named (n) }
+  | l = dot_upper_list_rev; n = UPPER_ID; LPAREN; l_ = separated_list(COMMA, module_expr); RPAREN
+    { `Named_args (Ast.{ module_path = List.rev l; inner = n }, l_) }
+  | n = dot_upper_list_nonempty_rev
+    { `Named (List.rev n) }
 
 toplevel:
   | let_

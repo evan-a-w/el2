@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 module Make (Arg : {
   type t
   let chunk_size : i64
@@ -13,3 +14,134 @@ module Make (Arg : {
     data : &t
   }
 }
+=======
+module Free_node := {
+    type t(a) := { next : &t(a) }
+}
+
+type error :=
+    | Success
+    | Out_of_memory
+
+module Chunk := {
+    type t(a) := {
+        next : &t(a);
+        allocated_till : i64
+    }
+
+    [* TODO: fix imports with submodules - opening Stdlib at
+         the top of the file makes referencing just 'ptr_cast' fail *]
+
+    [* referencing t[1] gets us to the end of the struct
+         in C you would usually use an unsized array member like
+         'char data[]' to get the same effect *]
+    let data(t : &t(a)) := (Stdlib.ptr_cast(&t[1]) : &a)
+
+    let free(curr) := loop {
+        if curr == null then break(());
+        let next := curr^.next;
+        Stdlib.free(curr);
+        curr = next
+    }
+
+    let get_element(t) := {
+        let res := &data(t)[t^.allocated_till];
+        t^.allocated_till = t^.allocated_till + 1;
+        res
+    }
+
+}
+
+type t(a) := {
+    chunk_size : i64;
+    a_per_chunk : i64;
+    chunks : &Chunk.t(a);
+    exhausted_chunks : &Chunk.t(a);
+    free_list : &Free_node.t(a)
+}
+
+[* for allocating eg. an array of a *]
+let create_sized(element_size, a_per_chunk : i64) : t(a) = {
+    let calculated_chunk_size := a_per_chunk * element_size + sizeof[Chunk.t(unit)];
+    let chunk_size := Stdlib.min(calculated_chunk_size, sizeof[Chunk.t(unit)] + element_size);
+    let a_per_chunk := (chunk_size - sizeof[Chunk.t(unit)]) / sizeof[a];
+    #t {
+        chunk_size;
+        a_per_chunk;
+        chunks : null;
+        exhausted_chunks : null;
+        free_list : null
+    }
+}
+
+[* for allocating a single a *]
+let create(a_per_chunk : i64) : t(a) = create_sized(sizeof[a], a_per_chunk)
+
+let alloc_chunk(t) := {
+    let ch := Stdlib.alloc(t^.chunk_size);
+    if ch == null then return(Out_of_memory);
+    ch^.Chunk.next = t^.chunks;
+    ch^.Chunk.allocated_till = 0;
+    t^.chunks = ch;
+    Success
+}
+
+let free_all(t) := {
+    Chunk.free(t^.chunks);
+    Chunk.free(t^.exhausted_chunks);
+    t^.chunks = null;
+    t^.exhausted_chunks = null;
+    t^.free_list = null;
+    ()
+}
+
+let get_element_from_chunks(t : &t(a)) : &a = {
+    let ch := t^.chunks;
+    if ch == null then return(null);
+    let res := Chunk.get_element(ch);
+    if ch^.Chunk.allocated_till == t^.a_per_chunk then {
+        t^.chunks = ch^.Chunk.next;
+        ch^.Chunk.next = t^.exhausted_chunks;
+        t^.exhausted_chunks = ch
+    };
+    res
+}
+
+let alloc_null(t) := {
+    if t^.free_list == null && t^.chunks == null then {
+        match alloc_chunk(t) with
+        | Success -> ()
+        | Out_of_memory -> return(null)
+    };
+
+    if t^.free_list != null then {
+        let res := Stdlib.ptr_cast(t^.free_list);
+        t^.free_list = t^.free_list^.Free_node.next;
+        return(res)
+    };
+
+    get_element_from_chunks(t)
+}
+
+let alloc(t) :=
+    match alloc_null(t) with
+    | null -> Types.None
+    | res -> Types.Some(res)
+
+let release(t, ptr) := {
+    let node := Stdlib.ptr_cast(ptr);
+    node^.Free_node.next = t^.free_list;
+    t^.free_list = node;
+    ()
+}
+
+[*
+let main() := {
+    let t : t(i64) = create(10);
+    let res := alloc_null(&t);
+    res^ = 10;
+    Stdlib.print_int(res^);
+    0
+}
+*]
+>>>>>>> e2b74f051c54e5e5fa1d62a16d6a7d61a1054ae5

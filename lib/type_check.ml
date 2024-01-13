@@ -88,8 +88,21 @@ let rec unify a b =
   | Invalid_argument _ -> fl End a b
 ;;
 
+let inst_user_type_exn inst_user_type =
+  get_insted_user_type inst_user_type
+  |> Option.value_or_thunk ~default:(fun () -> failwith "Undefined type")
+;;
+
+let rec inner_info (info : all_user option) =
+  match info with
+  | Some (`Alias (`User u)) ->
+    inner_info
+      (get_insted_user_type u |> Option.bind ~f:(fun { info; _ } -> !info))
+  | _ -> info
+;;
+
 let get_user_type_field user_type field =
-  match !(user_type.info) with
+  match inner_info !(user_type.info) with
   | Some (`Struct l) ->
     List.find l ~f:(fun (a, _) -> String.equal a field)
     |> Option.map ~f:Tuple2.get2
@@ -97,7 +110,7 @@ let get_user_type_field user_type field =
 ;;
 
 let get_user_type_variant user_type variant =
-  match !(user_type.info) with
+  match inner_info !(user_type.info) with
   | Some (`Enum l) ->
     List.find l ~f:(fun (a, _) -> String.equal a variant)
     |> Option.map ~f:Tuple2.get2
@@ -179,6 +192,7 @@ module Type_state = struct
       ; seen_vars : String.Hash_set.t
       ; seen_types : String.Hash_set.t
       ; module_name_counter : Counter.t
+      ; ty_var_map : mono String.Table.t option
       }
     [@@deriving sexp]
   end
@@ -297,6 +311,7 @@ module Type_state = struct
     ; seen_vars = String.Hash_set.create ()
     ; seen_types = String.Hash_set.create ()
     ; module_name_counter = Counter.create ()
+    ; ty_var_map = None
     }
   ;;
 
@@ -346,12 +361,11 @@ module Type_state = struct
     let rec loop opened_modules =
       match opened_modules with
       | [] ->
-        Option.bind state.current_module.parent ~f:(fun module_t ->
-          try_on_all_modules
-            { state with current_module = module_t }
-            ~try_make_module
-            ~module_path
-            ~f)
+        Option.bind state.current_module.parent ~f:(fun parent ->
+          let state =
+            { state with current_module = parent; opened_modules = [] }
+          in
+          try_on_all_modules state ~try_make_module ~module_path ~f)
       | module_t :: opened_modules ->
         (match f module_path module_t with
          | Some _ as res -> res
@@ -385,32 +399,6 @@ type ty_var_map = mono String.Map.t [@@deriving sexp]
 type locals_map = mono String.Map.t
 
 let empty_ty_vars : ty_var_map = String.Map.empty
-
-let get_non_user_type ~make_ty_vars ~state name =
-  match name with
-  | "i64" -> `I64
-  | "c_int" -> `C_int
-  | "f64" -> `F64
-  | "bool" -> `Bool
-  | "char" -> `Char
-  | "unit" -> `Unit
-  | "_" when make_ty_vars -> make_indir ()
-  | _ ->
-    (match Map.find state.Type_state.ty_vars name with
-     | None -> failwith [%string "Unknown type `%{name}`"]
-     | Some a -> a)
-;;
-
-let find_module_in_submodules ~state ~try_make_module ~f module_path =
-  Type_state.try_on_all_modules
-    ~f:(fun module_path module_t ->
-      match Type_state.lookup_module_in ~in_:module_t module_path with
-      | Error _ -> None
-      | Ok module_t -> f module_t)
-    ~try_make_module
-    ~module_path
-    state
-;;
 
 let poly_inner (poly : poly) =
   let rec go = function
@@ -458,13 +446,60 @@ let rec pretty_print_module_t module_t =
     |> separate (break 1)
   in
   concat
-    [ string
-        [%string
-          "Module %{Type_state.show_module_ident module_t.Type_state.name}:"]
+    [ string [%string "Module %{Type_state.show_module_ident module_t.Type_state.name}:"]
     ; nest 4 (hardline ^^ user_types)
     ; nest 4 (hardline ^^ modules)
     ; nest 4 (hardline ^^ glob_vars)
     ]
+;;
+
+let get_non_user_type ~make_ty_vars ~state name =
+  let find_ty_var () =
+    Option.first_some
+      (Map.find state.Type_state.ty_vars name)
+      (Option.bind state.ty_var_map ~f:(fun ty_var_map ->
+         Hashtbl.find ty_var_map name))
+  in
+  let gen_ty_var () =
+    Option.map state.ty_var_map ~f:(fun ty_var_map ->
+      let indir = make_indir () in
+      Hashtbl.set ty_var_map ~key:name ~data:indir;
+      indir)
+    |> Option.value_or_thunk ~default:(fun () ->
+      failwith [%string "Unknown type `%{name}`"])
+  in
+  match name with
+  | "i64" -> `I64
+  | "c_int" -> `C_int
+  | "f64" -> `F64
+  | "bool" -> `Bool
+  | "char" -> `Char
+  | "unit" -> `Unit
+  | "_" when make_ty_vars -> make_indir ()
+  | "_" -> failwith "Cannot make unknown ty_var `_` in this context"
+  | _ ->
+    (match find_ty_var () with
+     | None -> gen_ty_var ()
+     | Some a -> a)
+;;
+
+let find_module_in_submodules ~state ~try_make_module ~f module_path =
+  Type_state.try_on_all_modules
+    ~f:(fun module_path module_t ->
+      match Type_state.lookup_module_in ~in_:module_t module_path with
+      | Error _ -> None
+      | Ok module_t -> f module_t)
+    ~try_make_module
+    ~module_path
+    state
+;;
+
+let poly_inner (poly : poly) =
+  let rec go = function
+    | `Mono mono -> mono
+    | `For_all (_, r) -> go r
+  in
+  go poly
 ;;
 
 let gen_helper ~vars ~indirs ~counter ~used mono : mono =
@@ -557,10 +592,6 @@ let rec try_make_module ~state name =
   match Stdlib.Sys.file_exists filename with
   | false -> None
   | true -> Some (process_file ~state filename)
-
-and inst_user_type_exn inst_user_type =
-  get_insted_user_type inst_user_type
-  |> Option.value_or_thunk ~default:(fun () -> failwith "Undefined type")
 
 and get_user_type_variant_exn ~variant inst_user_type =
   let insted = inst_user_type_exn inst_user_type in
@@ -1009,7 +1040,7 @@ and process_module_expr ?parent ?name ~state = function
         ~name
         ~dir:state.current_module.dir
     in
-    let res = process_module ~state ~module_t toplevels in
+    let res = process_module ~opened_modules:state.opened_modules ~state ~module_t toplevels in
     pretty_print_module_t res |> Pretty_print.output_endline;
     res
   (* TODO: prob broken *)
@@ -1047,7 +1078,7 @@ and process_functor_inst_path ~state ~modules path =
   let functor_t = lookup_functor ~state path in
   inst_functor ~state ~modules functor_t
 
-and process_module ?(opened_modules = []) ~state ~module_t toplevels =
+and process_module ~opened_modules ~state ~module_t toplevels =
   module_t.Type_state.in_eval <- true;
   type_check
     ~state:
@@ -1078,7 +1109,7 @@ and process_file ?parent ~state filename =
           Type_state.module_create ~parent ~name:(`Named name) ~dir
         in
         Hashtbl.set state.seen_files ~key:filename ~data:module_t;
-        process_module ~state ~module_t toplevels))
+        process_module ~opened_modules:[] ~state ~module_t toplevels))
 
 and process_module_path ?parent ~state path =
   match path with
@@ -1165,6 +1196,8 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
   let type_defs = String.Table.create () in
   let let_toplevels = Queue.create () in
   let _ =
+    (* TODO: make type processing happen as we go, since this is now needed with
+       sub modules *)
     List.fold toplevels ~init:state.opened_modules ~f:(fun acc ->
         function
         | `Open_file filename ->
@@ -1303,6 +1336,8 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
         function
         | `Open m -> m :: opened_modules
         | `Let_fn (name, vars, expr) ->
+          let ty_var_map = String.Table.create () |> Option.some in
+          let state = { state with ty_var_map; opened_modules } in
           let expr = expand_expr ~state expr in
           let var_decls =
             List.map vars ~f:(function
@@ -1314,29 +1349,35 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
               ~name
               ~expr
               ~var_decls
+              ~ty_var_map
               ~data:opened_modules
               ~unique_name:(Type_state.make_unique ~state name)
           in
           find_references
-            ~state:{ state with opened_modules }
+            ~state
             ~edge
             ~locals:(function_arg_set ~init:String.Set.empty vars)
             expr;
           opened_modules
         | `Let (pattern, expr) ->
           let vars = Stack.create () in
+          let ty_var_map = String.Table.create () |> Option.some in
+          let state = { state with ty_var_map; opened_modules } in
           breakup_patterns ~state ~vars pattern expr;
           Stack.iter vars ~f:(fun (name, expr) ->
             let edge =
               Typed_ast.create_non_func
                 ~name
                 ~expr
+                ~ty_var_map
                 ~data:opened_modules
                 ~unique_name:(Type_state.make_unique ~state name)
             in
             find_references ~state ~edge ~locals:String.Set.empty expr);
           opened_modules
         | `Extern (name, t, extern_name) ->
+          let ty_var_map = String.Table.create () |> Option.some in
+          let state = { state with ty_var_map; opened_modules } in
           let mono = mono_of_type_expr ~state t in
           Type_state.register_name ~state extern_name;
           let edge = Typed_ast.Extern (name, extern_name, mono) in
@@ -1346,6 +1387,8 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
            | `Ok -> opened_modules
            | _ -> failwith [%string "Duplicate variable %{name}"])
         | `Implicit_extern (name, t, extern_name) ->
+          let ty_var_map = String.Table.create () |> Option.some in
+          let state = { state with ty_var_map; opened_modules } in
           let mono = mono_of_type_expr ~state t in
           Type_state.register_name ~state extern_name;
           let edge = Typed_ast.Implicit_extern (name, extern_name, mono) in
@@ -1434,9 +1477,7 @@ and get_var_poly (var : Type_state.module_t Typed_ast.top_var) =
 and infer_var ~state (var : Type_state.module_t Typed_ast.top_var) =
   match var with
   | El v ->
-    (match v.scc.type_check_state with
-     | `Untouched -> infer_scc ~state v.scc
-     | `In_checking | `Done -> ());
+    infer_scc ~state v.scc;
     let mono, inst_map = inst v.poly in
     (match v.scc.type_check_state with
      | `Untouched | `In_checking -> mono, None
@@ -1448,12 +1489,18 @@ and infer_var ~state (var : Type_state.module_t Typed_ast.top_var) =
     mono, Some String.Map.empty
 
 and infer_scc ~state scc =
+  match scc.type_check_state with
+  | `Done | `In_checking -> ()
+  | `Untouched -> infer_scc_ ~state scc
+
+and infer_scc_ ~state scc =
   let open Typed_ast in
   scc.type_check_state <- `In_checking;
   let monos =
     Stack.to_list scc.vars
     |> List.map ~f:(fun v ->
       try
+        let state = { state with ty_var_map = v.ty_var_map } in
         let mono, _ = inst v.poly in
         let state, to_unify, mono =
           match v.args, mono with

@@ -3,7 +3,7 @@ open Types
 
 let main() := {
   {
-    let t := Hashmap.create(i64_hash, i64_equal);
+    let t := Hashmap.create(Hash.i64_hash, Hash.i64_equal);
 
     Hashmap.insert(&t, 1, 2);
     Hashmap.insert(&t, 7, 9);
@@ -53,7 +53,7 @@ let main() := {
   *]
 
   {
-    let t := Hashmap.create(i64_hash, i64_equal);
+    let t := Hashmap.create(Hash.i64_hash, Hash.i64_equal);
 
     Hashmap.insert(&t, 1, ());
     Hashmap.insert(&t, 7, ());
@@ -93,9 +93,6 @@ let main() := {
 let test_size := 1000
 let random_inserts := 100
 let random_max := 1000
-
-let i64_equal(a, b) := a^ == b^
-let i64_hash(a) := a^
 
 let print_hashmap_elements(it) := {
   match Hashmap.iterator_next(it) with

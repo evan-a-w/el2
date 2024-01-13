@@ -116,10 +116,15 @@ let insert(t, key, data) : insert_result(_) = {
     }
 }
 
-let find(t, key) := {
+let find_bucket(t, key) := {
   let hash := t^.hash_fn(&key);
 
   find_helper(t, key, hash, hash % t^.capacity, 0)
+}
+
+let find(t, key) := {
+  let bucket := find_bucket(t, key);
+  if bucket == null then None else Some(bucket^.data)
 }
 
 type iterator(key, data) := {
@@ -183,10 +188,13 @@ let iterator(t) := #iterator { index : 0; t : t }
 
 let destroy(t) := free(t^.buckets)
 
+let bucket_used(state) := match state with | Bucket_used -> true | _ -> false
+let bucket_free(state) := match state with | Bucket_free -> true | _ -> false
+
 let find_helper(t, key, hash, i, it) := {
-  if it >= t^.capacity || t^.buckets[i].state != Bucket_free then
+  if it >= t^.capacity || bucket_free(t^.buckets[i].state) == false then
     return(null);
-  if t^.buckets[i].state == Bucket_used && bucket_compare(t, &key, hash, i) then
+  if bucket_used(t^.buckets[i].state) && bucket_compare(t, &key, hash, i) then
     return(&t^.buckets[i]);
   find_helper(t, key, hash, (i + 1) % t^.capacity, it + 1)
 }
