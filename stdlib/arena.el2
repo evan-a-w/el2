@@ -20,7 +20,7 @@ module Chunk := {
          'char data[]' to get the same effect *]
     let data(t : &t(a)) := (Stdlib.ptr_cast(&t[1]) : &a)
 
-    let release(curr) := loop {
+    let free(curr) := loop {
         if curr == null then break(());
         let next := curr^.next;
         Stdlib.free(curr);
@@ -43,9 +43,10 @@ type t(a) := {
     free_list : &Free_node.t(a)
 }
 
-let create(a_per_chunk : i64) : t(a) = {
-    let calculated_chunk_size := a_per_chunk * sizeof[a] + sizeof[Chunk.t(unit)];
-    let chunk_size := Stdlib.min(calculated_chunk_size, sizeof[Chunk.t(unit)] + sizeof[a]);
+[* for allocating eg. an array of a *]
+let create_sized(element_size, a_per_chunk : i64) : t(a) = {
+    let calculated_chunk_size := a_per_chunk * element_size + sizeof[Chunk.t(unit)];
+    let chunk_size := Stdlib.min(calculated_chunk_size, sizeof[Chunk.t(unit)] + element_size);
     let a_per_chunk := (chunk_size - sizeof[Chunk.t(unit)]) / sizeof[a];
     #t {
         chunk_size;
@@ -56,6 +57,9 @@ let create(a_per_chunk : i64) : t(a) = {
     }
 }
 
+[* for allocating a single a *]
+let create(a_per_chunk : i64) : t(a) = create_sized(sizeof[a], a_per_chunk)
+
 let alloc_chunk(t) := {
     let ch := Stdlib.alloc(t^.chunk_size);
     if ch == null then return(Out_of_memory);
@@ -65,9 +69,9 @@ let alloc_chunk(t) := {
     Success
 }
 
-let release(t) := {
-    Chunk.release(t^.chunks);
-    Chunk.release(t^.exhausted_chunks);
+let free_all(t) := {
+    Chunk.free(t^.chunks);
+    Chunk.free(t^.exhausted_chunks);
     t^.chunks = null;
     t^.exhausted_chunks = null;
     t^.free_list = null;
@@ -102,6 +106,19 @@ let alloc_null(t) := {
     get_element_from_chunks(t)
 }
 
+let alloc(t) :=
+    match alloc_null(t) with
+    | null -> Types.None
+    | res -> Types.Some(res)
+
+let release(t, ptr) := {
+    let node := Stdlib.ptr_cast(ptr);
+    node^.Free_node.next = t^.free_list;
+    t^.free_list = node;
+    ()
+}
+
+[*
 let main() := {
     let t : t(i64) = create(10);
     let res := alloc_null(&t);
@@ -109,3 +126,4 @@ let main() := {
     Stdlib.print_int(res^);
     0
 }
+*]
