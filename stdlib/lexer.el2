@@ -65,10 +65,9 @@ module Token := {
 
 type t := {
     intern : Intern.t;
-    input_buffer : Vector.t(char);
+    input_buffer : &char;
     token_buffer : Vector.t(char);
     prev : option(Token.t)
 }
-
 
 let main() := 0
