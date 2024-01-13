@@ -53,6 +53,7 @@ type scc_state =
 type 'data var =
   { name : string
   ; data : 'data
+  ; ty_var_map : mono String.Table.t option [@compare.ignore]
   ; mutable args : [ `Non_func | `Func of (string * mono) list ]
   ; comptime : comptime_var
   ; expr : expanded_expr
@@ -332,10 +333,11 @@ let rec expr_map_monos (expr_inner, mono) ~f =
 
 let var var = El var
 
-let create_func ~name ~expr ~var_decls ~data ~unique_name =
+let create_func ~name ~expr ~var_decls ~data ~unique_name ~ty_var_map =
   { name
   ; comptime = `Var (name, ref None)
   ; unique_name
+  ; ty_var_map
   ; expr
   ; data
   ; args = `Func var_decls
@@ -350,10 +352,11 @@ let create_func ~name ~expr ~var_decls ~data ~unique_name =
   }
 ;;
 
-let create_non_func ~name ~expr ~data ~unique_name =
+let create_non_func ~name ~expr ~data ~unique_name ~ty_var_map =
   { name
   ; comptime = `Var (name, ref (Some `True))
   ; unique_name
+  ; ty_var_map
   ; expr
   ; data
   ; typed_expr = None

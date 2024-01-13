@@ -12,7 +12,7 @@ let make_cmd ~summary ~f =
 
 let compile ~comptime_eval ~keep_temps ~filename ~c_flags =
   let dir = ".build.el2" in
-  Core_unix.mkdir ".build.el2";
+  Core_unix.mkdir_p dir;
   let basename = Filename.basename filename in
   let name = [%string "%{dir}/%{basename}.c"] in
   let chan = Out_channel.create name in

@@ -3,8 +3,6 @@ open! Ast
 open! Types
 open Type_common
 
-(* TODO: actual named tyvars in type_exprs *)
-
 type unification_error =
   | Failed_to_match of
       { sub : unification_error
@@ -145,6 +143,7 @@ module Type_state = struct
       ; var_counter : Counter.t
       ; seen_vars : String.Hash_set.t
       ; seen_types : String.Hash_set.t
+      ; ty_var_map : mono String.Table.t option
       }
     [@@deriving sexp]
   end
@@ -252,6 +251,7 @@ module Type_state = struct
     ; var_counter = Counter.create ()
     ; seen_vars = String.Hash_set.create ()
     ; seen_types = String.Hash_set.create ()
+    ; ty_var_map = None
     }
   ;;
 
@@ -383,6 +383,20 @@ let rec pretty_print_module_t module_t =
 ;;
 
 let get_non_user_type ~make_ty_vars ~state name =
+  let find_ty_var () =
+    Option.first_some
+      (Map.find state.Type_state.ty_vars name)
+      (Option.bind state.ty_var_map ~f:(fun ty_var_map ->
+         Hashtbl.find ty_var_map name))
+  in
+  let gen_ty_var () =
+    Option.map state.ty_var_map ~f:(fun ty_var_map ->
+      let indir = make_indir () in
+      Hashtbl.set ty_var_map ~key:name ~data:indir;
+      indir)
+    |> Option.value_or_thunk ~default:(fun () ->
+      failwith [%string "Unknown type `%{name}`"])
+  in
   match name with
   | "i64" -> `I64
   | "c_int" -> `C_int
@@ -391,9 +405,10 @@ let get_non_user_type ~make_ty_vars ~state name =
   | "char" -> `Char
   | "unit" -> `Unit
   | "_" when make_ty_vars -> make_indir ()
+  | "_" -> failwith "Cannot make unknown ty_var `_` in this context"
   | _ ->
-    (match Map.find state.Type_state.ty_vars name with
-     | None -> failwith [%string "Unknown type `%{name}`"]
+    (match find_ty_var () with
+     | None -> gen_ty_var ()
      | Some a -> a)
 ;;
 
@@ -1037,6 +1052,8 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
         function
         | `Open m -> m :: opened_modules
         | `Let_fn (name, vars, expr) ->
+          let ty_var_map = String.Table.create () |> Option.some in
+          let state = { state with ty_var_map; opened_modules } in
           let expr = expand_expr ~state expr in
           let var_decls =
             List.map vars ~f:(function
@@ -1048,29 +1065,35 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
               ~name
               ~expr
               ~var_decls
+              ~ty_var_map
               ~data:opened_modules
               ~unique_name:(Type_state.make_unique ~state name)
           in
           find_references
-            ~state:{ state with opened_modules }
+            ~state
             ~edge
             ~locals:(function_arg_set ~init:String.Set.empty vars)
             expr;
           opened_modules
         | `Let (pattern, expr) ->
           let vars = Stack.create () in
+          let ty_var_map = String.Table.create () |> Option.some in
+          let state = { state with ty_var_map; opened_modules } in
           breakup_patterns ~state ~vars pattern expr;
           Stack.iter vars ~f:(fun (name, expr) ->
             let edge =
               Typed_ast.create_non_func
                 ~name
                 ~expr
+                ~ty_var_map
                 ~data:opened_modules
                 ~unique_name:(Type_state.make_unique ~state name)
             in
             find_references ~state ~edge ~locals:String.Set.empty expr);
           opened_modules
         | `Extern (name, t, extern_name) ->
+          let ty_var_map = String.Table.create () |> Option.some in
+          let state = { state with ty_var_map; opened_modules } in
           let mono = mono_of_type_expr ~state t in
           Type_state.register_name ~state extern_name;
           let edge = Typed_ast.Extern (name, extern_name, mono) in
@@ -1080,6 +1103,8 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
            | `Ok -> opened_modules
            | _ -> failwith [%string "Duplicate variable %{name}"])
         | `Implicit_extern (name, t, extern_name) ->
+          let ty_var_map = String.Table.create () |> Option.some in
+          let state = { state with ty_var_map; opened_modules } in
           let mono = mono_of_type_expr ~state t in
           Type_state.register_name ~state extern_name;
           let edge = Typed_ast.Implicit_extern (name, extern_name, mono) in
@@ -1178,6 +1203,7 @@ and infer_scc ~state scc =
     Stack.to_list scc.vars
     |> List.map ~f:(fun v ->
       try
+        let state = { state with ty_var_map = v.ty_var_map } in
         let mono, _ = inst v.poly in
         let state, to_unify, mono =
           match v.args, mono with

@@ -8,14 +8,38 @@ module Chunk := {
     allocated_till : i64
   }
 
-  let data(t : &t(a)) : &a = unsafe_cast(&t[1])
+  [* TODO: fix imports with submodules - opening Stdlib at
+     the top of the file makes referencing just 'ptr_cast' fail *]
+
+  [* referencing t[1] gets us to the end of the struct
+     in C you would usually use an unsized array member like
+     'char data[]' to get the same effect *]
+  let data(t : &t(a)) := (Stdlib.ptr_cast(&t[1]) : &a)
 }
 
 type t(a) := {
-  a_per_chunk : i64;
+  chunk_size : i64;
   chunks : &Chunk.t(a);
   exhausted_chunks : &Chunk.t(a);
   free_list : &Free_node.t(a)
+}
+
+let create(a_per_chunk : i64) : t(a) =
+  let calculated_chunk_size := a_per_chunk * sizeof(a) + sizeof[Chunk.t(unit)];
+  let chunk_size := Stdlib.min(calculated_chunk_size, sizeof[Chunk.t(unit)] + sizeof[a]);
+  #t {
+    chunk_size;
+    chunks := null;
+    exhausted_chunks := null;
+    free_list := null
+  }
+
+let alloc_chunk(t) := {
+  let chunk := Stdlib.malloc(sizeof[Chunk.t(a)]);
+  chunk.next := 0;
+  chunk.allocated_till := 0;
+  chunk
+
 }
 
 let main() := {
