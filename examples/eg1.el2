@@ -19,6 +19,11 @@ type unused_data := { unused_data : unit }
 [* declares a function that is linked already *]
 implicit_extern print_endline : &char -> c_int = "puts"
 
+[* globals can be anything that is computable at compile time,
+   ie. anything that doesn't refer to non comptime variables
+   and doesn't deref or ref *]
+let global := 2
+
 let do_nothing(a) := ()
 
 let option_iter(
@@ -52,7 +57,10 @@ let list_option_iter(a, f) := {
     }
 }
 
+let x := 1
+
 let main() : [* optional type declaration of return type *] i64 = {
+  let _ := x;
   let first := #list {
     data : "first";
     next : None
@@ -76,3 +84,8 @@ let main() : [* optional type declaration of return type *] i64 = {
   list_option_iter(Some(&second), print_endline);
   0
 }
+
+[* breaks because not comptime *]
+[* let y := &2 *]
+
+let tang := sizeof(Some(1))

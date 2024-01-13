@@ -887,30 +887,47 @@ and pattern_vars p ~locals =
      | Some p -> pattern_vars p ~locals
      | None -> locals)
 
+and traverse_expr_var_part ~state ~not_found_vars ~edge ~locals var =
+  match var with
+  | { inner = name'; module_path = [] } when Set.mem locals name' -> `Local
+  | { inner = name'; module_path } ->
+    let f module_t =
+      Hashtbl.find module_t.Type_state.glob_vars name'
+      |> Option.map ~f:(fun var -> var, module_t)
+    in
+    (match find_module_in_submodules ~try_make_module ~state ~f module_path with
+     | None ->
+       Typed_ast.(edge.used_globals <- Set.add edge.used_globals name');
+       Hashtbl.add_multi not_found_vars ~key:name' ~data:edge.comptime;
+       `Global
+     | Some (var, module_t)
+       when Type_state.equal_module_t state.Type_state.current_module module_t
+       ->
+       Typed_ast.(edge.used_globals <- Set.add edge.used_globals name');
+       Typed_ast.unify_var_comptimes ~user:(El edge) ~used:var;
+       `Global
+     | Some (var, _) ->
+       Typed_ast.unify_var_comptimes ~user:(El edge) ~used:var;
+       `Global)
+
 and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
   let rep = traverse_expr ~state ~not_found_vars ~edge in
   match expr with
   | `Bool _ | `Int _ | `Float _ | `Char _ | `String _ | `Enum _ | `Unit | `Null
   | `Size_of (`Type _) -> ()
-  | `Var { inner = name'; module_path = [] } when Set.mem locals name' -> ()
-  | `Var { inner = name'; module_path } ->
-    let f module_t =
-      Hashtbl.find module_t.Type_state.glob_vars name'
-      |> Option.map ~f:(Fn.const module_t)
-    in
-    (match find_module_in_submodules ~try_make_module ~state ~f module_path with
-     | None ->
-       Typed_ast.(edge.used_globals <- Set.add edge.used_globals name');
-       Hash_set.add not_found_vars name'
-     | Some module_t
-       when Type_state.equal_module_t state.Type_state.current_module module_t
-       -> Typed_ast.(edge.used_globals <- Set.add edge.used_globals name')
-     | Some _ -> ())
+  | `Var v ->
+    ignore (traverse_expr_var_part ~state ~not_found_vars ~edge ~locals v)
   | `Match (a, l) ->
     rep ~locals a;
     List.iter l ~f:(fun (p, e) -> rep ~locals:(pattern_vars p ~locals) e)
   | `Tuple l | `Array_lit l -> List.iter l ~f:(rep ~locals)
-  | `Index (a, b) | `Inf_op (_, a, b) | `Assign (a, b) | `Apply (a, b) ->
+  | `Assign (`Var v, b) ->
+    (* can only assign to locals *)
+    (match traverse_expr_var_part ~state ~not_found_vars ~edge ~locals v with
+     | `Local -> ()
+     | `Global -> Typed_ast.unify_comptime_var ~user:edge.comptime ~used:`False);
+    rep ~locals b
+  | `Index (a, b) | `Inf_op (_, a, b) | `Apply (a, b) | `Assign (a, b) ->
     rep ~locals a;
     rep ~locals b
   | `Let (s, a, b) ->
@@ -918,6 +935,9 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
     let rep = rep ~locals in
     rep a;
     rep b
+  | `Ref a | `Deref a ->
+    Typed_ast.unify_comptime_var ~user:edge.comptime ~used:`False;
+    rep ~locals a
   | `Break a
   | `Loop a
   | `Assert a
@@ -930,8 +950,6 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
   | `Assert_empty_enum_field (_, a)
   | `Tuple_access (a, _)
   | `Field_access (a, _)
-  | `Ref a
-  | `Deref a
   | `Pref_op (_, a)
   | `Typed (a, _) -> rep ~locals a
   | `Struct (_, l) ->
@@ -1032,7 +1050,12 @@ and process_functor_inst_path ~state ~modules path =
 and process_module ?(opened_modules = []) ~state ~module_t toplevels =
   module_t.Type_state.in_eval <- true;
   type_check
-    ~state:{ state with Type_state.current_module = module_t; opened_modules; locals = String.Map.empty }
+    ~state:
+      { state with
+        Type_state.current_module = module_t
+      ; opened_modules
+      ; locals = String.Map.empty
+      }
     toplevels;
   module_t.in_eval <- false;
   module_t
@@ -1078,12 +1101,16 @@ and type_check ~state toplevels =
       in
       ignore (infer_var ~state var))
   with
-  | Failure s ->
+  | Failure s as exn ->
     print_endline
       [%string
         "Fatal error while evaluating %{Type_state.show_module_ident \
          state.current_module.name}:\n\
          %{s}"];
+    Backtrace.Exn.most_recent_for_exn exn
+    |> Option.value_exn
+    |> Backtrace.to_string
+    |> print_endline;
     exit 1
 
 and check_polys_match ~(sub : poly) ~(super : poly) =
@@ -1149,7 +1176,7 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
           Queue.enqueue let_toplevels (`Open nek);
           nek :: acc
         | `Open path ->
-          let nek = lookup_module ~state path in
+          let nek = process_module_path ~state path in
           Queue.enqueue let_toplevels (`Open nek);
           nek :: acc
         | `Let_type ((name, ty_vars), type_decl) ->
@@ -1176,14 +1203,81 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
         | `Implicit_extern x ->
           Queue.enqueue let_toplevels (`Implicit_extern x);
           acc
-        | `Module_decl data ->
-          Queue.enqueue let_toplevels (`Module_decl data);
-          acc
-        | `Functor_decl data ->
-          Queue.enqueue let_toplevels (`Functor_decl data);
-          acc)
+        | `Module_decl (name, signature, toplevels) ->
+          (* define the submodule. it can use anything we've defined so far,
+             but not polymorphically (a bit weird but eh) *)
+          let module_t =
+            process_module_expr
+              ~parent:state.current_module
+              ~state:
+                { state with
+                  opened_modules = acc
+                }
+              toplevels
+          in
+          module_t.signature
+          <- (match signature with
+              | Some (`Decl signature) ->
+                check_module_matches_sig ~state ~signature module_t;
+                Some
+                  (module_of_sig_decl
+                     ~state
+                     ~parent:(Some state.current_module)
+                     signature)
+              | None -> None);
+          (match
+             Hashtbl.add
+               state.current_module.sub_modules
+               ~key:name
+               ~data:module_t
+           with
+           | `Ok -> acc
+           | _ -> failwith [%string "Duplicate submodule %{name}"])
+        | `Functor_decl (name, args, signature, toplevels) ->
+          let res_module =
+            Type_state.module_create_anon
+              ~state
+              ~parent:(Some state.current_module)
+          in
+          let res_name = Type_state.show_module_ident res_module.name in
+          print_endline [%string "Functor %{res_name}"];
+          let args =
+            List.map args ~f:(fun (name, (`Decl signature as s)) ->
+              let module_t =
+                module_of_sig_decl
+                  ~parent:(Some state.current_module)
+                  ~state
+                  signature
+              in
+              Hashtbl.set res_module.sub_modules ~key:name ~data:module_t;
+              name, s, module_t)
+          in
+          let functor_body =
+            process_module ~opened_modules:acc ~state ~module_t:res_module toplevels
+          in
+          (match signature with
+           | Some (`Decl signature) ->
+             check_module_matches_sig ~state ~signature res_module
+           | None -> ());
+          let functor_t =
+            Type_state.create_functor
+              ~functor_name:name
+              ~functor_body
+              ~opened_modules:acc
+              ~functor_args:args
+              ~ast:toplevels
+          in
+          (match
+             Hashtbl.add
+               state.current_module.sub_functors
+               ~key:name
+               ~data:functor_t
+           with
+           | `Ok -> acc
+           | _ -> failwith [%string "Duplicate functor %{name}"])
+      )
   in
-  let not_found_vars = String.Hash_set.create () in
+  let not_found_vars = String.Table.create () in
   process_types ~state type_defs;
   let find_references ~edge ~state ~locals expr =
     let open Typed_ast in
@@ -1194,8 +1288,15 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
         state.current_module.glob_vars
         ~key:edge.name
         ~data:(El edge);
-      Hash_set.remove not_found_vars edge.name;
-      traverse_expr ~state ~not_found_vars ~edge ~locals expr
+      (match Hashtbl.find_and_remove not_found_vars edge.name with
+       | None -> ()
+       | Some l ->
+         List.iter l ~f:(fun x ->
+           Typed_ast.unify_comptime_var ~used:edge.comptime ~user:x));
+      (try traverse_expr ~state ~not_found_vars ~edge ~locals expr with
+       | exn ->
+         print_endline [%string "Error while processing %{edge.name}:"];
+         raise exn)
   in
   let _ =
     Queue.fold let_toplevels ~init:[] ~f:(fun opened_modules ->
@@ -1210,7 +1311,6 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
           in
           let edge =
             Typed_ast.create_func
-              ~ty_var_counter:state.ty_var_counter
               ~name
               ~expr
               ~var_decls
@@ -1229,7 +1329,6 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
           Stack.iter vars ~f:(fun (name, expr) ->
             let edge =
               Typed_ast.create_non_func
-                ~ty_var_counter:state.ty_var_counter
                 ~name
                 ~expr
                 ~data:opened_modules
@@ -1255,85 +1354,14 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
            with
            | `Ok -> opened_modules
            | _ -> failwith [%string "Duplicate variable %{name}"])
-        | `Module_decl (name, signature, toplevels) ->
-          (* define the submodule. it can use anything we've defined so far,
-             but not polymorphically (a bit weird but eh) *)
-          let module_t =
-            process_module_expr
-              ~parent:state.current_module
-              ~state:
-                { state with
-                  opened_modules = state.current_module :: opened_modules
-                }
-              toplevels
-          in
-          module_t.signature
-          <- (match signature with
-              | Some (`Decl signature) ->
-                check_module_matches_sig ~state ~signature module_t;
-                Some
-                  (module_of_sig_decl
-                     ~state
-                     ~parent:(Some state.current_module)
-                     signature)
-              | None -> None);
-          (match
-             Hashtbl.add
-               state.current_module.sub_modules
-               ~key:name
-               ~data:module_t
-           with
-           | `Ok -> opened_modules
-           | _ -> failwith [%string "Duplicate submodule %{name}"])
-        | `Functor_decl (name, args, signature, toplevels) ->
-          let res_module =
-            Type_state.module_create_anon
-              ~state
-              ~parent:(Some state.current_module)
-          in
-          let res_name = Type_state.show_module_ident res_module.name in
-          print_endline [%string "Functor %{res_name}"];
-          let args =
-            List.map args ~f:(fun (name, (`Decl signature as s)) ->
-              let module_t =
-                module_of_sig_decl
-                  ~parent:(Some state.current_module)
-                  ~state
-                  signature
-              in
-              Hashtbl.set res_module.sub_modules ~key:name ~data:module_t;
-              name, s, module_t)
-          in
-          let functor_body =
-            process_module ~opened_modules ~state ~module_t:res_module toplevels
-          in
-          (match signature with
-           | Some (`Decl signature) ->
-             check_module_matches_sig ~state ~signature res_module
-           | None -> ());
-          let functor_t =
-            Type_state.create_functor
-              ~functor_name:name
-              ~functor_body
-              ~opened_modules
-              ~functor_args:args
-              ~ast:toplevels
-          in
-          (match
-             Hashtbl.add
-               state.current_module.sub_functors
-               ~key:name
-               ~data:functor_t
-           with
-           | `Ok -> opened_modules
-           | _ -> failwith [%string "Duplicate functor %{name}"]))
+)
   in
-  match Hash_set.is_empty not_found_vars with
+  match Hashtbl.is_empty not_found_vars with
   | false ->
     failwith
       [%string
-        "Unknown variables: `%{Hash_set.to_list not_found_vars |> \
-         String.concat ~sep:\", \"}`"]
+        "Unknown variables: `%{Hashtbl.keys not_found_vars |> String.concat \
+         ~sep:\", \"}`"]
   | true -> state
 
 and get_sccs glob_vars =
@@ -1500,7 +1528,7 @@ and type_expr_ ~res_type ~break_type ~state expr : expr =
   | `Return a ->
     let a, am = rep ~state a in
     let am = unify res_type am in
-    `Return (a, am), `Unit
+    `Return (a, am), make_indir ()
   | `Break a ->
     (match break_type with
      | Some break_type ->
@@ -1512,7 +1540,6 @@ and type_expr_ ~res_type ~break_type ~state expr : expr =
     let indir = make_indir () in
     let break_type = Some indir in
     let a, am = type_expr ~state ~res_type ~break_type a in
-    let am = unify am `Unit in
     `Loop (a, am), indir
   | `Float f -> `Float f, `F64
   | `Char c -> `Char c, `Char
@@ -1727,7 +1754,7 @@ and breakup_and_type_pattern ~state ~expr:(e, em) pattern =
         let conds', bindings_f', state =
           breakup_and_type_pattern ~state ~expr p
         in
-        let conds = Typed_ast.(conds && conds') in
+        let conds = Typed_ast.And.(conds && conds') in
         let bindings_f expr = bindings_f (bindings_f' expr) in
         conds, bindings_f, state)
   | `Var s ->
@@ -1807,7 +1834,7 @@ and breakup_and_type_pattern ~state ~expr:(e, em) pattern =
         let conds', bindings_f', state =
           breakup_and_type_pattern ~state ~expr pattern
         in
-        let conds = Typed_ast.(conds && conds') in
+        let conds = Typed_ast.And.(conds && conds') in
         let bindings_f expr = bindings_f (bindings_f' expr) in
         conds, bindings_f, state)
   | `Enum (name, opt_p) ->
@@ -1824,7 +1851,7 @@ and breakup_and_type_pattern ~state ~expr:(e, em) pattern =
        in
        let expr = `Access_enum_field (name.inner, (e, em)), arg_type in
        let conds', binding_f, state = breakup_and_type_pattern ~state ~expr p in
-       let conds = Typed_ast.(conds && conds') in
+       let conds = Typed_ast.And.(conds && conds') in
        conds, binding_f, state
      | None ->
        if Option.is_some arg_type
