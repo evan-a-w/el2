@@ -12,9 +12,10 @@ let string_hash(s_ : &(&char)) := {
     }
 }
 
-let string_equal(a : &(&char), b : &(&char)) := {
-    let a := a^;
-    let b := b^;
+[* TODO: make it so shadowing locals isnt borked AS FUCK *]
+let string_equal(a_ : &(&char), b_ : &(&char)) := {
+    let a := a_^;
+    let b := b_^;
     loop {
         let ac : i64 = unsafe_cast(a^);
         let bc : i64 = unsafe_cast(b^);

@@ -10,6 +10,7 @@ let main() := {
     loop match next(&t) with
       | Nothing -> break(())
       | Error(e, loc) -> {
+            Stdlib.print_string("Error at ");
             print_location(&loc);
             Stdlib.print_string(": ");
             Stdlib.print_string(e);
