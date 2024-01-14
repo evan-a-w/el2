@@ -67,7 +67,11 @@ type location := {
 let next(t) := {
     eat_whitespace(t);
     match t^.prev with
-    | None -> lex(t)
+    | None -> {
+        let res := lex(t);
+        Vector.clear(&t^.token_buffer);
+        res
+      }
     | Some(prev) -> {
         t^.prev = None;
         Result(prev)
@@ -222,7 +226,7 @@ let get_int_float_minus_or_arrow(t) := {
       }
     | _ -> ();
     match populate_pos_int(t) with
-    | false -> { Vector.clear(&t^.token_buffer); minus }
+    | false -> minus
     | true -> {
         match populate_char(t, "."[0]) with
         | false -> Result(Token.Literal(Token.Int(intern_and_clear_buffer(t))))
