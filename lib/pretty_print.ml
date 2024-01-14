@@ -164,7 +164,7 @@ let rec typed_ast (t : _ Typed_ast.expr) =
     | `Float f -> Float.to_string f |> string
     | `String s -> "\"" ^ s ^ "\"" |> string
     | `Bool b -> Bool.to_string b |> string
-    | `Char c -> "'" ^ Char.to_string c ^ "'" |> string
+    | `Char c -> "'" ^ c |> string
     | `Glob_var (var, _) -> top_var var
     | `Local_var s -> string s
     | `Break a -> string "break" ^^ space ^^ typed_ast a

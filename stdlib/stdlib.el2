@@ -8,6 +8,7 @@ implicit_extern c_realloc : (&unit, i64) -> &unit = "realloc"
 implicit_extern c_free : &unit -> unit = "free"
 
 implicit_extern strcpy : (&char, &char) -> &char = "strcpy"
+implicit_extern strdup : &char -> &char = "strdup"
 implicit_extern strlen : &char -> i64 = "strlen"
 implicit_extern strcmp : (&char, &char) -> c_int = "strcmp"
 
@@ -35,10 +36,11 @@ implicit_extern srand : i64 -> unit = "srand"
 implicit_extern rand : unit -> i64 = "rand"
 
 implicit_extern print_endline : &char -> c_int = "puts"
+implicit_extern print_char : char -> unit = "putchar"
 
 [* the type '_' is a new type variable each time *]
 let alloc(sz) : &_ = ptr_cast(malloc(sz))
-let realloc(a, sz) : &_ = ptr_cast(realloc(ptr_cast(a), sz))
+let realloc(a, sz) : &_ = ptr_cast(c_realloc(ptr_cast(a), sz))
 let alloc_zeroed(num_elements, element_sz) : &_ = ptr_cast(calloc(num_elements, element_sz))
 
 let free(a : &_) := c_free(ptr_cast(a))
@@ -57,8 +59,9 @@ let print_int(i) := {
   fputc(unsafe_cast(curr + unsafe_cast("0"[0])), stdout)
 }
 
-let print_string(s : &char) := {
-  fputs(s, stdout)
+let print_string(s : &char) : unit = {
+  fputs(s, stdout);
+  ()
 }
 
 let memcpy(dest : &_, src : &_, sz : i64) := c_memcpy(unsafe_cast(dest), unsafe_cast(src), sz)

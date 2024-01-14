@@ -1,73 +1,307 @@
 open Types
 
-module Token := {
-    type t :=
-        | Int(i64)
-        | Float(f64)
-        | String(&char)
-        | Ident(&char)
-        | Upper_ident(&char)
-        | Eof
-        | Null
-        | Size_of
-        | Return
-        | If
-        | Else
-        | Then
-        | Eq
-        | Ge
-        | Gt
-        | Le
-        | Lt
-        | Ne
-        | And
-        | Or
-        | Arrow
-        | Plus
-        | Minus
-        | Times
-        | Div
-        | Rem
-        | Amp
-        | Caret
-        | Lparen
-        | Rparen
-        | Lbrace
-        | Rbrace
-        | Lbrack
-        | Rbrack
-        | Dot
-        | Lbracepipe
-        | Piperbrace
-        | Equals
-        | Semicolon
-        | Comma
-        | Hash
-        | Colon
-        | Pipe
-        | Match
-        | With
-        | True
-        | False
-        | Char(char)
-        | Let
-        | Type
-        | Extern
-        | Implicit_extern
-        | Assert
-        | Open
-        | Open_file
-        | Loop
-        | Break
-        | Module
-        | Unsafe_cast
+type result_option(res, err) :=
+   | Result(res)
+   | Error(err)
+   | Nothing
+
+let main() := {
+    let t := of_fd("stdin", Stdlib.stdin);
+    loop match next(&t) with
+      | Nothing -> break(())
+      | Error(e, loc) -> {
+            print_location(&loc);
+            Stdlib.print_string(": ");
+            Stdlib.print_string(e);
+            Stdlib.print_string("\n");
+            break(())
+        }
+      | Result(tok, loc) -> {
+            print_location(&loc);
+            Stdlib.print_string(": ");
+            Token.print(tok);
+            Stdlib.print_string("\n");
+            ()
+        };
+    0
 }
 
-type t := {
+type t(input_state) := {
     intern : Intern.t;
-    input_buffer : &char;
+    input_state : input_state;
+    input_next : &input_state -> option(char);
+    prev_char : option(char);
+    current_location : location;
     token_buffer : Vector.t(char);
-    prev : option(Token.t)
+    prev : option((Token.t, location))
 }
 
-let main() := 0
+let file_input_next(fd : &(&file)) : option(char) = {
+    let c := unsafe_cast(Stdlib.fgetc(fd^));
+    if c < 0 then None else Some(unsafe_cast(c))
+}
+
+let try_of_file(filename : &char) : option(t(&file)) = {
+    let input_state := Stdlib.fopen(filename, "r");
+    if input_state == null then None else Some(of_fd(filename, input_state))
+}
+
+let of_fd(filename, fd : &file) : t(&file) =
+    #t {
+        input_state : fd;
+        input_next : file_input_next;
+        intern : Intern.create();
+        current_location : initial_location(filename);
+        token_buffer : Vector.create();
+        prev_char : None;
+        prev : None
+    }
+
+type location := {
+    file : &char;
+    line : i64;
+    column : i64
+}
+
+let next(t) := {
+    eat_whitespace(t);
+    match t^.prev with
+    | None -> lex(t)
+    | Some(prev) -> {
+        t^.prev = None;
+        Result(prev)
+    }
+}
+
+let peek(t) := {
+    match t^.prev with
+    | Some(prev) -> Result(prev)
+    | None -> {
+        match next(t) with
+        | Nothing -> Nothing
+        | Error(e) -> Error(e)
+        | Result(token) -> {
+            t^.prev = Some(token);
+            Result(token)
+        }
+    }
+}
+
+let lex(t) := {
+    let loc := t^.current_location;
+    match get_int_float_minus_or_arrow(t) with
+    | Result(token) -> return(Result(token, loc))
+    | Error(e) -> return(Error(e, loc))
+    | Nothing -> ();
+    match get_ident_or_keyword(t) with
+    | Result(token) -> return(Result(token, loc))
+    | Error(e) -> return(Error(e, loc))
+    | Nothing -> ();
+    Nothing
+}
+
+let print_location(loc) := {
+    Stdlib.print_string("line ");
+    Stdlib.print_int(loc^.line);
+    Stdlib.print_string(", column ");
+    Stdlib.print_int(loc^.column);
+    Stdlib.print_string(" in ");
+    Stdlib.print_string(loc^.file)
+}
+
+let incr_location(loc, c) := {
+    match c with
+    | '\n' -> { loc^.line = loc^.line + 1; loc^.column = 1; () }
+    | _ -> { loc^.column = loc^.column + 1; () }
+}
+
+let initial_location(file) := #location {
+    file;
+    line : 1;
+    column : 1
+}
+
+let next_char(t) :=
+    match t^.prev_char with
+    | None -> {
+          let o := t^.input_next(&t^.input_state);
+          match o with
+          | Some(c) -> incr_location(&t^.current_location, c)
+          | None -> ();
+          o
+      }
+    | Some(prev_char) -> {
+        t^.prev_char = None;
+        Some(prev_char)
+    }
+
+let peek_char(t) :=
+    match t^.prev_char with
+    | Some(prev_char) -> Some(prev_char)
+    | None -> {
+        let c := next_char(t);
+        t^.prev_char = c;
+        c
+    }
+
+let eat_whitespace_char(t) : bool = {
+  match peek_char(t) with
+  | None -> false
+  | Some(c) -> {
+        if c == " "[0] || c == "\t"[0] || c == "\n"[0] || c == "\r"[0] then {
+            next_char(t); true
+        } else false
+    }
+}
+
+let eat_whitespace(t) := loop { if false == eat_whitespace_char(t) then break(()) }
+
+let dig_to_char(d : i64) : char =
+    if d >= 0 && d <= 9 then unsafe_cast(unsafe_cast("0"[0]) + d) else "0"[0]
+
+let get_digit(t) := {
+    match peek_char(t) with
+    | None -> None
+    | Some(c) -> {
+        if (unsafe_cast(c) : i64) >= unsafe_cast("0"[0])
+        && (unsafe_cast(c) : i64) <= unsafe_cast("9"[0]) then {
+            next_char(t);
+            Some(c)
+        } else None
+    }
+}
+
+let add_to_buffer(t, c) :=
+    Vector.push(&t^.token_buffer, c)
+
+let intern_and_clear_buffer(t) := {
+    Vector.push(&t^.token_buffer, "\0"[0]);
+    let res := Intern.intern(&t^.intern, t^.token_buffer.Vector.arr);
+    Vector.clear(&t^.token_buffer);
+    res
+}
+
+let populate_pos_int(t) := {
+    match get_digit(t) with
+    | None -> false
+    | Some(c) -> {
+        add_to_buffer(t, c);
+        loop {
+            match get_digit(t) with
+            | None -> break(())
+            | Some(c) -> add_to_buffer(t, c)
+        };
+        true
+    }
+}
+
+let get_and_populate_minus(t) := {
+    if populate_char(t, "-"[0]) then {
+        Result(Token.Operator_symbol(Token.Minus))
+    } else Nothing
+}
+
+let populate_char(t, c) := {
+    match peek_char(t) with
+    | None -> false
+    | Some(x) -> {
+        if c == x then {
+            add_to_buffer(t, x);
+            next_char(t);
+            true
+        } else false
+    }
+}
+
+let get_int_float_minus_or_arrow(t) := {
+    let minus := get_and_populate_minus(t);
+    match minus with
+    | Result(_) -> {
+          if populate_char(t, ">"[0]) then return(Result(Token.Control_symbol(Token.Arrow)))
+      }
+    | _ -> ();
+    match populate_pos_int(t) with
+    | false -> { Vector.clear(&t^.token_buffer); minus }
+    | true -> {
+        match populate_char(t, "."[0]) with
+        | false -> Result(Token.Literal(Token.Int(intern_and_clear_buffer(t))))
+        | true -> {
+              populate_pos_int(t);
+              Result(Token.Literal(Token.Float(intern_and_clear_buffer(t))))
+          }
+      }
+}
+
+let ci(c : char) : i64 = unsafe_cast(c)
+
+let ident_body_char(c) := {
+    if ci(c) >= ci("a"[0]) && ci(c) <= ci("z"[0]) then true
+    else if ci(c) >= ci("A"[0]) && ci(c) <= ci("Z"[0]) then true
+    else if ci(c) >= ci("0"[0]) && ci(c) <= ci("9"[0]) then true
+    else if c == "_"[0] then true
+    else false
+}
+
+let ident_start_char(c) := {
+    if ci(c) >= ci("a"[0]) && ci(c) <= ci("z"[0]) then true
+    else if c == "_"[0] then true
+    else false
+}
+
+let upper_ident_start_char(c) := {
+    if ci(c) >= ci("A"[0]) && ci(c) <= ci("Z"[0]) then true
+    else false
+}
+
+let get_many(t, start_f, body_f) := {
+    match peek_char(t) with
+    | None -> None
+    | Some(c) -> {
+        if start_f(c) then {
+            add_to_buffer(t, c);
+            next_char(t);
+            loop {
+                match peek_char(t) with
+                | None -> break(Some(intern_and_clear_buffer(t)))
+                | Some(c) -> {
+                    if body_f(c) then {
+                        add_to_buffer(t, c);
+                        next_char(t);
+                        ()
+                    } else break(Some(intern_and_clear_buffer(t)))
+                }
+            }
+        } else None
+    }
+}
+
+let get_ident(t) := get_many(t, ident_start_char, ident_body_char)
+let get_upper_ident(t) := get_many(t, upper_ident_start_char, ident_body_char)
+
+let get_ident_or_keyword(t) := {
+    let ident := get_ident(t);
+    match ident with
+    | None -> Nothing
+    | Some("null") -> Result(Token.Literal(Token.Null))
+    | Some("size_of") -> Result(Token.Keyword(Token.Size_of))
+    | Some("return") -> Result(Token.Keyword(Token.Return))
+    | Some("if") -> Result(Token.Keyword(Token.If))
+    | Some("else") -> Result(Token.Keyword(Token.Else))
+    | Some("then") -> Result(Token.Keyword(Token.Then))
+    | Some("match") -> Result(Token.Keyword(Token.Match))
+    | Some("with") -> Result(Token.Keyword(Token.With))
+    | Some("let") -> Result(Token.Keyword(Token.Let))
+    | Some("type") -> Result(Token.Keyword(Token.Type))
+    | Some("extern") -> Result(Token.Keyword(Token.Extern))
+    | Some("implicit_extern") -> Result(Token.Keyword(Token.Implicit_extern))
+    | Some("assert") -> Result(Token.Keyword(Token.Assert))
+    | Some("open") -> Result(Token.Keyword(Token.Open))
+    | Some("open_file") -> Result(Token.Keyword(Token.Open_file))
+    | Some("loop") -> Result(Token.Keyword(Token.Loop))
+    | Some("break") -> Result(Token.Keyword(Token.Break))
+    | Some("module") -> Result(Token.Keyword(Token.Module))
+    | Some("unsafe_cast") -> Result(Token.Keyword(Token.Unsafe_cast))
+    | Some("false") -> Result(Token.Literal(Token.Bool(false)))
+    | Some("true") -> Result(Token.Literal(Token.Bool(true)))
+    | Some(ident) -> Result(Token.Literal(Token.Ident(ident)))
+}

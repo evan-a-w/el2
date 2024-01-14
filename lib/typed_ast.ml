@@ -84,7 +84,7 @@ and 'a expr_inner =
   | `Float of float
   | `String of string
   | `Bool of bool
-  | `Char of char
+  | `Char of string
   | `Glob_var of 'a top_var * mono String.Map.t option
   | `Local_var of string
   | `Tuple of 'a expr list

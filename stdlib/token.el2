@@ -1,0 +1,149 @@
+open Stdlib
+
+type keyword :=
+    | Size_of
+    | Return
+    | If
+    | Else
+    | Then
+    | Match
+    | With
+    | Let
+    | Type
+    | Extern
+    | Implicit_extern
+    | Assert
+    | Open
+    | Open_file
+    | Loop
+    | Break
+    | Module
+    | Unsafe_cast
+
+type operator_symbol :=
+    | Eq
+    | Ge
+    | Gt
+    | Le
+    | Lt
+    | Ne
+    | And
+    | Or
+    | Plus
+    | Minus
+    | Times
+    | Div
+    | Rem
+    | Amp
+    | Equals
+    | Caret
+
+type control_symbol :=
+    | Arrow
+    | Lparen
+    | Rparen
+    | Lbrace
+    | Rbrace
+    | Lbrack
+    | Rbrack
+    | Dot
+    | Lbracepipe
+    | Piperbrace
+    | Semicolon
+    | Comma
+    | Hash
+    | Colon
+    | Pipe
+
+type literal :=
+    | Int(&char)
+    | Bool(bool)
+    | Float(&char)
+    | String(&char)
+    | Ident(&char)
+    | Upper_ident(&char)
+    | Char(&char) [* this is a &char because we don't process escapes yet *]
+    | Null
+       
+type t :=
+    | Keyword(keyword)
+    | Operator_symbol(operator_symbol)
+    | Control_symbol(control_symbol)
+    | Literal(literal)
+
+let print_literal(l) :=
+    match l with
+    | Int(s) -> { print_string("Int("); print_string(s); print_string(")") }
+    | Bool(b) -> { print_string("Bool("); print_string(if b then "true" else "false"); print_string(")") }
+    | Float(s) -> { print_string("Float("); print_string(s); print_string(")") }
+    | String(s) -> { print_string("String("); print_string(s); print_string(")") }
+    | Ident(s) -> { print_string("Ident("); print_string(s); print_string(")") }
+    | Upper_ident(s) -> { print_string("Upper_ident("); print_string(s); print_string(")") }
+    | Char(s) -> { print_string("Char("); print_string(s); print_string(")") }
+    | Null -> { print_string("Null") }
+
+let print_keyword(k) :=
+    match k with
+    | Size_of -> { print_string("Size_of") }
+    | Return -> { print_string("Return") }
+    | If -> { print_string("If") }
+    | Else -> { print_string("Else") }
+    | Then -> { print_string("Then") }
+    | Match -> { print_string("Match") }
+    | With -> { print_string("With") }
+    | Let -> { print_string("Let") }
+    | Type -> { print_string("Type") }
+    | Extern -> { print_string("Extern") }
+    | Implicit_extern -> { print_string("Implicit_extern") }
+    | Assert -> { print_string("Assert") }
+    | Open -> { print_string("Open") }
+    | Open_file -> { print_string("Open_file") }
+    | Loop -> { print_string("Loop") }
+    | Break -> { print_string("Break") }
+    | Module -> { print_string("Module") }
+    | Unsafe_cast -> { print_string("Unsafe_cast") }
+
+let print_operator_symbol(o) :=
+    match o with
+    | Eq -> { print_string("Eq") }
+    | Ge -> { print_string("Ge") }
+    | Gt -> { print_string("Gt") }
+    | Le -> { print_string("Le") }
+    | Lt -> { print_string("Lt") }
+    | Ne -> { print_string("Ne") }
+    | And -> { print_string("And") }
+    | Or -> { print_string("Or") }
+    | Plus -> { print_string("Plus") }
+    | Minus -> { print_string("Minus") }
+    | Times -> { print_string("Times") }
+    | Div -> { print_string("Div") }
+    | Rem -> { print_string("Rem") }
+    | Amp -> { print_string("Amp") }
+    | Equals -> { print_string("Equals") }
+    | Caret -> { print_string("Caret") }
+
+let print_control_symbol(c) :=
+    match c with
+    | Arrow -> { print_string("Arrow") }
+    | Lparen -> { print_string("Lparen") }
+    | Rparen -> { print_string("Rparen") }
+    | Lbrace -> { print_string("Lbrace") }
+    | Rbrace -> { print_string("Rbrace") }
+    | Lbrack -> { print_string("Lbrack") }
+    | Rbrack -> { print_string("Rbrack") }
+    | Dot -> { print_string("Dot") }
+    | Lbracepipe -> { print_string("Lbracepipe") }
+    | Piperbrace -> { print_string("Piperbrace") }
+    | Semicolon -> { print_string("Semicolon") }
+    | Comma -> { print_string("Comma") }
+    | Hash -> { print_string("Hash") }
+    | Colon -> { print_string("Colon") }
+    | Pipe -> { print_string("Pipe") }
+
+let print(t) :=
+    match t with
+    | Keyword(k) -> { print_keyword(k) }
+    | Operator_symbol(o) -> { print_operator_symbol(o) }
+    | Control_symbol(c) -> { print_control_symbol(c) }
+    | Literal(l) -> { print_literal(l) }
+

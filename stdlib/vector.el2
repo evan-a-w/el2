@@ -14,8 +14,8 @@ let create() := #t {
 }
 
 let push(t, a : a) := {
-    if t^.size == t^.capacity then {
-        t^.capacity = min(8, t^.capacity * 2);
+    if t^.size >= t^.capacity then {
+        t^.capacity = max(8, t^.capacity * 2);
         t^.arr = realloc(t^.arr, t^.capacity * sizeof[a])
     };
     t^.arr[t^.size] = a;
@@ -36,6 +36,30 @@ let is_empty(t) := t^.size == 0
 let get(t, index) := t^.arr[index]
 let set(t, index, val) := t^.arr[index] = val
 let index(t, index) := &t^.arr[index]
+
+let clear(t) := {
+    t^.size = 0;
+    ()
+}
+
+let take(t) := {
+    let res := t^;
+    t^.size = 0;
+    t^.capacity = 0;
+    t^.arr = null;
+    res
+}
+
+[*
+let main() := {
+    let vec := create();
+    push(&vec, 1);
+    let vec2 := take(&vec);
+    assert(vec2.size == 1);
+    assert(vec.size == 0);
+    0
+}
+*]
 
 let free(t) := {
     Stdlib.free(t^.arr);

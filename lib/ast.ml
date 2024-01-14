@@ -62,7 +62,7 @@ type builtin_pattern =
   | `Float of float
   | `String of string
   | `Bool of bool
-  | `Char of char
+  | `Char of string
   ]
 [@@deriving sexp, compare]
 
@@ -89,7 +89,7 @@ and expr =
   | `Float of float
   | `String of string
   | `Bool of bool
-  | `Char of char
+  | `Char of string
   | `Var of name path
   | `Assert of expr
   | `Tuple of expr list

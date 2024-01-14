@@ -2,6 +2,8 @@ type option(a) :=
   | Some(a)
   | None
 
+let is_some(x) := match x with | &(None) -> false | _ -> true
+
 type result(ok, err) :=
   | Ok(ok)
   | Err(err)

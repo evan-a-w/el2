@@ -14,7 +14,7 @@ type value_inner =
   | Float of float
   | String of string
   | Bool of bool
-  | Char of char
+  | Char of string
   | Tuple of value list
   | Array of value list
   | Enum of string * value option
@@ -94,7 +94,7 @@ let rec equal_value (a : value) (b : value) =
   | Float a, Float b -> Float.equal a b
   | String a, String b -> String.equal a b
   | Bool a, Bool b -> Bool.equal a b
-  | Char a, Char b -> Char.equal a b
+  | Char a, Char b -> String.equal a b
   | Tuple a, Tuple b -> List.equal equal_value a b
   | Array a, Array b -> List.equal equal_value a b
   | Enum (a, b), Enum (c, d) -> String.equal a c && Option.equal equal_value b d

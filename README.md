@@ -84,6 +84,7 @@ let main() : i64 = {
   list_option_iter(Some(&second), print_endline);
   0
 }
+[* SUA PUA *]
 
 [* declares a function that is linked already (in the C standard library) *]
 implicit_extern print_endline : &char -> c_int = "puts"

@@ -259,6 +259,7 @@ let rec var_to_string_inner ~state ~inst_map (var : Type_check.var) =
       (match var.args with
        | `Non_func ->
          (match mono with
+          (* Since toplevels are comptime, we can skip unit ones (no side effects) *)
           | `Unit -> ""
           | _ ->
             let expr =
@@ -324,7 +325,9 @@ and define_func ~state ~name ~args ~ret ~expr =
   Bigbuffer.add_string buf "{ ";
   let s = expr_to_string ~state ~buf ~expr in
   (match snd expr |> reach_end with
-   | `Unit -> ()
+   | `Unit ->
+     Bigbuffer.add_string buf s;
+     Bigbuffer.add_char buf ';'
    | _ -> Bigbuffer.add_string buf [%string {| return %{s}; |}]);
   Bigbuffer.add_string buf " }";
   Bigbuffer.add_buffer state.def_buf buf
@@ -505,7 +508,7 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
        | "" -> "NULL"
        | _ -> [%string "&(%{expr})"])
     | `Deref e -> [%string "(*(%{expr_to_string ~state ~buf ~expr:e }))"]
-    | `Char x -> [%string "'%{x#Char}'"]
+    | `Char x -> [%string "'%{x}"]
     | `String s -> [%string {| "%{s}" |}]
     | `Int i -> [%string {| %{i#Int} |}]
     | `Check_variant (variant, expr) ->
@@ -684,16 +687,15 @@ let compile ~for_header ~comptime_eval ~input ~chan =
 
 let rec print_module input =
   Hashtbl.iter input.Type_state.sub_modules ~f:(fun input ->
-      print_endline [%string "Submodule %{input.name}"];
-      print_module input
-    );
+    print_endline [%string "Submodule %{input.name}"];
+    print_module input);
   Hashtbl.iter input.Type_state.glob_vars ~f:(fun var ->
     match var with
     | Typed_ast.El { poly; name; typed_expr; _ } ->
       let expr_inner, poly' = Option.value_exn typed_expr in
       let mono = poly_inner poly' in
       Pretty_print.print ~name ~poly ~typed_ast:(expr_inner, mono)
-    | _ -> ());
+    | _ -> ())
 ;;
 
 let print_typed_ast filename =

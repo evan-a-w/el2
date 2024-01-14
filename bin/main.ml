@@ -58,17 +58,27 @@ let compile_cmd =
           ~c_flags]
 ;;
 
-let transpile ~for_header ~comptime_eval ~no_format ~filename =
+let transpile ~no_format ~for_header ~filename ~comptime_eval =
   let clang_format_exists () =
     Core_unix.system "which clang-format > /dev/null" |> Result.is_ok
   in
   match no_format || not (clang_format_exists ()) with
   | true ->
-    Backend.transpile_fully ~for_header ~comptime_eval ~chan:Out_channel.stdout filename
+    Backend.transpile_fully
+      ~for_header
+      ~comptime_eval
+      ~chan:Out_channel.stdout
+      filename
   | _ ->
-    let chan = Core_unix.open_process_out "clang-format" in
-    Backend.transpile_fully ~for_header ~comptime_eval ~chan filename;
-    ignore @@ Core_unix.close_process_out chan
+    let out_chan = Core_unix.open_process_out "clang-format" in
+    Backend.transpile_fully ~for_header ~comptime_eval ~chan:out_chan filename;
+    (match Core_unix.close_process_out out_chan with
+     | Ok () -> ()
+     | Error _ as e ->
+       print_endline
+         [%string
+           "clang-format failed: %{Core_unix.Exit_or_signal.to_string_hum e}"];
+       exit 1)
 ;;
 
 let transpile_cmd =
@@ -85,7 +95,11 @@ let transpile_cmd =
       and no_format = flag "no-format" no_arg ~doc:" Don't format the output"
       and for_header = flag "header" no_arg ~doc:"Make only a header" in
       fun () ->
-        transpile ~for_header ~comptime_eval:(not skip_comptime_eval) ~no_format ~filename]
+        transpile
+          ~for_header
+          ~comptime_eval:(not skip_comptime_eval)
+          ~no_format
+          ~filename]
 ;;
 
 let () =

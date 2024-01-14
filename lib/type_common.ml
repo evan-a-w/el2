@@ -8,7 +8,7 @@ type expanded_expr =
   | `Float of float
   | `String of string
   | `Bool of bool
-  | `Char of char
+  | `Char of string
   | `Var of name path
   | `Tuple of expanded_expr list
   | `Array_lit of expanded_expr list

@@ -1,9 +1,10 @@
-type t := Vector.t(char)
-type string := t
-
 module Slice := {
+    module String := {
+        type t := Vector.t(char)
+    }
+
     type t := {
-        string : &string;
+        string : &String.t;
         start : i64;
         size : i64
     }
@@ -15,7 +16,7 @@ module Slice := {
             if i >= sz then break(hash);
             let sc : int = unsafe_cast(arr[i]);
             hash = (hash * 33) + sc;
-    	i = i + 1
+            i = i + 1
         }
     }
     
@@ -31,11 +32,12 @@ module Slice := {
         }
     }
 
-    [*
-    let hash(t) := hash_(&t^.string^.arr[t^.start], t^.size)
-    let equal(t1, t2) := equal_(&t1^.string^.arr[t1^.start], t1^.size, &t2^.string^.arr[t2^.start], t2^.size)
-    *]
+    let hash(t) := hash_(&t^.string^.String.arr[t^.start], t^.size)
+    let equal(t1, t2) := equal_(&t1^.string^.String.arr[t1^.start],
+                                t1^.size, &t2^.string^.String.arr[t2^.start], t2^.size)
 }
+
+type t := Slice.String.t
 
 let hash(s) := Slice.hash_(s^.arr, s^.size)
 let equal(s1, s2) := Slice.equal_(s1^.arr, s1^.size, s2^.arr, s2^.size)

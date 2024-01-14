@@ -118,8 +118,8 @@ let insert(t, key, data) : insert_result(_) = {
 
 let find_bucket(t, key) := {
   let hash := t^.hash_fn(&key);
-
-  find_helper(t, key, hash, hash % t^.capacity, 0)
+  if t^.capacity == 0 then null
+  else find_helper(t, key, hash, hash % t^.capacity, 0)
 }
 
 let find(t, key) := {

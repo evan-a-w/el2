@@ -105,6 +105,7 @@ and read_string buf =
   (* NOTE: because we print this stuff to a C file, we don't need to do this *)
   | '\\' '/'  (* { Buffer.add_char buf '/'; read_string buf lexbuf } *)
   | '\\' '\\' (* { Buffer.add_char buf '\\'; read_string buf lexbuf } *)
+  | '\\' '"' (* { Buffer.add_char buf '"'; read_string buf lexbuf } *)
   | '\\' 'b'  (* { Buffer.add_char buf '\b'; read_string buf lexbuf } *)
   | '\\' 'f'  (* { Buffer.add_char buf '\012'; read_string buf lexbuf } *)
   | '\\' 'n'  (* { Buffer.add_char buf '\n'; read_string buf lexbuf } *)
@@ -121,14 +122,14 @@ and read_string buf =
 and read_char =
   parse
   (* NOTE: because we print this stuff to a C file, we don't need to do this *)
-  | '\\' '/' '\''  (* { CHAR '/'  } *) 
-  | '\\' '\\' '\'' (* { CHAR '\\' } *)
-  | '\\' 'b' '\''  (* { CHAR '\b' } *)
-  | '\\' 'n' '\''  (* { CHAR '\n' } *)
-  | '\\' 'r' '\''  (* { CHAR '\r' } *)
-  | '\\' 't' '\''  (* { CHAR '\t' } *)
-  | '\\' ''' '\''  (* { CHAR '\'' } *)
-  | '\\' '0' '\''  (* { CHAR '\0' } *)
-  | [^ '\'' '\\']  { CHAR (Lexing.lexeme_char lexbuf 0) }
+  | '\\' '/' '\''  (* { CHAR "/"  }*) 
+  | '\\' '\\' '\'' (* { CHAR "\\" }*)
+  | '\\' 'b' '\''  (* { CHAR "\b" }*)
+  | '\\' 'n' '\''  (* { CHAR "\n" }*)
+  | '\\' 'r' '\''  (* { CHAR "\r" }*)
+  | '\\' 't' '\''  (* { CHAR "\t" }*)
+  | '\\' ''' '\''  (* { CHAR "\'" }*)
+  | '\\' '0' '\''  (* { CHAR '\0' }*)
+  | [^ '\'' '\\'] '\''  { CHAR (Lexing.lexeme lexbuf) }
   | _ { raise (Syntax_error ("Illegal char character: " ^ Lexing.lexeme lexbuf)) }
   | eof { raise (Syntax_error ("Char is not terminated")) }
