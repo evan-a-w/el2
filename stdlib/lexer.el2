@@ -2,7 +2,8 @@ open Types
 
 type result_option(res, err) :=
    [* since Nothing is the first variant,
-      using '?' operator returns if result or error *]
+      using '?' operator returns if result or error.
+   *]
    | Nothing
    | Result(res)
    | Error(err)
@@ -93,27 +94,28 @@ let peek(t) := {
     }
 }
 
-let add_loc(res, loc) := {
-    match res with
+let add_loc(t, f) := {
+    let loc := t^.current_location;
+    match f(t) with
     | Result(token) -> Result(token, loc)
     | Error(e) -> Error(e, loc)
     | Nothing -> Nothing
 }
 
 let lex(t) := {
-    let loc := t^.current_location;
     loop {
-        match eat_whitespace_and_comment(t) with
-        | (Result(token), _) -> return(Result(token, loc))
-        | (Error(e), _) -> return(Error(e, loc))
-        | (Nothing, true) -> ()
-        | (Nothing, false) -> break(())
+       let loc := t^.current_location;
+       match eat_whitespace_and_comment(t) with
+       | (Result(token), _) -> return(Result(token, loc))
+       | (Error(e), _) -> return(Error(e, loc))
+       | (Nothing, true) -> ()
+       | (Nothing, false) -> break(())
     };
-    add_loc(get_char(t), loc)?;
-    add_loc(get_string(t), loc)?;
-    add_loc(get_int_float_minus_or_arrow(t), loc)?;
-    add_loc(get_ident_or_keyword(t), loc)?;
-    add_loc(get_symbol_not_minus_or_arrow(t), loc)?;
+    add_loc(t, get_char)?;
+    add_loc(t, get_string)?;
+    add_loc(t, get_int_float_minus_or_arrow)?;
+    add_loc(t, get_ident_or_keyword)?;
+    add_loc(t, get_symbol_not_minus_or_arrow)?;
     [* Error("Unexpected character", loc) *]
     Nothing
 }
