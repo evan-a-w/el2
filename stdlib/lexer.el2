@@ -30,6 +30,51 @@ let main() := {
     0
 }
 
+let next(t) := {
+    match t^.prev with
+    | None -> {
+        let res := lex(t);
+        Vector.clear(&t^.token_buffer);
+        res
+      }
+    | Some(prev) -> {
+        t^.prev = None;
+        Result(prev)
+    }
+}
+
+let peek(t) := {
+    match t^.prev with
+    | Some(prev) -> Result(prev)
+    | None -> {
+        match next(t) with
+        | Nothing -> Nothing
+        | Error(e) -> Error(e)
+        | Result(token) -> {
+            t^.prev = Some(token);
+            Result(token)
+        }
+    }
+}
+
+let lex(t) := {
+    loop {
+       let loc := t^.current_location;
+       match eat_whitespace_and_comment(t) with
+       | (Result(token), _) -> return(Result(token, loc))
+       | (Error(e), _) -> return(Error(e, loc))
+       | (Nothing, true) -> ()
+       | (Nothing, false) -> break(())
+    };
+    add_loc(t, get_char)?;
+    add_loc(t, get_string)?;
+    add_loc(t, get_int_float_minus_or_arrow)?;
+    add_loc(t, get_ident_or_keyword)?;
+    add_loc(t, get_upper_ident)?;
+    add_loc(t, get_symbol_not_minus_or_arrow)?;
+    Nothing
+}
+
 type t(input_state) := {
     intern : Intern.t;
     input_state : input_state;
@@ -67,32 +112,6 @@ type location := {
     column : i64
 }
 
-let next(t) := {
-    match t^.prev with
-    | None -> {
-        let res := lex(t);
-        Vector.clear(&t^.token_buffer);
-        res
-      }
-    | Some(prev) -> {
-        t^.prev = None;
-        Result(prev)
-    }
-}
-
-let peek(t) := {
-    match t^.prev with
-    | Some(prev) -> Result(prev)
-    | None -> {
-        match next(t) with
-        | Nothing -> Nothing
-        | Error(e) -> Error(e)
-        | Result(token) -> {
-            t^.prev = Some(token);
-            Result(token)
-        }
-    }
-}
 
 let add_loc(t, f) := {
     let loc := t^.current_location;
@@ -100,24 +119,6 @@ let add_loc(t, f) := {
     | Result(token) -> Result(token, loc)
     | Error(e) -> Error(e, loc)
     | Nothing -> Nothing
-}
-
-let lex(t) := {
-    loop {
-       let loc := t^.current_location;
-       match eat_whitespace_and_comment(t) with
-       | (Result(token), _) -> return(Result(token, loc))
-       | (Error(e), _) -> return(Error(e, loc))
-       | (Nothing, true) -> ()
-       | (Nothing, false) -> break(())
-    };
-    add_loc(t, get_char)?;
-    add_loc(t, get_string)?;
-    add_loc(t, get_int_float_minus_or_arrow)?;
-    add_loc(t, get_ident_or_keyword)?;
-    add_loc(t, get_symbol_not_minus_or_arrow)?;
-    [* Error("Unexpected character", loc) *]
-    Nothing
 }
 
 let print_location(loc) := {
@@ -393,7 +394,7 @@ let get_many(t, start_f, body_f) := {
 }
 
 let get_ident(t) := get_many(t, ident_start_char, ident_body_char)
-let get_upper_ident(t) := get_many(t, upper_ident_start_char, ident_body_char)
+let get_upper_ident_(t) := get_many(t, upper_ident_start_char, ident_body_char)
 
 let is_symbol_char(c) := {
     [* ->=+!&|*^/%()[]{}.;,#: *]
@@ -407,6 +408,12 @@ let is_symbol_char(c) := {
 }
 
 let get_symbol_string(t) := get_many(t, is_symbol_char, is_symbol_char)
+
+let get_upper_ident(t) := {
+    match get_upper_ident_(t) with
+    | None -> Nothing
+    | Some(ident) -> Result(Token.Literal(Token.Upper_ident(ident)))
+}
 
 let get_ident_or_keyword(t) := {
     let ident := get_ident(t);
