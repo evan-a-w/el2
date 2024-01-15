@@ -65,7 +65,6 @@ type location := {
 }
 
 let next(t) := {
-    eat_whitespace(t);
     match t^.prev with
     | None -> {
         let res := lex(t);
@@ -94,6 +93,21 @@ let peek(t) := {
 
 let lex(t) := {
     let loc := t^.current_location;
+    loop {
+        match eat_whitespace_and_comment(t) with
+        | (Result(token), _) -> return(Result(token, loc))
+        | (Error(e), _) -> return(Error(e, loc))
+        | (Nothing, true) -> ()
+        | (Nothing, false) -> break(())
+    };
+    match get_char(t) with
+    | Result(token) -> return(Result(token, loc))
+    | Error(e) -> return(Error(e, loc))
+    | Nothing -> ();
+    match get_string(t) with
+    | Result(token) -> return(Result(token, loc))
+    | Error(e) -> return(Error(e, loc))
+    | Nothing -> ();
     match get_int_float_minus_or_arrow(t) with
     | Result(token) -> return(Result(token, loc))
     | Error(e) -> return(Error(e, loc))
@@ -102,6 +116,11 @@ let lex(t) := {
     | Result(token) -> return(Result(token, loc))
     | Error(e) -> return(Error(e, loc))
     | Nothing -> ();
+    match get_symbol_not_minus_or_arrow(t) with
+    | Result(token) -> return(Result(token, loc))
+    | Error(e) -> return(Error(e, loc))
+    | Nothing -> ();
+    [* Error("Unexpected character", loc) *]
     Nothing
 }
 
@@ -116,14 +135,14 @@ let print_location(loc) := {
 
 let incr_location(loc, c) := {
     match c with
-    | '\n' -> { loc^.line = loc^.line + 1; loc^.column = 1; () }
+    | '\n' -> { loc^.line = loc^.line + 1; loc^.column = 0; () }
     | _ -> { loc^.column = loc^.column + 1; () }
 }
 
 let initial_location(file) := #location {
     file;
     line : 1;
-    column : 1
+    column : 0
 }
 
 let next_char(t) :=
@@ -157,6 +176,103 @@ let eat_whitespace_char(t) : bool = {
             next_char(t); true
         } else false
     }
+}
+
+let add_next_to_buffer(t) := {
+    match next_char(t) with
+    | None -> false
+    | Some(c) -> { add_to_buffer(t, c); true }
+}
+
+let add_one_literal_char_to_buffer(t) := {
+    match peek_char(t) with
+    | None -> false
+    | Some('\\') -> {
+        add_next_to_buffer(t);
+        match peek_char(t) with
+        | None -> false
+        | Some('n') -> add_next_to_buffer(t)
+        | Some('t') -> add_next_to_buffer(t)
+        | Some('\'') -> add_next_to_buffer(t)
+        | Some('"') -> add_next_to_buffer(t)
+        | Some('\\') -> add_next_to_buffer(t)
+        | Some(_) -> false
+      }
+    | Some(c) -> add_next_to_buffer(t)
+}
+
+let get_char(t) := {
+    match peek_char(t) with
+    | None -> Nothing
+    | Some('\'') -> {
+          next_char(t);
+          in_char(t)
+      }
+    | Some(_) -> Nothing
+}
+
+let in_char(t) := {
+    match peek_char(t) with
+    | None -> Error("Unterminated character literal")
+    | Some('\'') -> Error("Empty character literal")
+    | Some(c) -> {
+          add_one_literal_char_to_buffer(t);
+          add_to_buffer(t, "\0"[0]);
+          match next_char(t) with
+          | None -> Error("Unterminated character literal")
+          | Some('\'') -> Result(Token.Literal(Token.Char(intern_and_clear_buffer(t))))
+          | Some(_) -> Error("Character literal contains more than one character")
+      }
+}
+
+let in_string(t) := {
+    loop match peek_char(t) with
+    | Some('"') -> { next_char(t); break(()) }
+    | Some(c) -> { add_one_literal_char_to_buffer(t); () }
+    | None -> return(Error("Unterminated string literal"));
+    add_to_buffer(t, "\0"[0]);
+    Result(Token.Literal(Token.String(intern_and_clear_buffer(t))))
+}
+
+let get_string(t) := {
+    match peek_char(t) with
+    | None -> Nothing
+    | Some('"') -> {
+          next_char(t);
+          in_string(t)
+      }
+    | Some(_) -> Nothing
+}
+
+let in_comment(t, depth) := {
+    match next_char(t) with
+    | None -> Error("Unterminated comment")
+    | Some('*') -> {
+          match next_char(t) with
+          | Some(']') -> {
+                if depth == 0 then Nothing
+                else in_comment(t, depth - 1)
+            }
+          | _ -> in_comment(t, depth)
+      }
+    | Some('[') -> {
+          match next_char(t) with
+          | Some('*') -> in_comment(t, depth + 1)
+          | _ -> in_comment(t, depth)
+      }
+    | _ -> in_comment(t, depth)
+}
+
+let eat_whitespace_and_comment(t) := {
+    eat_whitespace(t);
+    match peek_char(t) with
+    | Some('[') -> {
+          next_char(t);
+          match peek_char(t) with
+          | Some('*') -> { next_char(t); (in_comment(t, 0), true) }
+          | _ -> (Result(Token.Control_symbol(Token.Lbrack)), true)
+      }
+    | _ -> (Nothing, false)
 }
 
 let eat_whitespace(t) := loop { if false == eat_whitespace_char(t) then break(()) }
@@ -283,6 +399,19 @@ let get_many(t, start_f, body_f) := {
 let get_ident(t) := get_many(t, ident_start_char, ident_body_char)
 let get_upper_ident(t) := get_many(t, upper_ident_start_char, ident_body_char)
 
+let is_symbol_char(c) := {
+    [* ->=+!&|*^/%()[]{}.;,#: *]
+    let s := "->=+!&|*^/%()[]{}.;,#:";
+    let i := 0;
+    loop {
+        if s[i] == "\0"[0] then break(false);
+        if c == s[i] then break(true);
+        i = i + 1
+    }
+}
+
+let get_symbol_string(t) := get_many(t, is_symbol_char, is_symbol_char)
+
 let get_ident_or_keyword(t) := {
     let ident := get_ident(t);
     match ident with
@@ -309,4 +438,67 @@ let get_ident_or_keyword(t) := {
     | Some("false") -> Result(Token.Literal(Token.Bool(false)))
     | Some("true") -> Result(Token.Literal(Token.Bool(true)))
     | Some(ident) -> Result(Token.Literal(Token.Ident(ident)))
+}
+
+let get_symbol_not_minus_or_arrow(t) := {
+    match peek_char(t) with
+    | None -> Nothing
+    | Some('.') -> { next_char(t); Result(Token.Control_symbol(Token.Dot)) }
+    | Some(',') -> { next_char(t); Result(Token.Control_symbol(Token.Comma)) }
+    | Some('(') -> { next_char(t); Result(Token.Control_symbol(Token.Lparen)) }
+    | Some(')') -> { next_char(t); Result(Token.Control_symbol(Token.Rparen)) }
+    | Some('[') -> { next_char(t); Result(Token.Control_symbol(Token.Lbrack)) }
+    | Some(']') -> { next_char(t); Result(Token.Control_symbol(Token.Rbrack)) }
+    | Some('}') -> { next_char(t); Result(Token.Control_symbol(Token.Rbrace)) }
+    | Some(';') -> { next_char(t); Result(Token.Control_symbol(Token.Semicolon)) }
+    | Some(':') -> { next_char(t); Result(Token.Control_symbol(Token.Colon)) }
+    | Some('#') -> { next_char(t); Result(Token.Control_symbol(Token.Hash)) }
+    | Some('+') -> { next_char(t); Result(Token.Operator_symbol(Token.Plus)) }
+    | Some('*') -> { next_char(t); Result(Token.Operator_symbol(Token.Times)) }
+    | Some('%') -> { next_char(t); Result(Token.Operator_symbol(Token.Rem)) }
+    | Some('^') -> { next_char(t); Result(Token.Operator_symbol(Token.Caret)) }
+    | Some('{') -> {
+        next_char(t);
+        match peek_char(t) with
+        | Some('|') -> { next_char(t); Result(Token.Control_symbol(Token.Lbracepipe)) }
+        | _ -> Result(Token.Control_symbol(Token.Lbrace))
+      }
+    | Some('|') -> {
+        next_char(t);
+        match peek_char(t) with
+        | Some('}') -> { next_char(t); Result(Token.Control_symbol(Token.Piperbrace)) }
+        | Some('|') -> { next_char(t); Result(Token.Operator_symbol(Token.Or)) }
+        | _ -> Result(Token.Control_symbol(Token.Pipe))
+      }
+    | Some('=') -> {
+        next_char(t);
+        match peek_char(t) with
+        | Some('=') -> { next_char(t); Result(Token.Operator_symbol(Token.Eq)) }
+        | _ -> Result(Token.Operator_symbol(Token.Equals))
+      }
+    | Some('!') -> {
+        next_char(t);
+        match peek_char(t) with
+        | Some('=') -> { next_char(t); Result(Token.Operator_symbol(Token.Ne)) }
+        | _ -> Error("Unexpected character after '!'")
+      }
+    | Some('>') -> {
+        next_char(t);
+        match peek_char(t) with
+        | Some('=') -> { next_char(t); Result(Token.Operator_symbol(Token.Ge)) }
+        | _ -> Result(Token.Operator_symbol(Token.Gt))
+      }
+    | Some('<') -> {
+        next_char(t);
+        match peek_char(t) with
+        | Some('=') -> { next_char(t); Result(Token.Operator_symbol(Token.Le)) }
+        | _ -> Result(Token.Operator_symbol(Token.Lt))
+      }
+    | Some('&') -> {
+        next_char(t);
+        match peek_char(t) with
+        | Some('&') -> { next_char(t); Result(Token.Operator_symbol(Token.And)) }
+        | _ -> Result(Token.Operator_symbol(Token.Amp))
+      }
+    | Some(_) -> Nothing
 }

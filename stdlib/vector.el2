@@ -67,3 +67,12 @@ let free(t) := {
     t^.capacity = 0;
     ()
 }
+
+let push_arr(t, arr, len) := {
+    if len == 0 then {
+        ()
+    } else {
+        push(t, arr[0]);
+        push_arr(t, &arr[1], len - 1)
+    }
+}

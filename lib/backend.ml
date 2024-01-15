@@ -476,6 +476,10 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
       Bigbuffer.add_char buf ';';
       Bigbuffer.add_char buf '}';
       res_val
+    | `Inf_op (`Eq, ((_, `Pointer `Char) as a), b) ->
+      let a = expr_to_string ~buf ~state ~expr:a in
+      let b = expr_to_string ~buf ~state ~expr:b in
+      [%string {| (strcmp(%{a}, %{b}) == 0) |}]
     | `Inf_op (op, a, b) ->
       let a = expr_to_string ~buf ~state ~expr:a in
       let b = expr_to_string ~buf ~state ~expr:b in
