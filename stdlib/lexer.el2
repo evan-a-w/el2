@@ -1,9 +1,11 @@
 open Types
 
 type result_option(res, err) :=
+   [* since Nothing is the first variant,
+      using '?' operator returns if result or error *]
+   | Nothing
    | Result(res)
    | Error(err)
-   | Nothing
 
 let main() := {
     let t := of_fd("stdin", Stdlib.stdin);
@@ -91,6 +93,13 @@ let peek(t) := {
     }
 }
 
+let add_loc(res, loc) := {
+    match res with
+    | Result(token) -> Result(token, loc)
+    | Error(e) -> Error(e, loc)
+    | Nothing -> Nothing
+}
+
 let lex(t) := {
     let loc := t^.current_location;
     loop {
@@ -100,26 +109,11 @@ let lex(t) := {
         | (Nothing, true) -> ()
         | (Nothing, false) -> break(())
     };
-    match get_char(t) with
-    | Result(token) -> return(Result(token, loc))
-    | Error(e) -> return(Error(e, loc))
-    | Nothing -> ();
-    match get_string(t) with
-    | Result(token) -> return(Result(token, loc))
-    | Error(e) -> return(Error(e, loc))
-    | Nothing -> ();
-    match get_int_float_minus_or_arrow(t) with
-    | Result(token) -> return(Result(token, loc))
-    | Error(e) -> return(Error(e, loc))
-    | Nothing -> ();
-    match get_ident_or_keyword(t) with
-    | Result(token) -> return(Result(token, loc))
-    | Error(e) -> return(Error(e, loc))
-    | Nothing -> ();
-    match get_symbol_not_minus_or_arrow(t) with
-    | Result(token) -> return(Result(token, loc))
-    | Error(e) -> return(Error(e, loc))
-    | Nothing -> ();
+    add_loc(get_char(t), loc)?;
+    add_loc(get_string(t), loc)?;
+    add_loc(get_int_float_minus_or_arrow(t), loc)?;
+    add_loc(get_ident_or_keyword(t), loc)?;
+    add_loc(get_symbol_not_minus_or_arrow(t), loc)?;
     [* Error("Unexpected character", loc) *]
     Nothing
 }

@@ -172,6 +172,7 @@ module Type_state = struct
       ; seen_vars : String.Hash_set.t
       ; seen_types : String.Hash_set.t
       ; ty_var_map : mono String.Table.t option
+      ; user_type_to_path : string list String.Table.t
       }
     [@@deriving sexp]
   end
@@ -187,6 +188,16 @@ module Type_state = struct
     else (
       Hash_set.add t.seen_vars name;
       name)
+  ;;
+
+  let full_path module_t =
+    let rec go acc module_t =
+      let acc = module_t.name :: acc in
+      match module_t.parent with
+      | None -> acc
+      | Some p -> go acc p
+    in
+    go [] module_t
   ;;
 
   let module_prefix module_t =
@@ -280,6 +291,7 @@ module Type_state = struct
     ; seen_vars = String.Hash_set.create ()
     ; seen_types = String.Hash_set.create ()
     ; ty_var_map = None
+    ; user_type_to_path = String.Table.create ()
     }
   ;;
 
@@ -788,6 +800,7 @@ and expand_expr ~state (expr : Ast.expr) : expanded_expr =
   | `Float f -> `Float f
   | `Char c -> `Char c
   | `String s -> `String s
+  | `Question_mark a -> `Question_mark (f a)
   | `Enum s -> `Enum s
   | `Assert a -> `Assert (f a)
   | `Array_lit l -> `Array_lit (List.map l ~f)
@@ -908,6 +921,7 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
   | `Loop a
   | `Assert a
   | `Compound a
+  | `Question_mark a
   | `Return a
   | `Size_of (`Expr a)
   | `Unsafe_cast a
@@ -943,6 +957,7 @@ and process_module ~opened_modules ~state ~module_t toplevels =
 
 and process_file ?parent ~state filename =
   match Hashtbl.find state.Type_state.seen_files filename with
+  | Some m when phys_equal m state.Type_state.current_module -> m
   | Some (Type_state.{ in_eval = false; _ } as m) -> m
   | Some { in_eval = true; _ } ->
     raise
@@ -1012,6 +1027,10 @@ and process_toplevel_graph ~state (toplevels : toplevel list) =
           nek :: acc
         | `Let_type ((name, ty_vars), type_decl) ->
           let repr_name = Type_state.make_unique_type ~state name in
+          Hashtbl.set
+            state.Type_state.user_type_to_path
+            ~key:repr_name
+            ~data:(Type_state.full_path state.current_module);
           (match
              Hashtbl.add
                state.Type_state.current_module.types
@@ -1299,6 +1318,29 @@ and type_expr ~res_type ~break_type ~state expr =
     print_s [%message (expr : expanded_expr)];
     raise exn
 
+and workout_enum_type_for_question_mark ~state ~res_type am =
+  match inner_mono am with
+  | `User u ->
+    let module_path =
+      Hashtbl.find_exn
+        state.Type_state.user_type_to_path
+        u.orig_user_type.repr_name
+    in
+    let insted = inst_user_type_exn u in
+    let info = inner_info !(insted.info) in
+    (match info with
+     | Some (`Enum l) -> l, module_path
+     | _ -> failwith [%string "question mark on non-enum (%{show_mono am})"])
+  | `Indir _ ->
+    let res_user_type =
+      match inner_mono res_type with
+      | `User u -> inst_user_type_gen u.orig_user_type
+      | _ -> failwith "question mark on weak type - perhaps specify more type info"
+    in
+    let am = unify am (`User res_user_type) in
+    workout_enum_type_for_question_mark ~state ~res_type am
+  | _ -> failwith [%string "question mark on non-enum (%{show_mono am})"]
+
 and type_expr_ ~res_type ~break_type ~state expr : expr =
   let rep ~state = type_expr ~res_type ~break_type ~state in
   match expr with
@@ -1379,6 +1421,43 @@ and type_expr_ ~res_type ~break_type ~state expr : expr =
     let user_type = lookup_and_inst_user_type ~state str in
     let am = unify am (`User user_type) in
     a, am
+  | `Question_mark a ->
+    let _, am = rep ~state a in
+    let variants, module_path =
+      workout_enum_type_for_question_mark ~state ~res_type am
+    in
+    let fst, rest =
+      match variants with
+      | fst :: rest -> fst, rest
+      | _ -> failwith "empty enum"
+    in
+    let make_enum_pattern field inner =
+      match field with
+      | false -> `Enum ({ module_path; inner }, None)
+      | true -> `Enum ({ module_path; inner }, Some (`Var "x"))
+    in
+    let make_enum_ret_expr field inner =
+      match field with
+      | false -> `Return (`Enum { module_path; inner })
+      | true ->
+        `Return
+          (`Apply
+            ( `Enum { module_path; inner }
+            , `Var { module_path = []; inner = "x" } ))
+    in
+    let fst_arm =
+      match fst with
+      | variant, None -> make_enum_pattern false variant, `Unit
+      | variant, Some _ ->
+        make_enum_pattern true variant, `Var { module_path = []; inner = "x" }
+    in
+    let rest_arms =
+      List.map rest ~f:(fun (variant, field) ->
+        let field = Option.is_some field in
+        make_enum_pattern field variant, make_enum_ret_expr field variant)
+    in
+    let expr : expanded_expr = `Match (a, fst_arm :: rest_arms) in
+    rep ~state expr
   | `Access_enum_field (field, a) ->
     let a, am = rep ~state a in
     let inst_user_type, res_type =

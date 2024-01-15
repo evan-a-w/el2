@@ -17,7 +17,7 @@
 %token TRUE FALSE
 %token <string> CHAR
 %token LET TYPE EXTERN IMPLICIT_EXTERN ASSERT
-%token OPEN OPEN_FILE LOOP BREAK MODULE
+%token OPEN OPEN_FILE LOOP BREAK MODULE QUESTION
 %token UNSAFE_CAST
 
 %left EQUALS
@@ -28,6 +28,7 @@
 %left PLUS MINUS
 %left TIMES DIV REM
 %nonassoc AMP STAR
+%nonassoc QUESTION
 %left DOT LBRACK
 %left CARET
 %left LPAREN
@@ -199,6 +200,8 @@ expr_ops:
     { `Apply (a, `Tuple (b :: l)) }
   | AMP; e = expr_ops
     { `Ref e }
+  | e = expr_ops; QUESTION
+    { `Question_mark e }
   | e = expr_ops; CARET
     { `Deref e }
   | TIMES; e = expr_ops %prec STAR

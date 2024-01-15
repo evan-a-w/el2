@@ -71,9 +71,6 @@ and inst_user_type =
   ; insted_user_type : user_type option ref
   }
 
-and enum_type = [ `Enum of (string * mono) list ]
-and struct_type = [ `Struct of (string * mono) list ]
-
 and all_user =
   [ `Enum of (string * mono option) list
   | `Struct of (string * mono) list

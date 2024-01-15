@@ -4,6 +4,11 @@ type option(a) :=
 
 let is_some(x) := match x with | &(None) -> false | _ -> true
 
+let map_unit(x : option(a)) := {
+  x?;
+  Some(())
+}
+
 type result(ok, err) :=
   | Ok(ok)
   | Err(err)

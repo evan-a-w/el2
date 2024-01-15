@@ -97,6 +97,7 @@ and expr =
   | `Struct of name path * (string * expr option) list
   | `Apply of expr * expr
   | `Inf_op of inf_op * expr * expr
+  | `Question_mark of expr
   | `Pref_op of pref_op * expr
   | `Deref of expr (* prefix * *)
   | `Ref of expr (* prefix & *)
@@ -213,6 +214,7 @@ let rec expr_fold_rec expr ~init ~f =
     | `Field_access (a, _)
     | `Assert a
     | `Unsafe_cast a
+    | `Question_mark a
     | `Break a
     | `Loop a
     | `Ref a

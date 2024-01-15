@@ -82,6 +82,7 @@ rule read =
   | ";"      { SEMICOLON }
   | ":"      { COLON }
   | "->"     { ARROW }
+  | "?"      { QUESTION }
   | "'"      { read_char lexbuf }
   | '"'      { read_string (Buffer.create 17) lexbuf }
   | eof      { EOF }
