@@ -8,7 +8,12 @@ open! Type_check
    this happens for 'return'.
    TODO?: make an actual bottom type *)
 
-(* TODO: make variable shadowing work! important! *)
+(* FIXME: make variable shadowing work! important!
+   currently generates incorrect code when a shadowed variable is created with an
+   expression including the variable it shadows, eg.
+   [ let f(s) := let s = 1 + s in s ]
+   also it sometimes will have compiler errors because C doesn't (?) allow shadowing
+   in the same scope (?) *)
 let reach_end = Typed_ast.reach_end ~default:`Unit
 
 exception Invalid_type of mono
@@ -703,11 +708,12 @@ let rec print_module input =
 ;;
 
 let print_typed_ast filename =
-  let input = Type_check.type_check_and_output filename in
+  let input, _ = Type_check.type_check_and_output filename in
   Hashtbl.iter input.seen_files ~f:print_module
 ;;
 
 let transpile_fully ~for_header ~comptime_eval ~chan filename =
-  let input = Type_check.type_check_and_output filename in
-  compile ~for_header ~comptime_eval ~input ~chan
+  let input, has_main = Type_check.type_check_and_output filename in
+  compile ~for_header ~comptime_eval ~input ~chan;
+  has_main
 ;;

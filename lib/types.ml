@@ -1,6 +1,6 @@
 open! Core
 
-(* TODO: add array types (stack allocated) - currently unsound because
+(* FIXME: add array types (stack allocated) - currently unsound because
    array literals are shared basically *)
 
 (*SUA *)
@@ -518,11 +518,16 @@ and do_inst_actual_user_type ~cache ~rep_map ~monos user_type : user_type option
     cache.user_types
     <- Map.set cache.user_types ~key:(monos, user_type.repr_name) ~data:res;
     let rep_map =
-      List.fold2_exn
-        user_type.ty_vars
-        monos
-        ~init:rep_map
-        ~f:(fun acc key data -> Map.set acc ~key ~data)
+      match
+        List.fold2 user_type.ty_vars monos ~init:rep_map ~f:(fun acc key data ->
+          Map.set acc ~key ~data)
+      with
+      | Ok x -> x
+      | Unequal_lengths ->
+        failwith
+          [%string
+            "Unequal list lengths in user_type: len %{List.length monos#Int}, \
+             expected: %{List.length user_type.ty_vars#Int}"]
     in
     res.info := Some (do_inst_all_user ~cache ~rep_map info);
     Some res

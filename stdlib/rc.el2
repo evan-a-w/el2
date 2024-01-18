@@ -1,0 +1,64 @@
+type rc(a) := {
+  destructor : &a -> unit;
+  refcnt : i64;
+  weakcnt : i64;
+  a : a
+}
+
+type t(a) := &rc(a)
+
+type weak(a) := { t : t(a) }
+
+let promote(weak) := {
+    if weak.t^.refcnt > 0 then {
+        incr(weak.t);
+        Types.Some(weak.t)
+    } else Types.None
+}
+
+let create(a : a, destructor) := {
+    let res := Stdlib.alloc(sizeof[rc(a)]);
+    res^ = (#rc { destructor; a; refcnt : 0; weakcnt : 0 });
+    res
+}
+
+let incr_weak(weak) := {
+    weak.t^.weakcnt = weak.t^.weakcnt + 1;
+    ()
+}
+
+let decr_weak(weak) := {
+    weak.t^.weakcnt = weak.t^.weakcnt - 1;
+    if weak.t^.weakcnt == 0 && weak.t^.refcnt == 0 then
+        unsafe_destroy(weak.t);
+    ()
+}
+
+let incr(t) := {
+    t^.refcnt = t^.refcnt + 1;
+    t
+}
+
+let to_weak(t) := {
+    t^.weakcnt = t^.weakcnt + 1;
+    #weak { t }
+}
+
+let get(t) := &t^.a
+
+let unsafe_destroy(t) := {
+    t^.destructor(&t^.a);
+    Stdlib.free(t)
+}
+
+let decr(t) := {
+    let old := t^.refcnt;
+    t^.refcnt = old - 1;
+    if old == 1 && t^.weakcnt == 0 then
+      unsafe_destroy(t);
+    ()
+}
+
+type ptr(a) := t(a)
+
+let create_ptr(a) := create(a, Stdlib.free)

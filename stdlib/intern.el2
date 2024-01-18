@@ -1,3 +1,5 @@
+type str := &char
+
 type t := { map : Hashmap.t(&char, &char) }
 
 let create() := #t { map : Hashmap.create(Hash.string_hash, Hash.string_equal) }

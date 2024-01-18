@@ -1,0 +1,3 @@
+type parser(input_state) := {
+    lexer : Lexer.t(input_state)
+}

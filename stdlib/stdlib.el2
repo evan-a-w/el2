@@ -65,3 +65,12 @@ let print_string(s : &char) : unit = {
 }
 
 let memcpy(dest : &_, src : &_, sz : i64) := c_memcpy(unsafe_cast(dest), unsafe_cast(src), sz)
+
+let ignore(x) := ()
+
+let hoist(x : a) := {
+    let res := alloc(sizeof[a]);
+    if res == null then return(res);
+    res^ = x;
+    res
+}

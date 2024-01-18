@@ -20,7 +20,7 @@ type expanded_expr =
   | `Pref_op of pref_op * expanded_expr
   | `Deref of expanded_expr (* prefix * *)
   | `Ref of expanded_expr (* prefix & *)
-  | `Tuple_access of expanded_expr * int (* postfix . *)
+  | `Tuple_access of expanded_expr * int * int option (* postfix . *)
   | `Field_access of expanded_expr * string path (* postfix . *)
   | `Index of expanded_expr * expanded_expr (* postfix [] *)
   | `If of expanded_expr * expanded_expr * expanded_expr

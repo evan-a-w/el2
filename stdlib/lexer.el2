@@ -8,7 +8,9 @@ type result_option(res, err) :=
    | Result(res)
    | Error(err)
 
-let main() := {
+let main() := stdin_lex_loop()
+
+let stdin_lex_loop() := {
     let t := of_fd("stdin", Stdlib.stdin);
     loop match next(&t) with
       | Nothing -> break(())
@@ -66,12 +68,12 @@ let lex(t) := {
        | (Nothing, true) -> ()
        | (Nothing, false) -> break(())
     };
+    add_loc(t, get_ident_or_keyword)?;
+    add_loc(t, get_symbol_not_minus_or_arrow)?;
+    add_loc(t, get_upper_ident)?;
     add_loc(t, get_char)?;
     add_loc(t, get_string)?;
     add_loc(t, get_int_float_minus_or_arrow)?;
-    add_loc(t, get_ident_or_keyword)?;
-    add_loc(t, get_upper_ident)?;
-    add_loc(t, get_symbol_not_minus_or_arrow)?;
     Nothing
 }
 

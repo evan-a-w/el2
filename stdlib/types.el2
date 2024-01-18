@@ -2,6 +2,8 @@ type option(a) :=
   | Some(a)
   | None
 
+let option_destroy(t : option(_), destroy_a) := destroy_a(t?)
+
 let is_some(x) := match x with | &(None) -> false | _ -> true
 
 let map_unit(x : option(a)) := {

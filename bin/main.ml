@@ -16,7 +16,14 @@ let compile ~comptime_eval ~keep_temps ~filename ~c_flags =
   let basename = Filename.basename filename in
   let name = [%string "%{dir}/%{basename}.c"] in
   let chan = Out_channel.create name in
-  Backend.transpile_fully ~for_header:false ~comptime_eval ~chan filename;
+  let has_main =
+    Backend.transpile_fully ~for_header:false ~comptime_eval ~chan filename
+  in
+  let c_flags =
+    match has_main with
+    | true -> c_flags
+    | false -> "-c " ^ c_flags
+  in
   Out_channel.close chan;
   let res =
     Core_unix.system [%string "cc -w -o %{basename}.o %{c_flags} %{name}"]
@@ -64,14 +71,20 @@ let transpile ~no_format ~for_header ~filename ~comptime_eval =
   in
   match no_format || not (clang_format_exists ()) with
   | true ->
-    Backend.transpile_fully
-      ~for_header
-      ~comptime_eval
-      ~chan:Out_channel.stdout
-      filename
+    (ignore : bool -> unit)
+    @@ Backend.transpile_fully
+         ~for_header
+         ~comptime_eval
+         ~chan:Out_channel.stdout
+         filename
   | _ ->
     let out_chan = Core_unix.open_process_out "clang-format" in
-    Backend.transpile_fully ~for_header ~comptime_eval ~chan:out_chan filename;
+    (ignore : bool -> unit)
+    @@ Backend.transpile_fully
+         ~for_header
+         ~comptime_eval
+         ~chan:out_chan
+         filename;
     (match Core_unix.close_process_out out_chan with
      | Ok () -> ()
      | Error _ as e ->

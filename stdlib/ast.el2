@@ -1,0 +1,141 @@
+type path(a) := {
+    module_path : Vector.t(Intern.str);
+    inner : a
+}
+
+type with_location(a) := (a, Lexer.location)
+
+type type_decl_ :=
+    | Alias(type_expr)
+    | Struct(Vector.t((Intern.str, type_expr)))
+    | Enum(Vector.t((Intern.str, Types.option(type_expr))))
+
+type type_expr_ :=
+    | T_unit
+    | T_named(path(Intern.str))
+    | T_named_args(path(Intern.str), Vector.t(type_expr))
+    | T_tuple(Vector.t(type_expr))
+    | T_pointer(&type_expr)
+
+type pattern_ :=
+    | P_unit
+    | P_int(Intern.str)
+    | P_bool(bool)
+    | P_string(Intern.str)
+    | P_null
+    | P_float(Intern.str)
+    | P_char(Intern.str)
+    | P_var(Intern.str)
+    | P_tuple(Vector.t(pattern))
+    | P_enum(path(Intern.str), Types.option(&pattern))
+    | P_struct(path(Intern.str), Vector.t((Intern.str, Types.option(&pattern))))
+    | P_typed(&pattern, type_expr)
+    | P_ref(&pattern)
+
+type var_decl_ :=
+    | V_typed(Intern.str, type_expr)
+    | V_untyped(Intern.str)
+
+type prefix_op :=
+    | Pref_minus
+
+type infix_op :=
+    | Add
+    | Sub
+    | Mul
+    | Div
+    | Rem
+    | Eq
+    | Ne
+    | Ge
+    | Gt
+    | Le
+    | Lt
+    | And
+    | Or
+
+type expr_ :=
+    | E_unit
+    | E_int(Intern.str)
+    | E_bool(bool)
+    | E_string(Intern.str)
+    | E_null
+    | E_float(Intern.str)
+    | E_char(Intern.str)
+    | E_var(Intern.str)
+    | E_tuple(Vector.t(expr))
+    | E_enum(path(Intern.str))
+    | E_struct(path(Intern.str), Vector.t((Intern.str, Types.option(&expr))))
+    | E_assert(&expr)
+    | E_apply(&expr, &expr)
+    | E_infix(infix_op, &expr, &expr)
+    | E_question(&expr)
+    | E_prefix(prefix_op, &expr)
+    | E_deref(&expr)
+    | E_ref(&expr)
+    | E_field_access(&expr, Intern.str)
+    | E_if(&expr, &expr, &expr)
+    | E_match(&expr, Vector.t((pattern, expr)))
+    | E_loop(&expr)
+    | E_index(&expr, &expr)
+    | E_let(pattern, &expr, &expr)
+    | E_assign(&expr, &expr)
+    | E_compound(Vector.t(compound_inner))
+    | E_typed(&expr, type_expr)
+    | E_return(&expr)
+    | E_break(&expr)
+    | E_unsafe_cast(&expr)
+    | E_sizeof_type(type_expr)
+    | E_sizeof_expr(&expr)
+    | E_array(Vector.t(expr))
+
+type compound_inner :=
+    | C_let(pattern, expr)
+    | C_expr(expr)
+
+type type_decl := with_location(type_decl_)
+type type_expr := with_location(type_expr_)
+type pattern := with_location(pattern_)
+type var_decl := with_location(var_decl_)
+type expr := with_location(expr_)
+
+let enum_inner_destroy(t : (_, Types.option(type_expr))) : unit = {
+    let (_, (ty : Types.option(type_expr))) := t;
+    match ty with
+    | Types.None -> ()
+    | Types.Some(ty) -> type_expr_destroy(ty)
+}
+
+let struct_inner_destroy(t) := {
+    let (_, ty) := t;
+    type_expr_destroy(ty)
+}
+
+let type_decl__destroy(t) := {
+    match t with
+    | Alias(t) -> type_expr_destroy(t)
+    | Struct(v) -> Vector.destroy(&v, struct_inner_destroy)
+    | Enum(v) -> Vector.destroy(&v, enum_inner_destroy)
+}
+
+let path_destroy(t, a_destroy) := {
+    Vector.free(&t.module_path);
+    a_destroy(t.inner)
+}
+
+let type_expr__destroy(t : type_expr_) : unit = {
+    match t with
+    | T_unit -> ()
+    | T_named(p) -> path_destroy(p, Stdlib.ignore)
+    | T_named_args(_, v) -> Vector.destroy(&v, type_expr_destroy)
+    | T_tuple(v) -> Vector.destroy(&v, type_expr_destroy)
+    | T_pointer(t) -> { type_expr_destroy(t^); Stdlib.free(t) }
+}
+
+
+let with_location_destroy(t : with_location(_), a_destroy) : unit = {
+    let (a, _) := t;
+    a_destroy(a)
+}
+let type_expr_destroy(t) := with_location_destroy(t, type_expr__destroy)
+let type_decl_destroy(t) := with_location_destroy(t, type_decl__destroy)

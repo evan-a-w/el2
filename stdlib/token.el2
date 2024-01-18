@@ -56,13 +56,13 @@ type control_symbol :=
     | Pipe
 
 type literal :=
-    | Int(&char)
+    | Int(Intern.str)
     | Bool(bool)
-    | Float(&char)
-    | String(&char)
-    | Ident(&char)
-    | Upper_ident(&char)
-    | Char(&char) [* this is a &char because we don't process escapes yet *]
+    | Float(Intern.str)
+    | String(Intern.str)
+    | Ident(Intern.str)
+    | Upper_ident(Intern.str)
+    | Char(Intern.str) [* this is a Intern.str because we don't process escapes yet *]
     | Null
        
 type t :=

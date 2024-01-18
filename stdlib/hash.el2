@@ -12,7 +12,7 @@ let string_hash(s_ : &(&char)) := {
     }
 }
 
-[* TODO: make it so shadowing locals isnt borked AS FUCK *]
+[* FIXME: make it so shadowing locals isnt borked AS FUCK *]
 let string_equal(a_ : &(&char), b_ : &(&char)) := {
     let a := a_^;
     let b := b_^;

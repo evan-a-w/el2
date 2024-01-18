@@ -68,6 +68,19 @@ let free(t) := {
     ()
 }
 
+let destroy(t, a_destroy) := {
+    let i := 0;
+    loop {
+        if i >= t^.size then break(());
+        a_destroy(t^.arr[i]);
+        i = i + 1;
+        ()
+    };
+    free(t);
+    Stdlib.free(t);
+    ()
+}
+
 let push_arr(t, arr, len) := {
     if len == 0 then {
         ()

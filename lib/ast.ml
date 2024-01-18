@@ -101,7 +101,7 @@ and expr =
   | `Pref_op of pref_op * expr
   | `Deref of expr (* prefix * *)
   | `Ref of expr (* prefix & *)
-  | `Tuple_access of expr * int (* postfix . *)
+  | `Tuple_access of expr * int * int option (* postfix . *)
   | `Field_access of expr * string path (* postfix . *)
   | `Index of expr * expr (* postfix [] *)
   | `If of expr * expr * expr
@@ -210,7 +210,7 @@ let rec expr_fold_rec expr ~init ~f =
     | `Size_of (`Type _) -> ()
     | `Size_of (`Expr a)
     | `Return a
-    | `Tuple_access (a, _)
+    | `Tuple_access (a, _, _)
     | `Field_access (a, _)
     | `Assert a
     | `Unsafe_cast a

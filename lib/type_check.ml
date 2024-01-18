@@ -615,9 +615,12 @@ and get_user_type_field_exn ~field inst_user_type =
   | Some x -> x
   | None -> failwith [%string "Unknown field %{field}"]
 
-and lookup_var ~state ({ inner = name; module_path } as p) =
+and lookup_var_opt ~state { inner = name; module_path } =
   let f module_t = Hashtbl.find module_t.Type_state.glob_vars name in
-  match find_module_in_submodules ~try_make_module ~state ~f module_path with
+  find_module_in_submodules ~try_make_module ~state ~f module_path
+
+and lookup_var ~state p =
+  match lookup_var_opt ~state p with
   | None -> failwith [%string "Unknown variable %{show_path Fn.id p}"]
   | Some x -> x
 
@@ -718,22 +721,40 @@ and process_types ~(state : Type_state.t) types =
       | `Duplicate -> failwith [%string "Duplicate field %{s}"]
     in
     let all_user =
-      match decl with
-      | `Alias type_expr ->
-        let mono' = mono_of_type_expr ~make_ty_vars:false ~state type_expr in
-        (match last_user_type_info_not_insted mono' with
-         | Some (`Enum l) -> List.map ~f:fst l |> List.iter ~f:variants_f
-         | Some (`Struct l) -> List.map ~f:fst l |> List.iter ~f:fields_f
-         | _ -> ());
-        `Alias mono'
-      | `Enum l ->
-        let all_user, variants = all_user_of_enum ~state l in
-        Hash_set.iter ~f:variants_f variants;
-        all_user
-      | `Struct l ->
-        let all_user, fields = all_user_of_struct ~state l in
-        Hash_set.iter ~f:fields_f fields;
-        all_user
+      try
+        match decl with
+        | `Alias type_expr ->
+          let mono' = mono_of_type_expr ~make_ty_vars:false ~state type_expr in
+          (match last_user_type_info_not_insted mono' with
+           | Some (`Enum l) ->
+             List.map ~f:fst l
+             |> List.iter ~f:(fun s ->
+               Hashtbl.set
+                 state.current_module.variant_to_type
+                 ~key:s
+                 ~data:user_type)
+           | Some (`Struct l) ->
+             List.map ~f:fst l
+             |> List.iter ~f:(fun s ->
+               Hashtbl.set
+                 state.current_module.field_to_type
+                 ~key:s
+                 ~data:user_type)
+           | _ -> ());
+          `Alias mono'
+        | `Enum l ->
+          let all_user, variants = all_user_of_enum ~state l in
+          Hash_set.iter ~f:variants_f variants;
+          all_user
+        | `Struct l ->
+          let all_user, fields = all_user_of_struct ~state l in
+          Hash_set.iter ~f:fields_f fields;
+          all_user
+      with
+      | e ->
+        let sexp = [%sexp_of: type_decl] decl |> Sexp.to_string_hum in
+        print_endline [%string "Failed to define type %{key}: %{sexp}"];
+        raise e
     in
     user_type.info := Some all_user)
 
@@ -754,9 +775,10 @@ and breakup_patterns ~state ~vars (pattern : pattern) (expr : Ast.expr) =
     (ignore : string path -> unit)
       (enqueue_new (`Typed (expand_expr ~state expr, `Unit)))
   | `Tuple l ->
+    let len = List.length l in
     let var = enqueue_new (expand_expr ~state expr) in
     List.iteri l ~f:(fun i p ->
-      let expr = `Tuple_access (`Var var, i) in
+      let expr = `Tuple_access (`Var var, i, Some len) in
       rep p expr)
   | `Ref p ->
     let var = enqueue_new (expand_expr ~state expr) in
@@ -823,7 +845,7 @@ and expand_expr ~state (expr : Ast.expr) : expanded_expr =
   | `Inf_op (op, a, b) -> `Inf_op (op, f a, f b)
   | `Assign (a, b) -> `Assign (f a, f b)
   | `Apply (a, b) -> `Apply (f a, f b)
-  | `Tuple_access (a, i) -> `Tuple_access (f a, i)
+  | `Tuple_access (a, i, o) -> `Tuple_access (f a, i, o)
   | `Field_access (a, field) -> `Field_access (f a, field)
   | `Size_of (`Type t) -> `Size_of (`Type t)
   | `Size_of (`Expr e) -> `Size_of (`Expr (f e))
@@ -928,7 +950,7 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
   | `Assert_struct (_, a)
   | `Access_enum_field (_, a)
   | `Assert_empty_enum_field (_, a)
-  | `Tuple_access (a, _)
+  | `Tuple_access (a, _, _)
   | `Field_access (a, _)
   | `Pref_op (_, a)
   | `Typed (a, _) -> rep ~locals a
@@ -1335,7 +1357,8 @@ and workout_enum_type_for_question_mark ~state ~res_type am =
     let res_user_type =
       match inner_mono res_type with
       | `User u -> inst_user_type_gen u.orig_user_type
-      | _ -> failwith "question mark on weak type - perhaps specify more type info"
+      | _ ->
+        failwith "question mark on weak type - perhaps specify more type info"
     in
     let am = unify am (`User res_user_type) in
     workout_enum_type_for_question_mark ~state ~res_type am
@@ -1400,8 +1423,15 @@ and type_expr_ ~res_type ~break_type ~state expr : expr =
     let a, am = rep ~state a in
     let am = unify am `Bool in
     `Assert (a, am), `Unit
-  | `Tuple_access (a, i) ->
+  | `Tuple_access (a, i, o) ->
     let a, am = rep ~state a in
+    let am =
+      match o with
+      | None -> am
+      | Some i ->
+        let l = List.init i ~f:(fun _ -> make_indir ()) in
+        unify am (`Tuple l)
+    in
     let res_type =
       match am with
       | `Tuple l ->
@@ -1722,13 +1752,17 @@ and breakup_and_type_pattern ~state ~expr:(e, em) pattern =
 
 let type_check_starting_with ~filename =
   let state = Type_state.create filename in
-  In_channel.with_file filename ~f:(fun chan ->
-    let lexbuf = Lexing.from_channel chan in
-    Frontend.parse_and_do ~filename lexbuf ~f:(fun toplevels ->
-      state.current_module.in_eval <- true;
-      type_check ~state toplevels;
-      state.current_module.in_eval <- false;
-      state))
+  let res =
+    In_channel.with_file filename ~f:(fun chan ->
+      let lexbuf = Lexing.from_channel chan in
+      Frontend.parse_and_do ~filename lexbuf ~f:(fun toplevels ->
+        state.current_module.in_eval <- true;
+        type_check ~state toplevels;
+        state.current_module.in_eval <- false;
+        state))
+  in
+  let has_main = lookup_var_opt ~state (empty_path "main") |> Option.is_some in
+  res, has_main
 ;;
 
 let type_check_and_output filename =
@@ -1743,7 +1777,7 @@ let type_check_and_output filename =
 ;;
 
 let process_and_dump filename =
-  let state = type_check_and_output filename in
+  let state, _ = type_check_and_output filename in
   Hashtbl.iter state.Type_state.seen_files ~f:(fun module_t ->
     pretty_print_module_t module_t |> Pretty_print.output_endline)
 ;;
