@@ -83,20 +83,26 @@ let rec c_type_of_user_type ~state inst =
       ~default:(fun () -> ref Mono_list_map.empty)
   in
   let monos = List.map inst.monos ~f:reach_end in
-  match Map.find !map_ref monos with
-  | Some x -> x
-  | None ->
+  match Map.find !map_ref monos, !(user_type.info) with
+  | Some x, _ -> x
+  | None, None -> raise (Invalid_user_type inst)
+  | None, Some (`Alias m) -> c_type_of_mono ~state m
+  | None, Some ((`Struct _ | `Enum _) as i) ->
     let name = string_of_mono (`User inst) in
     let data = "struct " ^ name in
     Bigbuffer.add_string state.type_decl_buf [%string {|%{data};|}];
     map_ref := Map.set !map_ref ~key:monos ~data;
-    (match !(user_type.info) with
-     | None -> raise (Invalid_user_type inst)
-     | Some (`Alias m) -> c_type_of_mono ~state m
-     | Some (`Struct l) ->
+    (match i with
+     (*
+        | Some (`Alias m) ->
+        let data = c_type_of_mono ~state m in
+        map_ref := Map.set !map_ref ~key:monos ~data;
+        data
+     *)
+     | `Struct l ->
        define_struct ~state ~name ~l;
        data
-     | Some (`Enum l) ->
+     | `Enum l ->
        define_enum ~state ~name ~l;
        data)
 
@@ -131,11 +137,14 @@ and c_type_of_mono ~state (mono : mono) =
            (function_typedef_string ~state ~name ~args ~ret:b);
          name)
     | `Tuple l ->
+      let l = List.map l ~f:reach_end in
+      let mono = `Tuple l in
       (match Map.find state.inst_monos mono with
        | Some x -> x
        | None ->
          let mono_name = string_of_mono mono in
          let name = "struct " ^ mono_name in
+         Bigbuffer.add_string state.type_decl_buf [%string {|%{name};|}];
          state.inst_monos <- Map.set state.inst_monos ~key:mono ~data:name;
          let fields =
            List.mapi l ~f:(fun i x ->

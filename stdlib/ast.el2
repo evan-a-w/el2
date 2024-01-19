@@ -75,7 +75,7 @@ type expr_ :=
     | E_ref(&expr)
     | E_field_access(&expr, Intern.str)
     | E_if(&expr, &expr, &expr)
-    | E_match(&expr, Vector.t((pattern, expr)))
+    | E_match(&expr, Vector.t((&pattern, &expr)))
     | E_loop(&expr)
     | E_index(&expr, &expr)
     | E_let(pattern, &expr, &expr)
@@ -90,15 +90,34 @@ type expr_ :=
     | E_array(Vector.t(expr))
 
 type compound_inner :=
-    | C_let(pattern, expr)
-    | C_expr(expr)
+    | C_let(&pattern, &expr)
+    | C_expr(&expr)
+
+type type_decl_name_ := (Intern.str, Vector.t(Intern.str))
+
+type type_def := (type_decl_name, type_decl)
+
+type toplevel_ :=
+    | T_let(&pattern, &expr)
+[*
+    | T_let_fn(Intern.str, Vector.t(var_decl), expr)
+    | T_type(type_def)
+    | T_extern(Intern.str, type_expr, Intern.str)
+    | T_implicit_extern(Intern.str, type_expr, Intern.str)
+    | T_open(Vector.t(Intern.str))
+    | T_open_file(Intern.str)
+    | T_module_decl(Intern.str, Vector.t(toplevel))
+ *]
+type toplevel := with_location(toplevel_)
 
 type type_decl := with_location(type_decl_)
 type type_expr := with_location(type_expr_)
 type pattern := with_location(pattern_)
 type var_decl := with_location(var_decl_)
 type expr := with_location(expr_)
+type type_decl_name := with_location(type_decl_name_)
 
+[*
 let enum_inner_destroy(t : (_, Types.option(type_expr))) : unit = {
     let (_, (ty : Types.option(type_expr))) := t;
     match ty with
@@ -137,5 +156,7 @@ let with_location_destroy(t : with_location(_), a_destroy) : unit = {
     let (a, _) := t;
     a_destroy(a)
 }
+
 let type_expr_destroy(t) := with_location_destroy(t, type_expr__destroy)
 let type_decl_destroy(t) := with_location_destroy(t, type_decl__destroy)
+*]
