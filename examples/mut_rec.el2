@@ -1,8 +1,8 @@
-type a := (&c, b)
+type a := &(&c, b)
 
 type b := { d : i64 }
 
-type c := (b, &a)
+type c := &(b, &a)
 
 
 [*

@@ -227,23 +227,30 @@ let two_pow i = Big_int_Z.power (Big_int_Z.big_int_of_int 2) i
 exception Incomplete_type of mono
 exception Cannot_pattern_match of mono
 
-let rec reach_end ?default (mono : mono) =
+let rec reach_end' ?default ~seen (mono : mono) =
+  let rep = reach_end' ?default ~seen in
   let mono = inner_mono mono in
-  match mono with
-  | `Bool | `C_int | `I64 | `F64 | `Unit | `Char -> mono
-  | `User x ->
-    (match user_type_monify x with
-     | Some r -> reach_end r
-     | None -> mono)
-  | `Function (a, b) -> `Function (reach_end a, reach_end b)
-  | `Opaque x -> reach_end x
-  | `Pointer x -> `Pointer (reach_end x)
-  | `Tuple l -> `Tuple (List.map l ~f:reach_end)
-  | `Indir _ | `Var _ ->
-    (match default with
-     | None -> raise (Incomplete_type mono)
-     | Some x -> x)
+  if Set.mem !seen mono
+  then mono
+  else (
+    seen := Set.add !seen mono;
+    match mono with
+    | `Bool | `C_int | `I64 | `F64 | `Unit | `Char -> mono
+    | `User x ->
+      (match user_type_monify x with
+       | Some r -> rep r
+       | None -> mono)
+    | `Function (a, b) -> `Function (rep a, rep b)
+    | `Opaque x -> rep x
+    | `Pointer x -> `Pointer (rep x)
+    | `Tuple _ -> mono
+    | `Indir _ | `Var _ ->
+      (match default with
+       | None -> raise (Incomplete_type mono)
+       | Some x -> x))
 ;;
+
+let reach_end ?default mono = reach_end' ?default ~seen:(ref Mono_set.empty) mono
 
 let rec decompose_into_pattern mono ~make_a : 'a pattern_branches =
   let inner =

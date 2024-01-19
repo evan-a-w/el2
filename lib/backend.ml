@@ -72,7 +72,6 @@ let show_c_type_error err =
 exception C_type_error of c_type_error
 
 let rec c_type_of_user_type ~state inst =
-  print_endline [%string "c_type_of_user_type %{show_mono (`User inst)}"];
   let user_type =
     get_insted_user_type inst
     |> Option.value_or_thunk ~default:(fun () -> raise (Invalid_user_type inst))
@@ -126,10 +125,6 @@ and c_type_of_function ~state mono (a, b) =
 and c_type_of_tuple ~state l =
   let l = List.map l ~f:reach_end in
   let mono = `Tuple l in
-  (*
-     let mono_printed = string_of_mono mono in
-     print_endline [%string "c_type_of_tuple %{mono_printed}"];
-  *)
   match Map.find state.inst_monos mono with
   | Some x -> x
   | None ->
