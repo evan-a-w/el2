@@ -27,6 +27,7 @@ let rec show_unification_error = function
 let print_sccs = false
 
 exception Unification_error of unification_error
+exception Infinite_type of string
 
 exception
   Module_cycle of
@@ -756,7 +757,58 @@ and process_types ~(state : Type_state.t) types =
         print_endline [%string "Failed to define type %{key}: %{sexp}"];
         raise e
     in
-    user_type.info := Some all_user)
+    user_type.info := Some all_user);
+  let seen_types = String.Hash_set.create () in
+  Hashtbl.iter state.current_module.types ~f:(fun u ->
+    if Hash_set.mem seen_types u.repr_name
+    then ()
+    else (
+      try
+        Hash_set.add seen_types u.repr_name;
+        inf_type_check
+          ~seen_types:(String.Hash_set.create ())
+          ~in_path:String.Set.empty
+          u
+      with
+      | Infinite_type x ->
+        failwith
+          [%string
+            "Infinite type: %{u.name} is reachable from itself through %{x} \
+             (in module %{state.current_module.name})"]))
+
+and inf_type_check ~seen_types ~in_path u =
+  match Hash_set.mem seen_types u.repr_name, !(u.info) with
+  | true, _ -> ()
+  | _, None -> ()
+  | false, Some x ->
+    Hash_set.add seen_types u.repr_name;
+    let in_path = Set.add in_path u.repr_name in
+    (match x with
+     | `Alias mono -> inf_type_check_mono ~from:u ~seen_types ~in_path mono
+     | `Struct l ->
+       List.iter l ~f:(fun (_, mono) ->
+         inf_type_check_mono ~from:u ~seen_types ~in_path mono)
+     | `Enum l ->
+       List.iter l ~f:(fun (_, o) ->
+         Option.iter o ~f:(fun mono ->
+           inf_type_check_mono ~from:u ~seen_types ~in_path mono)))
+
+and inf_type_check_mono ~from ~seen_types ~in_path mono =
+  let rep = inf_type_check_mono ~from ~seen_types ~in_path in
+  match mono with
+  | `Bool | `I64 | `F64 | `Unit | `Char | `C_int -> ()
+  | `User u when Set.mem in_path u.orig_user_type.repr_name ->
+    raise (Infinite_type from.name)
+  | `User u -> inf_type_check ~seen_types ~in_path u.orig_user_type
+  | `Pointer mono ->
+    inf_type_check_mono ~from ~seen_types ~in_path:String.Set.empty mono
+  | `Tuple l -> List.iter l ~f:rep
+  | `Indir _ -> ()
+  | `Var _ -> ()
+  | `Function (a, b) ->
+    rep a;
+    rep b
+  | `Opaque m -> rep m
 
 and breakup_patterns ~state ~vars (pattern : pattern) (expr : Ast.expr) =
   let rep = breakup_patterns ~state ~vars in
