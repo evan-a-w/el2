@@ -90,7 +90,7 @@ type expr_ :=
     | E_array(Vector.t(expr))
 
 type compound_inner :=
-    | C_let(&pattern, &expr)
+    | C_let(&(&pattern, &expr))
     | C_expr(&expr)
 
 type type_decl_name_ := (Intern.str, Vector.t(Intern.str))
@@ -99,17 +99,15 @@ type type_def := (type_decl_name, type_decl)
 
 type toplevel_ :=
     | T_let(&pattern, &expr)
-[*
-    | T_let_fn(Intern.str, Vector.t(var_decl), expr)
-    | T_type(type_def)
-    | T_extern(Intern.str, type_expr, Intern.str)
-    | T_implicit_extern(Intern.str, type_expr, Intern.str)
+    | T_let_fn(Intern.str, Vector.t(var_decl), &expr)
+    | T_type(&type_def)
+    | T_extern(Intern.str, &type_expr, Intern.str)
+    | T_implicit_extern(Intern.str, &type_expr, Intern.str)
     | T_open(Vector.t(Intern.str))
     | T_open_file(Intern.str)
     | T_module_decl(Intern.str, Vector.t(toplevel))
- *]
-type toplevel := with_location(toplevel_)
 
+type toplevel := with_location(toplevel_)
 type type_decl := with_location(type_decl_)
 type type_expr := with_location(type_expr_)
 type pattern := with_location(pattern_)

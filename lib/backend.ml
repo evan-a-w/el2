@@ -86,19 +86,16 @@ let rec c_type_of_user_type ~state inst =
   match Map.find !map_ref monos, !(user_type.info) with
   | Some x, _ -> x
   | None, None -> raise (Invalid_user_type inst)
-  | None, Some (`Alias m) -> c_type_of_mono ~state m
+  | None, Some (`Alias m) ->
+    let data = c_type_of_mono ~state m in
+    map_ref := Map.set !map_ref ~key:monos ~data;
+    data
   | None, Some ((`Struct _ | `Enum _) as i) ->
     let name = string_of_mono (`User inst) in
     let data = "struct " ^ name in
     Bigbuffer.add_string state.type_decl_buf [%string {|%{data};|}];
     map_ref := Map.set !map_ref ~key:monos ~data;
     (match i with
-     (*
-        | Some (`Alias m) ->
-        let data = c_type_of_mono ~state m in
-        map_ref := Map.set !map_ref ~key:monos ~data;
-        data
-     *)
      | `Struct l ->
        define_struct ~state ~name ~l;
        data
