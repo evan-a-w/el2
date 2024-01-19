@@ -72,6 +72,7 @@ let show_c_type_error err =
 exception C_type_error of c_type_error
 
 let rec c_type_of_user_type ~state inst =
+  print_endline [%string "c_type_of_user_type %{show_mono (`User inst)}"];
   let user_type =
     get_insted_user_type inst
     |> Option.value_or_thunk ~default:(fun () -> raise (Invalid_user_type inst))
