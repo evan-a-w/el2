@@ -1,0 +1,24 @@
+type a := (&c, b)
+
+type b := { d : i64 }
+
+type c := (b, &a)
+
+
+[*
+type a :=
+  { c : &c; b : b }
+
+type b := { d : i64 }
+
+type c := { c_b : b; c_a : &a }
+*]
+
+
+[*
+
+
+b
+c
+a
+*]

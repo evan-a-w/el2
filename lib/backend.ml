@@ -33,7 +33,7 @@ module Mono_list_map = Map.Make (struct
     type t = mono list [@@deriving sexp, compare]
   end)
 
-type type_cache = string Mono_list_map.t ref
+type type_cache = string  Mono_list_map.t ref
 
 type state =
   { input : Type_state.t
@@ -87,9 +87,12 @@ let rec c_type_of_user_type ~state inst =
   | Some x, _ -> x
   | None, None -> raise (Invalid_user_type inst)
   | None, Some (`Alias m) ->
-    let data = c_type_of_mono ~state m in
+    let name = string_of_mono (`User inst) in
+    let data = "alias_" ^ name in
     map_ref := Map.set !map_ref ~key:monos ~data;
-    data
+    let res = c_type_of_mono ~state m in
+    Bigbuffer.add_string state.type_decl_buf [%string {|typedef %{res} %{data};|}];
+    res
   | None, Some ((`Struct _ | `Enum _) as i) ->
     let name = string_of_mono (`User inst) in
     let data = "struct " ^ name in
@@ -102,6 +105,46 @@ let rec c_type_of_user_type ~state inst =
      | `Enum l ->
        define_enum ~state ~name ~l;
        data)
+
+and c_type_of_function ~state mono (a, b) =
+  match Map.find state.inst_monos mono with
+  | Some x -> x
+  | None ->
+    let name = string_of_mono mono in
+    state.inst_monos <- Map.set state.inst_monos ~key:mono ~data:name;
+    let args =
+      match a with
+      | `Tuple l -> l
+      | _ -> [ a ]
+    in
+    Bigbuffer.add_string
+      state.type_buf
+      (function_typedef_string ~state ~name ~args ~ret:b);
+    name
+
+and c_type_of_tuple ~state l =
+  let l = List.map l ~f:reach_end in
+  let mono = `Tuple l in
+  (*
+     let mono_printed = string_of_mono mono in
+     print_endline [%string "c_type_of_tuple %{mono_printed}"];
+  *)
+  match Map.find state.inst_monos mono with
+  | Some x -> x
+  | None ->
+    let mono_name = string_of_mono mono in
+    let name = "struct " ^ mono_name in
+    Bigbuffer.add_string state.type_decl_buf [%string {|%{name};|}];
+    state.inst_monos <- Map.set state.inst_monos ~key:mono ~data:name;
+    let fields =
+      List.mapi l ~f:(fun i x ->
+        let a = [%string {| %{mono_name}_%{i#Int} |}] in
+        let b = c_type_of_mono ~state x in
+        [%string {|%{b} %{a};|}])
+      |> String.concat ~sep:"\n"
+    in
+    Bigbuffer.add_string state.type_buf [%string {|%{name} {%{fields}};|}];
+    name
 
 and c_type_of_mono ~state (mono : mono) =
   try
@@ -118,40 +161,8 @@ and c_type_of_mono ~state (mono : mono) =
     | `Pointer x ->
       let x = c_type_of_mono ~state x in
       x ^ "*"
-    | `Function (a, b) ->
-      (match Map.find state.inst_monos mono with
-       | Some x -> x
-       | None ->
-         let name = string_of_mono mono in
-         state.inst_monos <- Map.set state.inst_monos ~key:mono ~data:name;
-         let args =
-           match a with
-           | `Tuple l -> l
-           | _ -> [ a ]
-         in
-         Bigbuffer.add_string
-           state.type_buf
-           (function_typedef_string ~state ~name ~args ~ret:b);
-         name)
-    | `Tuple l ->
-      let l = List.map l ~f:reach_end in
-      let mono = `Tuple l in
-      (match Map.find state.inst_monos mono with
-       | Some x -> x
-       | None ->
-         let mono_name = string_of_mono mono in
-         let name = "struct " ^ mono_name in
-         Bigbuffer.add_string state.type_decl_buf [%string {|%{name};|}];
-         state.inst_monos <- Map.set state.inst_monos ~key:mono ~data:name;
-         let fields =
-           List.mapi l ~f:(fun i x ->
-             let a = [%string {| %{mono_name}_%{i#Int} |}] in
-             let b = c_type_of_mono ~state x in
-             [%string {|%{b} %{a};|}])
-           |> String.concat ~sep:"\n"
-         in
-         Bigbuffer.add_string state.type_buf [%string {|%{name} {%{fields}};|}];
-         name)
+    | `Function (a, b) -> c_type_of_function ~state mono (a, b)
+    | `Tuple l -> c_type_of_tuple ~state l
     | `Indir _ | `Var _ -> raise (Invalid_type mono)
   with
   | Typed_ast.Incomplete_type m -> raise (C_type_error (Error_in (m, End)))
