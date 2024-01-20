@@ -19,6 +19,8 @@ let reach_end = Typed_ast.reach_end ~default:`Unit
 exception Invalid_type of mono
 exception Invalid_user_type of inst_user_type
 
+let tuple_repr_name = "1tuple"
+
 module Inst_map = Map.Make (struct
     type t = mono String.Map.t [@@deriving sexp, compare]
   end)
@@ -35,6 +37,22 @@ module Mono_list_map = Map.Make (struct
 
 type type_cache = string Mono_list_map.t ref
 
+type type_def_edge =
+  { strong_edges : type_def_edge Queue.t
+  ; weak_edges : type_def_edge Queue.t
+  ; monos : mono list
+  ; repr_name : string
+  ; mutable def_buf : Bigbuffer.t option
+  ; mutable visited : bool
+  ; mutable defined : bool
+  }
+
+type type_def_state =
+  { parent : ([ `Weak | `Strong ] * type_def_edge) option
+  ; curr_def : Bigbuffer.t
+  ; new_edges : type_def_edge Queue.t
+  }
+
 type state =
   { input : Type_state.t
   ; tree_walk_state : Tree_walk.state
@@ -49,6 +67,7 @@ type state =
   ; var_counter : Counter.t
   ; loop_value_name : string option
   ; comptime_eval : bool
+  ; repr_name_to_edge : type_def_edge Mono_list_map.t ref String.Table.t
   }
 
 type c_type_error =
@@ -71,41 +90,48 @@ let show_c_type_error err =
 
 exception C_type_error of c_type_error
 
-type type_def_edge =
-  { strong_edges : type_def_edge Queue.t
-  ; weak_edges : type_def_edge Queue.t
-  ; repr_name : string
-  ; def_buf : Bigbuffer.t
-  ; mutable visited : bool
-  ; mutable defined : bool
-  }
-
-type type_def_state =
-  { repr_name_to_edge : type_def_edge String.Table.t
-  ; parent : ([ `Weak | `Strong ] * type_def_edge) option
-  ; curr_def : Bigbuffer.t
-  }
-
 let make_weak type_def_state =
   match type_def_state.parent with
   | Some (_, e) -> { type_def_state with parent = Some (`Weak, e) }
   | None -> type_def_state
 ;;
 
-let add_edge ~type_def_state repr_name =
-  let def_buf = Bigbuffer.create 100 in
-  let edge =
-    { strong_edges = Queue.create ()
-    ; weak_edges = Queue.create ()
-    ; repr_name
-    ; def_buf
-    ; visited = false
-    ; defined = false
-    }
-  in
-  Hashtbl.set type_def_state.repr_name_to_edge ~key:repr_name ~data:edge;
+let lookup_edge_map ~state repr_name =
+  match Hashtbl.find state.repr_name_to_edge repr_name with
+  | Some x -> x
+  | None ->
+    let data = ref Mono_list_map.empty in
+    Hashtbl.set state.repr_name_to_edge ~key:repr_name ~data;
+    data
+;;
+
+let lookup_edge ~type_def_state ~state repr_name monos =
+  let map = lookup_edge_map ~state repr_name in
+  match Map.find !map monos with
+  | Some x -> x
+  | None ->
+    let edge =
+      { strong_edges = Queue.create ()
+      ; weak_edges = Queue.create ()
+      ; monos
+      ; repr_name
+      ; def_buf = Some (Bigbuffer.create 100)
+      ; visited = false
+      ; defined = false
+      }
+    in
+    Queue.enqueue type_def_state.new_edges edge;
+    map := Map.set !map ~key:monos ~data:edge;
+    edge
+;;
+
+let add_edge ~type_def_state ~state repr_name monos =
+  let edge = lookup_edge ~type_def_state ~state repr_name monos in
   ( edge
-  , { type_def_state with parent = Some (`Strong, edge); curr_def = def_buf } )
+  , { type_def_state with
+      parent = Some (`Strong, edge)
+    ; curr_def = Option.value edge.def_buf ~default:type_def_state.curr_def
+    } )
 ;;
 
 let rec c_type_of_user_type' ~type_def_state ~state inst =
@@ -122,12 +148,7 @@ let rec c_type_of_user_type' ~type_def_state ~state inst =
   let monos = List.map inst.monos ~f:reach_end in
   let parent = type_def_state.parent in
   let edge, type_def_state =
-    match Hashtbl.find type_def_state.repr_name_to_edge user_type.repr_name with
-    | None -> add_edge ~type_def_state user_type.repr_name
-    | Some x ->
-      ( x
-      , { type_def_state with parent = Some (`Strong, x); curr_def = x.def_buf }
-      )
+    add_edge ~state ~type_def_state user_type.repr_name monos
   in
   (match parent with
    | None -> ()
@@ -177,6 +198,21 @@ and c_type_of_function ~type_def_state ~state mono (a, b) =
 and c_type_of_tuple ~type_def_state ~state l =
   let l = List.map l ~f:reach_end in
   let mono = `Tuple l in
+  let tuple_edge = true in
+  let type_def_state =
+    if tuple_edge
+    then (
+      let parent = type_def_state.parent in
+      let edge, type_def_state =
+        add_edge ~state ~type_def_state tuple_repr_name l
+      in
+      (match parent with
+       | None -> ()
+       | Some (`Strong, e) -> Queue.enqueue e.strong_edges edge
+       | Some (`Weak, e) -> Queue.enqueue e.weak_edges edge);
+      type_def_state)
+    else type_def_state
+  in
   match Map.find state.inst_monos mono with
   | Some x -> x
   | None ->
@@ -282,32 +318,53 @@ and define_enum ~type_def_state ~state ~name ~l =
 ;;
 
 let do_c_type_of ~f ~state arg =
+  let curr_def = Bigbuffer.create 100 in
   let type_def_state =
-    { repr_name_to_edge = String.Table.create ()
-    ; parent = None
-    ; curr_def = state.type_buf
-    }
+    { new_edges = Queue.create (); parent = None; curr_def }
   in
   let res = f ~type_def_state ~state arg in
+  Queue.iter type_def_state.new_edges ~f:(fun edge ->
+    print_endline
+      [%string
+        "edge %{edge.repr_name} with monos %{show_mono (`Tuple edge.monos)}"];
+    Queue.iter edge.strong_edges ~f:(fun edge ->
+      print_endline
+        [%string
+          "    strong edge %{edge.repr_name} with monos %{show_mono (`Tuple \
+           edge.monos)}"]);
+    Queue.iter edge.weak_edges ~f:(fun edge ->
+      print_endline
+        [%string
+          "    weak edge %{edge.repr_name} with monos %{show_mono (`Tuple \
+           edge.monos)}"]));
   let add_def edge =
     if not edge.defined
     then (
       edge.defined <- true;
-      Bigbuffer.add_buffer state.type_buf edge.def_buf)
+      print_endline
+        [%string
+          "Defining %{edge.repr_name} with monos %{show_mono (`Tuple \
+           edge.monos)}"];
+      match edge.def_buf with
+      | Some buf ->
+        Bigbuffer.add_buffer state.type_buf buf;
+        edge.def_buf <- None
+      | None -> ())
   in
-  let rec helper strong edge =
+  let rec helper edge =
+    print_endline
+      [%string
+        "On strong edge %{edge.repr_name} with monos %{show_mono (`Tuple \
+         edge.monos)}"];
     if not edge.visited
     then (
       edge.visited <- true;
-      Queue.iter edge.strong_edges ~f:(helper true);
-      add_def edge;
-      Queue.iter edge.weak_edges ~f:(helper false))
-    else if strong
-    then add_def edge
-    else ()
+      Queue.iter edge.strong_edges ~f:helper;
+      add_def edge)
   in
-  Hashtbl.iter type_def_state.repr_name_to_edge ~f:(helper false);
-  Hashtbl.iter type_def_state.repr_name_to_edge ~f:(fun edge -> add_def edge);
+  Queue.iter type_def_state.new_edges ~f:helper;
+  Bigbuffer.add_buffer state.type_buf curr_def;
+  Queue.iter type_def_state.new_edges ~f:add_def;
   res
 ;;
 
@@ -747,6 +804,7 @@ and unique_name_or_empty ~state ~buf ~mono =
 let state_of_input ~comptime_eval input =
   { input
   ; comptime_eval
+  ; repr_name_to_edge = String.Table.create ()
   ; tree_walk_state = Tree_walk.make_state input
   ; vars = String.Table.create ()
   ; extern_vars = String.Table.create ()

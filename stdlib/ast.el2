@@ -90,7 +90,7 @@ type expr_ :=
     | E_array(Vector.t(expr))
 
 type compound_inner :=
-    | C_let(&(&pattern, &expr))
+    | C_let((&pattern, &expr))
     | C_expr(&expr)
 
 type type_decl_name_ := (Intern.str, Vector.t(Intern.str))

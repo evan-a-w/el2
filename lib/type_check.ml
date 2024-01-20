@@ -423,15 +423,16 @@ let rec pretty_print_module_t module_t =
     ]
 ;;
 
+let get_ty_var ~state name =
+  Option.first_some
+    (Map.find state.Type_state.ty_vars name)
+    (Option.bind state.ty_var_map ~f:(fun ty_var_map ->
+       Hashtbl.find ty_var_map name))
+;;
+
 let get_non_user_type ~make_ty_vars ~state name =
-  let find_ty_var () =
-    Option.first_some
-      (Map.find state.Type_state.ty_vars name)
-      (Option.bind state.ty_var_map ~f:(fun ty_var_map ->
-         Hashtbl.find ty_var_map name))
-  in
   let gen_ty_var () =
-    Option.map state.ty_var_map ~f:(fun ty_var_map ->
+    Option.map state.Type_state.ty_var_map ~f:(fun ty_var_map ->
       let indir = make_indir () in
       Hashtbl.set ty_var_map ~key:name ~data:indir;
       indir)
@@ -448,7 +449,7 @@ let get_non_user_type ~make_ty_vars ~state name =
   | "_" when make_ty_vars -> make_indir ()
   | "_" -> failwith "Cannot make unknown ty_var `_` in this context"
   | _ ->
-    (match find_ty_var () with
+    (match get_ty_var ~state name with
      | None -> gen_ty_var ()
      | Some a -> a)
 ;;
@@ -647,9 +648,12 @@ and lookup_field ~state { module_path; inner = name } =
   | Some x -> x
 
 and lookup_mono ~make_ty_vars ~state name =
-  match lookup_user_type_opt ~state (empty_path name) with
-  | None -> get_non_user_type ~make_ty_vars ~state name
-  | Some r ->
+  match
+    get_ty_var ~state name, lookup_user_type_opt ~state (empty_path name)
+  with
+  | Some x, _ -> x
+  | _, None -> get_non_user_type ~make_ty_vars ~state name
+  | _, Some r ->
     (match r.ty_vars with
      | [] -> `User (inst_user_type_gen r)
      | _ -> failwith [%string "Type %{name} requires type arguments"])

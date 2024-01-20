@@ -1,10 +1,14 @@
+[* we use this id thing to ensure that the type definitions work for
+   generic types *]
+type id(a) := a
+
 type e := (&c, &b)
 
-type a := (&c, b)
+type a := (&c, id(b))
 
-type b := { d : &d; e : e }
+type b := { d : &d; e : id(e) }
 
-type c := (b, &a)
+type c := (id(b), &a)
 
 type d :=
     | A(&a)
@@ -44,40 +48,6 @@ type f := e
  *]
 
 [*
-define e
-  define c
-    define b (strong)
-      define d
-        define a
-	  define c (done)
-	  define b (strong) (done)
-	define b (done)
-	define c (strong) (done)
-      define e (strong) (done)
-    define a (done)
-  define b (done)
-
-order of def:
-d
-b
-a
-c
-e
-
-but need
-e
-b
-c
-d
-a
-
-or
-e
-b
-a
-c
-d
-
 graph of connections (=> is strong):
 a -> c
   => b
@@ -95,7 +65,7 @@ d -> a
 e -> c
   -> b
 
-then to define e:
+to define e:
 first work out graph
 then traverse graph weighted by strong edges, defining each thing once a strong edge reaches it
 (but after recursing)
