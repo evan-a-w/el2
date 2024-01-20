@@ -42,9 +42,8 @@ type type_def_edge =
   ; weak_edges : type_def_edge Queue.t
   ; monos : mono list
   ; repr_name : string
-  ; mutable def_buf : Bigbuffer.t option
+  ; mutable edge_def_buf : Bigbuffer.t option
   ; mutable visited : bool
-  ; mutable defined : bool
   }
 
 type type_def_state =
@@ -115,9 +114,8 @@ let lookup_edge ~type_def_state ~state repr_name monos =
       ; weak_edges = Queue.create ()
       ; monos
       ; repr_name
-      ; def_buf = Some (Bigbuffer.create 100)
+      ; edge_def_buf = Some (Bigbuffer.create 100)
       ; visited = false
-      ; defined = false
       }
     in
     Queue.enqueue type_def_state.new_edges edge;
@@ -130,7 +128,7 @@ let add_edge ~type_def_state ~state repr_name monos =
   ( edge
   , { type_def_state with
       parent = Some (`Strong, edge)
-    ; curr_def = Option.value edge.def_buf ~default:type_def_state.curr_def
+    ; curr_def = Option.value edge.edge_def_buf ~default:type_def_state.curr_def
     } )
 ;;
 
@@ -317,14 +315,11 @@ let do_c_type_of ~f ~state arg =
   in
   let res = f ~type_def_state ~state arg in
   let add_def edge =
-    if not edge.defined
-    then (
-      edge.defined <- true;
-      match edge.def_buf with
-      | Some buf ->
-        Bigbuffer.add_buffer state.type_buf buf;
-        edge.def_buf <- None
-      | None -> ())
+    match edge.edge_def_buf with
+    | Some buf ->
+      Bigbuffer.add_buffer state.type_buf buf;
+      edge.edge_def_buf <- None
+    | None -> ()
   in
   let rec helper edge =
     if not edge.visited
@@ -796,7 +791,8 @@ let headers =
    #include <stdlib.h>\n\
    #include <string.h>\n\
    #include <assert.h>\n\
-   #include <stdio.h>\n"
+   #include <stdio.h>\n\
+   #include <sys/mman.h>\n"
 ;;
 
 let rec compile_module ~state module_t =

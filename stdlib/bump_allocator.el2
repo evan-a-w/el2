@@ -1,0 +1,74 @@
+type page := {
+    prev : &page;
+    curr_loc : i64;
+    sz : i64
+}
+
+type t := {
+    page : &page;
+    page_size : i64
+}
+
+let round_to_pow_two(x) := {
+    let i := 8;
+    loop {
+        if i >= x then return(i);
+	i = i * 2
+    }
+}
+
+let alloc(t, sz) : &_ = {
+    if t^.page != null && t^.page^.curr_loc + sz <= t^.page^.sz then {
+        let page_ptr := (unsafe_cast(&t^.page[1]) : i64) + t^.page^.curr_loc;
+	t^.page^.curr_loc = t^.page^.curr_loc + sz;
+        return(unsafe_cast(page_ptr))
+    };
+
+    let new_page_sz :=
+      if sz * 2 <= t^.page_size then t^.page_size else
+      if sz >= t^.page_size then sz
+      else sz * 2;
+
+    let page := Stdlib.alloc(new_page_sz + sizeof[page]);
+    if page == null then return(null);
+    page^.prev = t^.page;
+    page^.curr_loc = 0;
+    page^.sz = new_page_sz;
+    t^.page = page;
+
+    alloc(t, sz)
+}
+
+let release_all(t) := {
+    loop {
+        if t^.page == null then return(());
+        let prev := t^.page^.prev;
+        Stdlib.free(t^.page);
+        t^.page = prev;
+        ()
+    }
+}
+
+let create() := Stdlib.hoist(#t { page : null; page_size : 131072 })
+
+[*
+let main() := {
+    let t := create();
+    let x : &i64 = alloc(t, 8);
+    let y : &i64 = alloc(t, 64);
+    x^ = 0;
+    Stdlib.memcpy(y, {|1; 2; 3; 4; 5; 6; 7; 8|}, 64);
+    Stdlib.print_int(x^);
+    Stdlib.print_endline("");
+    let i := 0;
+    loop {
+        if i >= 8 then break(());
+        Stdlib.print_int(y[i]);
+        Stdlib.print_endline("");
+        i = i + 1;
+        ()
+    };
+    release_all(t);
+    0
+}
+*]
