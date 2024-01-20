@@ -236,10 +236,12 @@ let rec reach_end' ?default ~seen (mono : mono) =
     seen := Set.add !seen mono;
     match mono with
     | `Bool | `C_int | `I64 | `F64 | `Unit | `Char -> mono
-    | `User x ->
+    | `User _ -> mono
+    (*
       (match user_type_monify x with
        | Some r -> rep r
        | None -> mono)
+     *)
     | `Function (a, b) -> `Function (rep a, rep b)
     | `Opaque x -> rep x
     | `Pointer x -> `Pointer (rep x)

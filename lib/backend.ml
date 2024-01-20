@@ -33,7 +33,7 @@ module Mono_list_map = Map.Make (struct
     type t = mono list [@@deriving sexp, compare]
   end)
 
-type type_cache = string  Mono_list_map.t ref
+type type_cache = string Mono_list_map.t ref
 
 type state =
   { input : Type_state.t
@@ -71,7 +71,44 @@ let show_c_type_error err =
 
 exception C_type_error of c_type_error
 
-let rec c_type_of_user_type ~state inst =
+type type_def_edge =
+  { strong_edges : type_def_edge Queue.t
+  ; weak_edges : type_def_edge Queue.t
+  ; repr_name : string
+  ; def_buf : Bigbuffer.t
+  ; mutable visited : bool
+  ; mutable defined : bool
+  }
+
+type type_def_state =
+  { repr_name_to_edge : type_def_edge String.Table.t
+  ; parent : ([ `Weak | `Strong ] * type_def_edge) option
+  ; curr_def : Bigbuffer.t
+  }
+
+let make_weak type_def_state =
+  match type_def_state.parent with
+  | Some (_, e) -> { type_def_state with parent = Some (`Weak, e) }
+  | None -> type_def_state
+;;
+
+let add_edge ~type_def_state repr_name =
+  let def_buf = Bigbuffer.create 100 in
+  let edge =
+    { strong_edges = Queue.create ()
+    ; weak_edges = Queue.create ()
+    ; repr_name
+    ; def_buf
+    ; visited = false
+    ; defined = false
+    }
+  in
+  Hashtbl.set type_def_state.repr_name_to_edge ~key:repr_name ~data:edge;
+  ( edge
+  , { type_def_state with parent = Some (`Strong, edge); curr_def = def_buf } )
+;;
+
+let rec c_type_of_user_type' ~type_def_state ~state inst =
   let user_type =
     get_insted_user_type inst
     |> Option.value_or_thunk ~default:(fun () -> raise (Invalid_user_type inst))
@@ -83,6 +120,19 @@ let rec c_type_of_user_type ~state inst =
       ~default:(fun () -> ref Mono_list_map.empty)
   in
   let monos = List.map inst.monos ~f:reach_end in
+  let parent = type_def_state.parent in
+  let edge, type_def_state =
+    match Hashtbl.find type_def_state.repr_name_to_edge user_type.repr_name with
+    | None -> add_edge ~type_def_state user_type.repr_name
+    | Some x ->
+      ( x
+      , { type_def_state with parent = Some (`Strong, x); curr_def = x.def_buf }
+      )
+  in
+  (match parent with
+   | None -> ()
+   | Some (`Strong, e) -> Queue.enqueue e.strong_edges edge
+   | Some (`Weak, e) -> Queue.enqueue e.weak_edges edge);
   match Map.find !map_ref monos, !(user_type.info) with
   | Some x, _ -> x
   | None, None -> raise (Invalid_user_type inst)
@@ -90,8 +140,10 @@ let rec c_type_of_user_type ~state inst =
     let name = string_of_mono (`User inst) in
     let data = "alias_" ^ name in
     map_ref := Map.set !map_ref ~key:monos ~data;
-    let res = c_type_of_mono ~state m in
-    Bigbuffer.add_string state.type_decl_buf [%string {|typedef %{res} %{data};|}];
+    let res = c_type_of_mono' ~type_def_state ~state m in
+    Bigbuffer.add_string
+      state.type_decl_buf
+      [%string {|typedef %{res} %{data};|}];
     res
   | None, Some ((`Struct _ | `Enum _) as i) ->
     let name = string_of_mono (`User inst) in
@@ -100,13 +152,13 @@ let rec c_type_of_user_type ~state inst =
     map_ref := Map.set !map_ref ~key:monos ~data;
     (match i with
      | `Struct l ->
-       define_struct ~state ~name ~l;
+       define_struct ~type_def_state ~state ~name ~l;
        data
      | `Enum l ->
-       define_enum ~state ~name ~l;
+       define_enum ~type_def_state ~state ~name ~l;
        data)
 
-and c_type_of_function ~state mono (a, b) =
+and c_type_of_function ~type_def_state ~state mono (a, b) =
   match Map.find state.inst_monos mono with
   | Some x -> x
   | None ->
@@ -118,11 +170,11 @@ and c_type_of_function ~state mono (a, b) =
       | _ -> [ a ]
     in
     Bigbuffer.add_string
-      state.type_buf
-      (function_typedef_string ~state ~name ~args ~ret:b);
+      type_def_state.curr_def
+      (function_typedef_string ~type_def_state ~state ~name ~args ~ret:b);
     name
 
-and c_type_of_tuple ~state l =
+and c_type_of_tuple ~type_def_state ~state l =
   let l = List.map l ~f:reach_end in
   let mono = `Tuple l in
   match Map.find state.inst_monos mono with
@@ -135,14 +187,16 @@ and c_type_of_tuple ~state l =
     let fields =
       List.mapi l ~f:(fun i x ->
         let a = [%string {| %{mono_name}_%{i#Int} |}] in
-        let b = c_type_of_mono ~state x in
+        let b = c_type_of_mono' ~type_def_state ~state x in
         [%string {|%{b} %{a};|}])
       |> String.concat ~sep:"\n"
     in
-    Bigbuffer.add_string state.type_buf [%string {|%{name} {%{fields}};|}];
+    Bigbuffer.add_string
+      type_def_state.curr_def
+      [%string {|%{name} {%{fields}};|}];
     name
 
-and c_type_of_mono ~state (mono : mono) =
+and c_type_of_mono' ~type_def_state ~state (mono : mono) =
   try
     let mono = reach_end mono in
     match mono with
@@ -152,19 +206,118 @@ and c_type_of_mono ~state (mono : mono) =
     | `F64 -> "double"
     | `Unit -> "void"
     | `Char -> "char"
-    | `User x -> c_type_of_user_type ~state x
-    | `Opaque x -> c_type_of_mono ~state x
+    | `User x -> c_type_of_user_type' ~type_def_state ~state x
+    | `Opaque x -> c_type_of_mono' ~type_def_state ~state x
     | `Pointer x ->
-      let x = c_type_of_mono ~state x in
+      let type_def_state = make_weak type_def_state in
+      let x = c_type_of_mono' ~type_def_state ~state x in
       x ^ "*"
-    | `Function (a, b) -> c_type_of_function ~state mono (a, b)
-    | `Tuple l -> c_type_of_tuple ~state l
+    | `Function (a, b) -> c_type_of_function ~type_def_state ~state mono (a, b)
+    | `Tuple l -> c_type_of_tuple ~type_def_state ~state l
     | `Indir _ | `Var _ -> raise (Invalid_type mono)
   with
   | Typed_ast.Incomplete_type m -> raise (C_type_error (Error_in (m, End)))
   | C_type_error e -> raise (C_type_error (Error_in (mono, e)))
 
-and declare_function ~state ~name ~args ~ret =
+and function_typedef_string ~type_def_state ~state ~name ~args ~ret =
+  let args =
+    List.filter_map args ~f:(fun mono ->
+      match mono with
+      | `Unit -> None
+      | _ -> Some (c_type_of_mono' ~type_def_state ~state mono))
+    |> String.concat ~sep:", "
+  in
+  let ret = c_type_of_mono' ~type_def_state ~state ret in
+  [%string {|typedef %{ret} (*%{name})(%{args});|}]
+
+and define_struct ~type_def_state ~state ~name ~l =
+  let l =
+    List.map l ~f:(fun (a, b) ->
+      match reach_end b with
+      | `Unit -> ""
+      | _ ->
+        let b = c_type_of_mono' ~type_def_state ~state b in
+        [%string {|%{b} %{a};|}])
+    |> String.concat ~sep:"\n"
+  in
+  Bigbuffer.add_string
+    type_def_state.curr_def
+    [%string {|struct %{name} {%{l}};|}]
+
+and enum_tag ~name ~variant =
+  String.uppercase name ^ "_" ^ String.uppercase variant ^ "_TAG"
+
+and define_enum ~type_def_state ~state ~name ~l =
+  let tags =
+    List.map l ~f:(fun (a, _) -> enum_tag ~name ~variant:a)
+    |> String.concat ~sep:", "
+  in
+  (* first define the enum *)
+  let enum_name = [%string "enum %{name}_tag"] in
+  Bigbuffer.add_string
+    type_def_state.curr_def
+    [%string {| %{enum_name} {%{tags}}; |}];
+  let union_inside =
+    List.filter_map l ~f:(fun (a, b) ->
+      match b with
+      | None -> None
+      | Some b ->
+        (match reach_end b with
+         | `Unit -> None
+         | _ ->
+           let b = c_type_of_mono' ~type_def_state ~state b in
+           Some [%string {|%{b} %{a};|}]))
+    |> String.concat ~sep:"\n"
+  in
+  Bigbuffer.add_string
+    type_def_state.curr_def
+    [%string
+      {| struct %{name} {
+           %{enum_name} tag;
+           union {
+               %{union_inside}
+           } data;
+         };
+      |}]
+;;
+
+let do_c_type_of ~f ~state arg =
+  let type_def_state =
+    { repr_name_to_edge = String.Table.create ()
+    ; parent = None
+    ; curr_def = state.type_buf
+    }
+  in
+  let res = f ~type_def_state ~state arg in
+  let add_def edge =
+    if not edge.defined
+    then (
+      edge.defined <- true;
+      Bigbuffer.add_buffer state.type_buf edge.def_buf)
+  in
+  let rec helper strong edge =
+    if not edge.visited
+    then (
+      edge.visited <- true;
+      Queue.iter edge.strong_edges ~f:(helper true);
+      add_def edge;
+      Queue.iter edge.weak_edges ~f:(helper false))
+    else if strong
+    then add_def edge
+    else ()
+  in
+  Hashtbl.iter type_def_state.repr_name_to_edge ~f:(helper false);
+  Hashtbl.iter type_def_state.repr_name_to_edge ~f:(fun edge -> add_def edge);
+  res
+;;
+
+let c_type_of_mono ~state mono = do_c_type_of ~f:c_type_of_mono' ~state mono
+
+let c_type_of_user_type ~state inst =
+  do_c_type_of ~f:c_type_of_user_type' ~state inst
+;;
+
+let declare_function ~state ~name ~args ~ret =
   let args =
     List.filter_map args ~f:(fun (_, mono) ->
       match mono with
@@ -174,63 +327,6 @@ and declare_function ~state ~name ~args ~ret =
   in
   let ret = c_type_of_mono ~state ret in
   Bigbuffer.add_string state.decl_buf [%string {|%{ret} %{name}(%{args});|}]
-
-and function_typedef_string ~state ~name ~args ~ret =
-  let args =
-    List.filter_map args ~f:(fun mono ->
-      match mono with
-      | `Unit -> None
-      | _ -> Some (c_type_of_mono ~state mono))
-    |> String.concat ~sep:", "
-  in
-  let ret = c_type_of_mono ~state ret in
-  [%string {|typedef %{ret} (*%{name})(%{args});|}]
-
-and define_struct ~state ~name ~l =
-  let l =
-    List.map l ~f:(fun (a, b) ->
-      match reach_end b with
-      | `Unit -> ""
-      | _ ->
-        let b = c_type_of_mono ~state b in
-        [%string {|%{b} %{a};|}])
-    |> String.concat ~sep:"\n"
-  in
-  Bigbuffer.add_string state.type_buf [%string {|struct %{name} {%{l}};|}]
-
-and enum_tag ~name ~variant =
-  String.uppercase name ^ "_" ^ String.uppercase variant ^ "_TAG"
-
-and define_enum ~state ~name ~l =
-  let tags =
-    List.map l ~f:(fun (a, _) -> enum_tag ~name ~variant:a)
-    |> String.concat ~sep:", "
-  in
-  (* first define the enum *)
-  let enum_name = [%string "enum %{name}_tag"] in
-  Bigbuffer.add_string state.type_buf [%string {| %{enum_name} {%{tags}}; |}];
-  let union_inside =
-    List.filter_map l ~f:(fun (a, b) ->
-      match b with
-      | None -> None
-      | Some b ->
-        (match reach_end b with
-         | `Unit -> None
-         | _ ->
-           let b = c_type_of_mono ~state b in
-           Some [%string {|%{b} %{a};|}]))
-    |> String.concat ~sep:"\n"
-  in
-  Bigbuffer.add_string
-    state.type_buf
-    [%string
-      {| struct %{name} {
-           %{enum_name} tag;
-           union {
-               %{union_inside}
-           } data;
-         };
-      |}]
 ;;
 
 let declare_extern ~state ~name ~mono =

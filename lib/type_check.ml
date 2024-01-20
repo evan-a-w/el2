@@ -777,6 +777,7 @@ and process_types ~(state : Type_state.t) types =
              (in module %{state.current_module.name})"]))
 
 and inf_type_check ~seen_types ~in_path u =
+  if Set.mem in_path u.repr_name then raise (Infinite_type u.name);
   match Hash_set.mem seen_types u.repr_name, !(u.info) with
   | true, _ -> ()
   | _, None -> ()

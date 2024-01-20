@@ -1,5 +1,114 @@
+type e := (&c, &b)
+
 type a := (&c, b)
 
-type b := { d : i64 }
+type b := { d : &d; e : e }
 
 type c := (b, &a)
+
+type d :=
+    | A(&a)
+    | B(&b)
+    | C(c)
+
+type a2 := {
+    c2 : &c2;
+    b2 : b2
+}
+
+type b2 := {
+    d2 : &d2;
+    e2 : e2
+}
+
+type c2 := {
+    b3 : b2;
+    a2 : &a2
+}
+
+type d2 := {
+    a3 : &a2;
+    b4 : &b2;
+    c3 : &c2
+}
+
+type e2 := {
+    c4 : &c2;
+    b5 : &b
+}
+
+
+[* error! infinite type
+type e := f
+type f := e
+ *]
+
+[*
+define e
+  define c
+    define b (strong)
+      define d
+        define a
+	  define c (done)
+	  define b (strong) (done)
+	define b (done)
+	define c (strong) (done)
+      define e (strong) (done)
+    define a (done)
+  define b (done)
+
+order of def:
+d
+b
+a
+c
+e
+
+but need
+e
+b
+c
+d
+a
+
+or
+e
+b
+a
+c
+d
+
+graph of connections (=> is strong):
+a -> c
+  => b
+  
+b -> d
+  => e
+
+c => b
+  -> a
+
+d -> a
+  -> b
+  => c
+
+e -> c
+  -> b
+
+then to define e:
+first work out graph
+then traverse graph weighted by strong edges, defining each thing once a strong edge reaches it
+(but after recursing)
+
+(e -> c => b => e (instantly returns because seen, then define e)
+             -> d -> a => b (instantly returns, define b)
+	               -> c (seen)
+		  -> b (seen)
+		  => c (instantly returns, define c)
+
+note that we store once something is defined so we dont do it twice
+
+then define all non defined things
+
+this results in e, b, c, then arbitrary def order
+*]
