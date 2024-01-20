@@ -198,21 +198,14 @@ and c_type_of_function ~type_def_state ~state mono (a, b) =
 and c_type_of_tuple ~type_def_state ~state l =
   let l = List.map l ~f:reach_end in
   let mono = `Tuple l in
-  let tuple_edge = true in
-  let type_def_state =
-    if tuple_edge
-    then (
-      let parent = type_def_state.parent in
-      let edge, type_def_state =
-        add_edge ~state ~type_def_state tuple_repr_name l
-      in
-      (match parent with
-       | None -> ()
-       | Some (`Strong, e) -> Queue.enqueue e.strong_edges edge
-       | Some (`Weak, e) -> Queue.enqueue e.weak_edges edge);
-      type_def_state)
-    else type_def_state
+  let parent = type_def_state.parent in
+  let edge, type_def_state =
+    add_edge ~state ~type_def_state tuple_repr_name l
   in
+  (match parent with
+   | None -> ()
+   | Some (`Strong, e) -> Queue.enqueue e.strong_edges edge
+   | Some (`Weak, e) -> Queue.enqueue e.weak_edges edge);
   match Map.find state.inst_monos mono with
   | Some x -> x
   | None ->
@@ -323,28 +316,10 @@ let do_c_type_of ~f ~state arg =
     { new_edges = Queue.create (); parent = None; curr_def }
   in
   let res = f ~type_def_state ~state arg in
-  Queue.iter type_def_state.new_edges ~f:(fun edge ->
-    print_endline
-      [%string
-        "edge %{edge.repr_name} with monos %{show_mono (`Tuple edge.monos)}"];
-    Queue.iter edge.strong_edges ~f:(fun edge ->
-      print_endline
-        [%string
-          "    strong edge %{edge.repr_name} with monos %{show_mono (`Tuple \
-           edge.monos)}"]);
-    Queue.iter edge.weak_edges ~f:(fun edge ->
-      print_endline
-        [%string
-          "    weak edge %{edge.repr_name} with monos %{show_mono (`Tuple \
-           edge.monos)}"]));
   let add_def edge =
     if not edge.defined
     then (
       edge.defined <- true;
-      print_endline
-        [%string
-          "Defining %{edge.repr_name} with monos %{show_mono (`Tuple \
-           edge.monos)}"];
       match edge.def_buf with
       | Some buf ->
         Bigbuffer.add_buffer state.type_buf buf;
@@ -352,10 +327,6 @@ let do_c_type_of ~f ~state arg =
       | None -> ())
   in
   let rec helper edge =
-    print_endline
-      [%string
-        "On strong edge %{edge.repr_name} with monos %{show_mono (`Tuple \
-         edge.monos)}"];
     if not edge.visited
     then (
       edge.visited <- true;

@@ -8,7 +8,9 @@ type result_option(res, err) :=
    | Result(res)
    | Error(err)
 
+[*
 let main() := stdin_lex_loop()
+*]
 
 let stdin_lex_loop() := {
     let t := of_fd("stdin", Stdlib.stdin);
