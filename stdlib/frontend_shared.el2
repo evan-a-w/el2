@@ -1,0 +1,7 @@
+type result_option(res, err) :=
+   [* since Nothing is the first variant,
+      using '?' operator returns if result or error.
+   *]
+   | Nothing
+   | Result(res)
+   | Error(err)

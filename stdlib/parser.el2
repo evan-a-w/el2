@@ -1,3 +1,19 @@
-type parser(input_state) := {
-    lexer : Lexer.t(input_state)
+open Frontend_shared
+
+type t(input_state) := {
+    lexer : Lexer.t(input_state);
+    allocator : Bump_allocator.t
+}
+
+let eat(t, token) := {
+    match Lexer.peek(&t^.lexer) with
+    | Nothing -> Nothing
+    | Error(e) -> Error(e)
+    | Result(tok) -> {
+          if Token.compare(token, tok) == 0 then {
+	      Lexer.next(&t^.lexer);
+	      Result(())
+	  } else
+	      Nothing
+      }
 }

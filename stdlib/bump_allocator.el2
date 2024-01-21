@@ -18,6 +18,7 @@ let round_to_pow_two(x) := {
 }
 
 let alloc(t, sz) : &_ = {
+    let sz := round_to_pow_two(sz);
     if t^.page != null && t^.page^.curr_loc + sz <= t^.page^.sz then {
         let page_ptr := (unsafe_cast(&t^.page[1]) : i64) + t^.page^.curr_loc;
 	t^.page^.curr_loc = t^.page^.curr_loc + sz;
@@ -26,8 +27,8 @@ let alloc(t, sz) : &_ = {
 
     let new_page_sz :=
       if sz * 2 <= t^.page_size then t^.page_size else
-      if sz >= t^.page_size then sz
-      else sz * 2;
+      if sz >= t^.page_size     then sz
+      else                           sz * 2;
 
     let page := Stdlib.alloc(new_page_sz + sizeof[page]);
     if page == null then return(null);
