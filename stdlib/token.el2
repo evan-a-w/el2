@@ -20,6 +20,29 @@ type keyword :=
     | Module
     | Unsafe_cast
 
+let keyword_equal(a, b) :=
+    match (a, b) with
+    | (Size_of, Size_of) -> true
+    | (Return, Return) -> true
+    | (If, If) -> true
+    | (Else, Else) -> true
+    | (Then, Then) -> true
+    | (Match, Match) -> true
+    | (With, With) -> true
+
+    | (Let, Let) -> true
+    | (Type, Type) -> true
+    | (Extern, Extern) -> true
+    | (Implicit_extern, Implicit_extern) -> true
+    | (Assert, Assert) -> true
+    | (Open, Open) -> true
+    | (Open_file, Open_file) -> true
+    | (Loop, Loop) -> true
+    | (Break, Break) -> true
+    | (Module, Module) -> true
+    | (Unsafe_cast, Unsafe_cast) -> true
+    | _ -> false
+
 type operator_symbol :=
     | Eq
     | Ge
@@ -38,6 +61,25 @@ type operator_symbol :=
     | Equals
     | Caret
 
+let operator_symbol_equal(a, b) :=
+    match (a, b) with
+    | (Eq, Eq) -> true
+    | (Ge, Ge) -> true
+    | (Gt, Gt) -> true
+    | (Le, Le) -> true
+    | (Lt, Lt) -> true
+    | (Ne, Ne) -> true
+    | (And, And) -> true
+    | (Or, Or) -> true
+    | (Plus, Plus) -> true
+    | (Minus, Minus) -> true
+    | (Times, Times) -> true
+    | (Div, Div) -> true
+    | (Rem, Rem) -> true
+    | (Amp, Amp) -> true
+    | (Equals, Equals) -> true
+    | (Caret, Caret) -> true
+
 type control_symbol :=
     | Arrow
     | Lparen
@@ -55,6 +97,26 @@ type control_symbol :=
     | Colon
     | Pipe
 
+let control_symbol_equal(a, b) :=
+    match (a, b) with
+    | (Arrow, Arrow) -> true
+    | (Lparen, Lparen) -> true
+    | (Rparen, Rparen) -> true
+    | (Lbrace, Lbrace) -> true
+    | (Rbrace, Rbrace) -> true
+    | (Lbrack, Lbrack) -> true
+    | (Rbrack, Rbrack) -> true
+    | (Dot, Dot) -> true
+    | (Lbracepipe, Lbracepipe) -> true
+    | (Piperbrace, Piperbrace) -> true
+    | (Semicolon, Semicolon) -> true
+    | (Comma, Comma) -> true
+    | (Hash, Hash) -> true
+    | (Colon, Colon) -> true
+    | (Pipe, Pipe) -> true
+    | _ -> false
+            
+
 type literal :=
     | Int(Intern.str)
     | Bool(bool)
@@ -64,12 +126,31 @@ type literal :=
     | Upper_ident(Intern.str)
     | Char(Intern.str) [* this is a Intern.str because we don't process escapes yet *]
     | Null
+
+let literal_equal(a, b) :=
+    match (a, b) with
+    | (Null, Null) -> true
+    | (Int(a), Int(b)) -> a == b
+    | (Float(a), Float(b)) -> a == b
+    | (String(a), String(b)) -> a == b
+    | (Upper_ident(a), Upper_ident(b)) -> a == b
+    | (Ident(a), Ident(b)) -> a == b
+    | (Char(a), Char(b)) -> a == b
+    | _ -> false
        
 type t :=
     | Keyword(keyword)
     | Operator_symbol(operator_symbol)
     | Control_symbol(control_symbol)
     | Literal(literal)
+
+let equal(a, b) :=
+    match (a, b) with
+    | (Keyword(a), Keyword(b)) -> keyword_equal(a, b)
+    | (Operator_symbol(a), Operator_symbol(b)) -> operator_symbol_equal(a, b)
+    | (Control_symbol(a), Control_symbol(b)) -> control_symbol_equal(a, b)
+    | (Literal(a), Literal(b)) -> literal_equal(a, b)
+    | _ -> false
 
 let print_literal(l) :=
     match l with

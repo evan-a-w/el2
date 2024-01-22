@@ -63,6 +63,7 @@ let rec unify a b =
     let a, b = inner_mono a, inner_mono b in
     if phys_equal a b then raise Early_exit;
     match a, b with
+    | `Bottom, o | o,  `Bottom -> o
     | `Unit, `Unit | `I64, `I64 | `F64, `F64 | `Bool, `Bool | `Char, `Char -> a
     | `Pointer a, `Pointer b -> `Pointer (unify a b)
     | `Tuple l1, `Tuple l2 ->
@@ -801,7 +802,7 @@ and inf_type_check ~seen_types ~in_path u =
 and inf_type_check_mono ~from ~seen_types ~in_path mono =
   let rep = inf_type_check_mono ~from ~seen_types ~in_path in
   match mono with
-  | `Bool | `I64 | `F64 | `Unit | `Char | `C_int -> ()
+  | `Bool | `I64 | `F64 | `Unit | `Char | `C_int | `Bottom -> ()
   | `User u when Set.mem in_path u.orig_user_type.repr_name ->
     raise (Infinite_type from.name)
   | `User u -> inf_type_check ~seen_types ~in_path u.orig_user_type
@@ -879,7 +880,7 @@ and expand_expr ~state (expr : Ast.expr) : expanded_expr =
   | `Float f -> `Float f
   | `Char c -> `Char c
   | `String s -> `String s
-  | `Question_mark a -> `Question_mark (f a)
+  | `Question_mark (a, i) -> `Question_mark (f a, i)
   | `Enum s -> `Enum s
   | `Assert a -> `Assert (f a)
   | `Array_lit l -> `Array_lit (List.map l ~f)
@@ -1000,7 +1001,7 @@ and traverse_expr ~state ~not_found_vars ~edge ~locals (expr : expanded_expr) =
   | `Loop a
   | `Assert a
   | `Compound a
-  | `Question_mark a
+  | `Question_mark (a, _)
   | `Return a
   | `Size_of (`Expr a)
   | `Unsafe_cast a
@@ -1432,7 +1433,7 @@ and type_expr_ ~res_type ~break_type ~state expr : expr =
   | `Return a ->
     let a, am = rep ~state a in
     let am = unify res_type am in
-    `Return (a, am), make_indir ()
+    `Return (a, am), `Bottom
   | `Break a ->
     (match break_type with
      | Some break_type ->
@@ -1508,15 +1509,16 @@ and type_expr_ ~res_type ~break_type ~state expr : expr =
     let user_type = lookup_and_inst_user_type ~state str in
     let am = unify am (`User user_type) in
     a, am
-  | `Question_mark a ->
+  | `Question_mark (a, i) ->
+    if i < 1 then failwith "question mark index out of bounds";
     let _, am = rep ~state a in
     let variants, module_path =
       workout_enum_type_for_question_mark ~state ~res_type am
     in
-    let fst, rest =
-      match variants with
-      | fst :: rest -> fst, rest
-      | _ -> failwith "empty enum"
+    let before, relevant, after =
+      match List.split_n variants (i - 1) with
+      | before, relevant :: after -> before, relevant, after
+      | _ -> failwith "question mark index out of bounds"
     in
     let make_enum_pattern field inner =
       match field with
@@ -1533,16 +1535,16 @@ and type_expr_ ~res_type ~break_type ~state expr : expr =
             , `Var { module_path = []; inner = "x" } ))
     in
     let fst_arm =
-      match fst with
+      match relevant with
       | variant, None -> make_enum_pattern false variant, `Unit
       | variant, Some _ ->
         make_enum_pattern true variant, `Var { module_path = []; inner = "x" }
     in
-    let rest_arms =
-      List.map rest ~f:(fun (variant, field) ->
-        let field = Option.is_some field in
-        make_enum_pattern field variant, make_enum_ret_expr field variant)
+    let f (variant, field) =
+      let field = Option.is_some field in
+      make_enum_pattern field variant, make_enum_ret_expr field variant
     in
+    let rest_arms = List.append (List.map ~f before) (List.map ~f after) in
     let expr : expanded_expr = `Match (a, fst_arm :: rest_arms) in
     rep ~state expr
   | `Access_enum_field (field, a) ->
@@ -1675,7 +1677,7 @@ and type_expr_ ~res_type ~break_type ~state expr : expr =
         conds, bindings_f (e, em))
     in
     let _, (_, res_mono) = List.hd_exn l in
-    let init = `Assert (`Bool false, `Bool), res_mono in
+    let init = `Assert (`Bool false, `Bool), `Bottom in
     let rest =
       List.fold_right
         ~init

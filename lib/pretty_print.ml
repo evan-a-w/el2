@@ -12,6 +12,7 @@ let rec mono ?(map = ref M.empty) (t : mono) : PPrint.document =
   let mono = mono ~map in
   let res =
     match inner_mono t with
+    | `Bottom -> string "bottom"
     | `Unit -> string "unit"
     | `Bool -> string "bool"
     | `I64 -> string "i64"

@@ -201,7 +201,9 @@ expr_ops:
   | AMP; e = expr_ops
     { `Ref e }
   | e = expr_ops; QUESTION
-    { `Question_mark e }
+    { `Question_mark (e, 1) }
+  | e = expr_ops; QUESTION; i = INT
+    { `Question_mark (e, i) }
   | e = expr_ops; CARET
     { `Deref e }
   | TIMES; e = expr_ops %prec STAR

@@ -15,7 +15,7 @@ type expanded_expr =
   | `Enum of upper_name path
   | `Struct of name path * (string * expanded_expr option) list
   | `Apply of expanded_expr * expanded_expr
-  | `Question_mark of expanded_expr
+  | `Question_mark of expanded_expr * int
   | `Inf_op of inf_op * expanded_expr * expanded_expr
   | `Pref_op of pref_op * expanded_expr
   | `Deref of expanded_expr (* prefix * *)

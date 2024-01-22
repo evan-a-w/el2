@@ -2,18 +2,66 @@ open Frontend_shared
 
 type t(input_state) := {
     lexer : Lexer.t(input_state);
-    allocator : Bump_allocator.t
+    allocator : &Bump_allocator.t
 }
 
 let eat(t, token) := {
     match Lexer.peek(&t^.lexer) with
     | Nothing -> Nothing
     | Error(e) -> Error(e)
-    | Result(tok) -> {
-          if Token.compare(token, tok) == 0 then {
+    | Result((tok, _)) -> {
+          if Token.equal(token, tok) then {
 	      Lexer.next(&t^.lexer);
 	      Result(())
 	  } else
 	      Nothing
       }
+}
+
+
+let ident(t) := {
+    match Lexer.peek(&t^.lexer) with
+    | Error(e) -> Error(e)
+    | Result((Token.Literal(Token.Ident(ident)), loc)) -> {
+          Lexer.next(&t^.lexer);
+          Result((ident, loc))
+      }
+    | _ -> Nothing
+}
+
+let upper_ident(t) := {
+    match Lexer.peek(&t^.lexer)?2 with
+    | (Token.Literal(Token.Upper_ident(ident)), loc) -> {
+          Lexer.next(&t^.lexer);
+          Result((ident, loc))
+      }
+    | _ -> Nothing
+}
+
+let parse(t) := {
+    ident(t)?;
+    Nothing
+}
+
+let of_fd(name, fd) := {
+    let lexer := Lexer.of_fd(name, fd);
+    let allocator := Bump_allocator.create();
+    #t {
+        lexer : lexer;
+        allocator : allocator
+    }
+}
+
+
+let main() := {
+    let t := of_fd("stdin", Stdlib.stdin);
+    loop match parse(&t) with
+      | Nothing -> break(())
+      | Error(_, _) -> break(())
+      | Result(tok, loc) -> {
+            Lexer.print_location(&loc);
+            Stdlib.print_endline(tok);
+            ()
+        };
+    0
 }

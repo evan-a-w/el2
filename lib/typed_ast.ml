@@ -235,7 +235,7 @@ let rec reach_end' ?default ~seen (mono : mono) =
   else (
     seen := Set.add !seen mono;
     match mono with
-    | `Bool | `C_int | `I64 | `F64 | `Unit | `Char -> mono
+    | `Bool | `C_int | `I64 | `F64 | `Unit | `Char | `Bottom -> mono
     | `User _ -> mono
     (*
       (match user_type_monify x with
@@ -254,6 +254,7 @@ let rec reach_end' ?default ~seen (mono : mono) =
 
 let reach_end ?default mono = reach_end' ?default ~seen:(ref Mono_set.empty) mono
 
+(*
 let rec decompose_into_pattern mono ~make_a : 'a pattern_branches =
   let inner =
     match reach_end mono with
@@ -295,6 +296,7 @@ let rec decompose_into_pattern mono ~make_a : 'a pattern_branches =
   in
   inner, mono
 ;;
+ *)
 
 let rec expr_map_monos (expr_inner, mono) ~f =
   let expr_inner =

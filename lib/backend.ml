@@ -227,6 +227,7 @@ and c_type_of_mono' ~type_def_state ~state (mono : mono) =
   try
     let mono = reach_end mono in
     match mono with
+    | `Bottom -> assert false
     | `Bool -> "bool"
     | `I64 -> "int64_t"
     | `C_int -> "int"
@@ -498,8 +499,9 @@ and add_equal name =
 
 and nameify name ~expr =
   match name, fst expr, snd expr |> reach_end with
-  | "_", _, _ | _, _, `Unit | _, `Assert (`Bool false, _), _ | _, `Return _, _
-    -> ""
+  | "_", _, _
+  | _, _, (`Unit | `Bottom)
+  | _, (`Assert (`Bool false, _) | `Return _), _ -> ""
   | _ -> name
 
 and define_toplevel_val_with_name ~state ~name expr =

@@ -47,6 +47,7 @@ type mono =
   | `F64
   | `Bool
   | `Char
+  | `Bottom
   | `Pointer of mono
   | `Opaque of mono
   | `Tuple of mono list
@@ -116,6 +117,7 @@ let rec compare_mono (m : mono) (m' : mono) =
   let m' = collapse_mono m' in
   match m, m' with
   | _, _ when phys_equal m m' -> 0
+  | `Bottom, `Bottom
   | `Unit, `Unit
   | `I64, `I64
   | `F64, `F64
@@ -135,6 +137,8 @@ let rec compare_mono (m : mono) (m' : mono) =
     when phys_equal ra rb -> 0
   | `Indir (a, _), `Indir (b, _) -> a - b
   | `Var (s, _), `Var (s', _) -> String.compare s s'
+  | `Bottom, _ -> -1
+  | _, `Bottom -> 1
   | `Unit, _ -> -1
   | _, `Unit -> 1
   | `C_int, _ -> -1
@@ -180,6 +184,7 @@ let rec sexp_of_mono_seen ~seen m =
   let sexp_of_mono = sexp_of_mono_seen ~seen in
   let m = collapse_mono m in
   match m with
+  | `Bottom -> [%sexp "Bottom"]
   | `Unit -> [%sexp "Unit"]
   | `Bool -> [%sexp "Bool"]
   | `Char -> [%sexp "Char"]
@@ -338,7 +343,7 @@ let rec go_mono_map_rec ~user_type_mem (mono : mono) ~f ~on_var ~on_indir =
   let mono = collapse_mono mono in
   let mono =
     match mono with
-    | `Unit | `C_int | `I64 | `F64 | `Bool | `Char -> mono
+    | `Unit | `C_int | `I64 | `F64 | `Bool | `Char | `Bottom -> mono
     | `Pointer m -> `Pointer (go m)
     | `Opaque m -> `Opaque (go m)
     | `Function (a, b) -> `Function (go a, go b)
@@ -398,6 +403,7 @@ let user_type_map_rec user_type ~f =
 let rec show_mono (mono : mono) =
   let mono = collapse_mono mono in
   match mono with
+  | `Bottom -> "bottom"
   | `Bool -> "bool"
   | `C_int -> "c_int"
   | `I64 -> "i64"
@@ -544,7 +550,7 @@ and do_inst_mono ~cache ~rep_map mono =
   let mono = inner_mono mono in
   match mono with
   | `Var (s, _) when Map.mem rep_map s -> Map.find_exn rep_map s
-  | `Unit | `C_int | `I64 | `F64 | `Bool | `Char | `Indir _ | `Var _ -> mono
+  | `Unit | `C_int | `I64 | `F64 | `Bool | `Char | `Bottom | `Indir _ | `Var _ -> mono
   | `Pointer m -> `Pointer (go m)
   | `Opaque m -> `Opaque (go m)
   | `Function (a, b) -> `Function (go a, go b)
@@ -628,6 +634,7 @@ let user_type_monify inst =
 let rec string_of_mono (mono : mono) =
   let mono = collapse_mono mono in
   match mono with
+  | `Bottom -> "bottom"
   | `Bool -> "bool"
   | `C_int -> "cint"
   | `I64 -> "i64"
