@@ -499,6 +499,8 @@ and add_equal name =
 
 and nameify name ~expr =
   match name, fst expr, snd expr |> reach_end with
+  | _, `Compound expr, _ -> nameify name ~expr 
+  | _, `Let (_, _, expr), _ -> nameify name ~expr
   | "_", _, _
   | _, _, (`Unit | `Bottom)
   | _, (`Assert (`Bool false, _) | `Return _), _ -> ""
@@ -608,6 +610,7 @@ and expr_to_string ~state ~buf ~expr:(expr_inner, mono) =
          [%string {| (%{expr_to_string ~state ~expr ~buf}).data.%{field} |}])
     | `Compound e ->
       let res_val = unique_name_or_empty ~state ~buf ~mono in
+      let res_val = nameify res_val ~expr:e in
       Bigbuffer.add_char buf '{';
       let res = expr_to_string ~state ~expr:e ~buf in
       Bigbuffer.add_string buf [%string {| %{add_equal res_val} |}];

@@ -76,7 +76,9 @@ let upper_ident(t) := {
 }
 
 let parse(t) := {
-    Lexer.next(t^.lexer)
+    let res := get_tok(t)?2;
+    next_tok(t);
+    Result(res)
 }
 
 let main() := {
