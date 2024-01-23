@@ -58,7 +58,7 @@ type state =
   ; extern_vars : string String.Table.t
   ; vars : var String.Table.t
   ; inst_user_types : type_cache String.Table.t
-  ; mutable inst_monos : string Mono_map.t
+  ; inst_monos : string Mono_map.t ref
   ; type_decl_buf : Bigbuffer.t
   ; type_buf : Bigbuffer.t
   ; decl_buf : Bigbuffer.t
@@ -178,11 +178,11 @@ let rec c_type_of_user_type' ~type_def_state ~state inst =
        data)
 
 and c_type_of_function ~type_def_state ~state mono (a, b) =
-  match Map.find state.inst_monos mono with
+  match Map.find !(state.inst_monos) mono with
   | Some x -> x
   | None ->
     let name = string_of_mono mono in
-    state.inst_monos <- Map.set state.inst_monos ~key:mono ~data:name;
+    state.inst_monos := Map.set !(state.inst_monos) ~key:mono ~data:name;
     let args =
       match a with
       | `Tuple l -> l
@@ -204,13 +204,13 @@ and c_type_of_tuple ~type_def_state ~state l =
    | None -> ()
    | Some (`Strong, e) -> Queue.enqueue e.strong_edges edge
    | Some (`Weak, e) -> Queue.enqueue e.weak_edges edge);
-  match Map.find state.inst_monos mono with
+  match Map.find !(state.inst_monos) mono with
   | Some x -> x
   | None ->
     let mono_name = string_of_mono mono in
     let name = "struct " ^ mono_name in
     Bigbuffer.add_string state.type_decl_buf [%string {|%{name};|}];
-    state.inst_monos <- Map.set state.inst_monos ~key:mono ~data:name;
+    state.inst_monos := Map.set !(state.inst_monos) ~key:mono ~data:name;
     let fields =
       List.mapi l ~f:(fun i x ->
         let a = [%string {| %{mono_name}_%{i#Int} |}] in
@@ -777,7 +777,7 @@ let state_of_input ~comptime_eval input =
   ; vars = String.Table.create ()
   ; extern_vars = String.Table.create ()
   ; inst_user_types = String.Table.create ()
-  ; inst_monos = Mono_map.empty
+  ; inst_monos = ref Mono_map.empty
   ; type_buf = Bigbuffer.create 100
   ; type_decl_buf = Bigbuffer.create 100
   ; decl_buf = Bigbuffer.create 100

@@ -5,3 +5,13 @@ type result_option(res, err) :=
    | Nothing
    | Result(res)
    | Error(err)
+
+let of_option(o) :=
+    match o with
+    | Types.None -> Nothing
+    | Types.Some(x) -> Result(x)
+
+let of_result(o) :=
+    match o with
+    | Types.Err(e) -> Error(e)
+    | Types.Ok(x) -> Result(x)

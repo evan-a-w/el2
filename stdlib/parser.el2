@@ -1,67 +1,115 @@
 open Frontend_shared
 
+type state := {
+    parens : i64;
+    braces : i64
+}
+
 type t(input_state) := {
-    lexer : Lexer.t(input_state);
+    token_i : i64;
+    tokens : &Vector.t(Ast.with_location(Token.t));
+    lexer : &Lexer.t(input_state);
     allocator : &Bump_allocator.t
 }
 
-let eat(t, token) := {
-    match Lexer.peek(&t^.lexer) with
-    | Nothing -> Nothing
-    | Error(e) -> Error(e)
-    | Result((tok, _)) -> {
-          if Token.equal(token, tok) then {
-	      Lexer.next(&t^.lexer);
-	      Result(())
-	  } else
-	      Nothing
-      }
+let of_fd(name, fd) := {
+    let lexer := Stdlib.hoist(Lexer.of_fd(name, fd));
+    let allocator := Bump_allocator.create();
+    let tokens := Stdlib.hoist(Vector.create());
+    loop match Lexer.next(lexer) with
+      | Nothing -> break(())
+      | Error(e, loc) -> return(Types.Err(e, loc))
+      | Result(tok, loc) -> Vector.push(tokens, (tok, loc));
+    Types.Ok(
+        #t {
+            tokens;
+            token_i : 0;
+            lexer;
+            allocator
+        })
+    
 }
 
+let vector_get_opt(t, i) := {
+    if i >= 0 && i < t^.Vector.size then {
+        Result(t^.Vector.arr[i])
+    } else {
+        Nothing
+    }
+}
+
+let backtrack(t, i) := {
+    t^.token_i = i;
+    ()
+}
+
+let get_tok(t) := vector_get_opt(t^.tokens, t^.token_i)
+let next_tok(t) := { t^.token_i = t^.token_i + 1; () }
+
+let eat(t, token) := {
+    let (tok, _) := get_tok(t)?2;
+    if Token.equal(token, tok) then {
+        next_tok(t);
+        Result(())
+    } else
+        Nothing
+}
 
 let ident(t) := {
-    match Lexer.peek(&t^.lexer) with
-    | Error(e) -> Error(e)
-    | Result((Token.Literal(Token.Ident(ident)), loc)) -> {
-          Lexer.next(&t^.lexer);
+    let (tok, loc) := get_tok(t)?2;
+    match tok with
+    | Token.Literal(Token.Ident(ident)) -> {
+          next_tok(t);
           Result((ident, loc))
       }
     | _ -> Nothing
 }
 
 let upper_ident(t) := {
-    match Lexer.peek(&t^.lexer)?2 with
-    | (Token.Literal(Token.Upper_ident(ident)), loc) -> {
-          Lexer.next(&t^.lexer);
+    let (tok, loc) := get_tok(t)?2;
+    match tok with
+    | Token.Literal(Token.Upper_ident(ident)) -> {
+          next_tok(t);
           Result((ident, loc))
       }
     | _ -> Nothing
 }
 
 let parse(t) := {
-    ident(t)?;
-    Nothing
+    Lexer.next(t^.lexer)
 }
-
-let of_fd(name, fd) := {
-    let lexer := Lexer.of_fd(name, fd);
-    let allocator := Bump_allocator.create();
-    #t {
-        lexer : lexer;
-        allocator : allocator
-    }
-}
-
 
 let main() := {
-    let t := of_fd("stdin", Stdlib.stdin);
+    stdin_parse_loop();
+    0
+}
+
+let stdin_parse_loop() := {
+    let t :=
+      match of_fd("stdin", Stdlib.stdin) with
+      | Types.Ok(t) -> t
+      | Types.Err(e, loc) -> {
+            Stdlib.print_string("Error lexing ");
+            Lexer.print_location(&loc);
+            Stdlib.print_string(": ");
+            Stdlib.print_endline(e);
+            return(())
+        };
     loop match parse(&t) with
       | Nothing -> break(())
-      | Error(_, _) -> break(())
+      | Error(e, loc) -> {
+            Stdlib.print_string("Error at ");
+            Lexer.print_location(&loc);
+            Stdlib.print_string(": ");
+            Stdlib.print_endline(e);
+            break(())
+        }
       | Result(tok, loc) -> {
             Lexer.print_location(&loc);
-            Stdlib.print_endline(tok);
+            Stdlib.print_string(": ");
+            Token.print(tok);
+            Stdlib.print_string("\n");
             ()
         };
-    0
+    ()
 }
