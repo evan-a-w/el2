@@ -17,14 +17,17 @@ type type_expr_ :=
     | T_tuple(Vector.t(type_expr))
     | T_pointer(&type_expr)
 
+type atom_ :=
+    | Unit
+    | Int(Intern.str)
+    | Float(Intern.str)
+    | Bool(bool)
+    | String(Intern.str)
+    | Char(Intern.str)
+    | Null
+
 type pattern_ :=
-    | P_unit
-    | P_int(Intern.str)
-    | P_bool(bool)
-    | P_string(Intern.str)
-    | P_null
-    | P_float(Intern.str)
-    | P_char(Intern.str)
+    | P_atom(atom)
     | P_var(Intern.str)
     | P_tuple(Vector.t(pattern))
     | P_enum(path(Intern.str), Types.option(&pattern))
@@ -55,14 +58,8 @@ type infix_op :=
     | Or
 
 type expr_ :=
-    | E_unit
-    | E_int(Intern.str)
-    | E_bool(bool)
-    | E_string(Intern.str)
-    | E_null
-    | E_float(Intern.str)
-    | E_char(Intern.str)
-    | E_var(Intern.str)
+    | E_atom(atom)
+    | E_var(path(Intern.str))
     | E_tuple(Vector.t(expr))
     | E_enum(path(Intern.str))
     | E_struct(path(Intern.str), Vector.t((Intern.str, Types.option(&expr))))
@@ -113,6 +110,7 @@ type type_expr := with_location(type_expr_)
 type pattern := with_location(pattern_)
 type var_decl := with_location(var_decl_)
 type expr := with_location(expr_)
+type atom := with_location(atom_)
 type type_decl_name := with_location(type_decl_name_)
 
 [*
