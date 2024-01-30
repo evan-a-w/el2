@@ -1,0 +1,6 @@
+(library
+ (name el3)
+ (preprocess
+  (pps ppx_jane))
+ (inline_tests)
+ (libraries core ppx_deriving))
