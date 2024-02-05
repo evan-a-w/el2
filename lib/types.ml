@@ -9,30 +9,6 @@ open! Ast
 type enum
 type struct_
 
-module Counter = struct
-  type t = (int ref[@ignore]) [@@deriving sexp, compare, hash, equal]
-
-  let create () = ref 0
-
-  let next_int t =
-    let res = !t in
-    incr t;
-    res
-  ;;
-
-  let next_num t =
-    let res = !t in
-    incr t;
-    Int.to_string res
-  ;;
-
-  let next_alphabetical t =
-    let i = next_int t in
-    let char, rest = i % 26, i / 26 in
-    [%string {|%{"abcdefghijklmnopqrstuvwxyz".[char]#Char}%{rest#Int}|}]
-  ;;
-end
-
 (* global *)
 let indir_counter = Counter.create ()
 let get a = Option.value_exn !a
@@ -53,9 +29,13 @@ type mono =
   | `Tuple of mono list
   | `Function of mono * mono
   | `User of inst_user_type
-  | `Indir of int * mono option ref
-  | `Var of string * mono option ref
+  | `Var of string * unit methods ref * mono option ref
+  | `Indir of int * unit methods ref * mono option ref
   ]
+
+and 'a methods =
+  | One of string * mono * 'a
+  | Many of 'a methods list
 
 and mono_var_replacements = (string * mono) list
 
@@ -64,6 +44,7 @@ and user_type =
   ; repr_name : string
   ; ty_vars : string list
   ; info : all_user option ref
+  ; methods : mono String.Table.t
   }
 
 and inst_user_type =
@@ -79,18 +60,22 @@ and all_user =
   ]
 [@@deriving sexp]
 
+let rec fold_methods ~init ~f methods =
+  match methods with
+  | One (a, b, c) -> f init a b c
+  | Many l -> List.fold l ~init ~f:(fun acc x -> fold_methods ~init:acc ~f x)
+;;
+
 let inner_mono_non_rec mono =
   match mono with
-  | `Var (_, { contents = Some mono' }) | `Indir (_, { contents = Some mono' })
-    -> mono'
+  | `Indir (_, _, { contents = Some mono' }) -> mono'
   | other -> other
 ;;
 
 let rec collapse_mono (mono : mono) =
   match mono with
-  | `Var (_, { contents = None }) | `Indir (_, { contents = None }) -> mono
-  | `Indir (_, ({ contents = Some mono' } as r))
-  | `Var (_, ({ contents = Some mono' } as r)) ->
+  | `Indir (_, _, { contents = None }) -> mono
+  | `Indir (_, _, ({ contents = Some mono' } as r)) ->
     let res = collapse_mono mono' |> inner_mono_non_rec in
     set r res;
     res
@@ -100,15 +85,14 @@ let rec collapse_mono (mono : mono) =
 let rec inner_mono mono =
   let mono = collapse_mono mono in
   match mono with
-  | `Var (_, { contents = Some mono' }) | `Indir (_, { contents = Some mono' })
-    -> inner_mono mono'
+  | `Indir (_, _, { contents = Some mono' }) -> inner_mono mono'
   | other -> other
 ;;
 
 let is_free (mono : mono) =
   let mono = collapse_mono mono in
   match mono with
-  | `Var (_, { contents = None }) | `Indir (_, { contents = None }) -> true
+  | `Indir (_, _, { contents = None }) -> true
   | _ -> false
 ;;
 
@@ -133,10 +117,8 @@ let rec compare_mono (m : mono) (m' : mono) =
     (match [%compare: mono list] inst1 inst2 with
      | 0 -> compare_user_type r1 r2
      | other -> other)
-  | (`Indir (_, ra), `Indir (_, rb) | `Var (_, ra), `Var (_, rb))
-    when phys_equal ra rb -> 0
-  | `Indir (a, _), `Indir (b, _) -> a - b
-  | `Var (s, _), `Var (s', _) -> String.compare s s'
+  | `Indir (_, _, ra), `Indir (_, _, rb) when phys_equal ra rb -> 0
+  | `Indir (a, _, _), `Indir (b, _, _) -> a - b
   | `Bottom, _ -> -1
   | _, `Bottom -> 1
   | `Unit, _ -> -1
@@ -192,11 +174,16 @@ let rec sexp_of_mono_seen ~seen m =
   | `I64 -> [%sexp "I64"]
   | `F64 -> [%sexp "F64"]
   | `Tuple l -> [%sexp_of: mono list] l
-  | `Indir (id, m) ->
-    Sexp.List [ [%sexp "Indir"]; sexp_of_int id; [%sexp_of: mono option ref] m ]
-  | `Var (name, m) ->
+  | `Indir (id, constr, m) ->
+    let l =
+      fold_methods ~init:[] ~f:(fun acc a b () -> (a, b) :: acc) !constr
+    in
     Sexp.List
-      [ [%sexp "Var"]; [%sexp (name : string)]; [%sexp_of: mono option ref] m ]
+      [ [%sexp "Indir"]
+      ; sexp_of_int id
+      ; [%sexp_of: (string * mono) list] l
+      ; [%sexp_of: mono option ref] m
+      ]
   | `User { monos; orig_user_type; insted_user_type } ->
     Sexp.List
       [ [%sexp "User"]
@@ -211,7 +198,7 @@ let rec sexp_of_mono_seen ~seen m =
 
 and sexp_of_user_type_seen
   ~seen
-  ({ repr_name; ty_vars; info; name } as user_type)
+  ({ repr_name; ty_vars; info; name; _ } as user_type)
   =
   let sexp_of_all_user = sexp_of_all_user_seen ~seen in
   match Hash_set.mem seen user_type.repr_name with
@@ -254,13 +241,18 @@ let rec mono_of_sexp_seen ~seen sexp : mono =
   | Atom "Char" -> `Char
   | Atom "I64" -> `I64
   | Atom "F64" -> `F64
-  | List [ Atom "Indir"; id; Atom "None" ] -> `Indir (int_of_sexp id, ref None)
-  | List [ Atom "Indir"; id; List [ Atom "Some"; mono ] ] ->
-    `Indir (int_of_sexp id, ref (Some (mono_of_sexp mono)))
-  | List [ Atom "Var"; name; Atom "None" ] ->
-    `Var (string_of_sexp name, ref None)
-  | List [ Atom "Var"; name; List [ Atom "Some"; mono ] ] ->
-    `Var (string_of_sexp name, ref (Some (mono_of_sexp mono)))
+  | List [ Atom "Indir"; id; constr; Atom "None" ] ->
+    let constr =
+      [%of_sexp: (string * mono) list] constr
+      |> List.map ~f:(fun (a, b) -> One (a, b, ()))
+    in
+    `Indir (int_of_sexp id, Many constr |> ref, ref None)
+  | List [ Atom "Indir"; id; constr; List [ Atom "Some"; mono ] ] ->
+    let constr =
+      [%of_sexp: (string * mono) list] constr
+      |> List.map ~f:(fun (a, b) -> One (a, b, ()))
+    in
+    `Indir (int_of_sexp id, Many constr |> ref, ref (Some (mono_of_sexp mono)))
   | List [ Atom "User"; inst; orig_user; insted ] ->
     let monos = [%of_sexp: mono list] inst in
     `User
@@ -283,6 +275,7 @@ and user_type_of_sexp_seen ~seen sexp =
       ; name
       ; ty_vars = [%of_sexp: string list] ty_vars
       ; info = ref None
+      ; methods = String.Table.create ()
       }
     in
     Hashtbl.add_exn seen ~key:initial.repr_name ~data:initial;
@@ -312,7 +305,7 @@ let user_type_of_sexp user_type =
 
 type poly =
   [ `Mono of mono
-  | `For_all of string * poly
+  | `For_all of int * poly
   ]
 [@@deriving sexp, compare]
 
@@ -320,8 +313,6 @@ let make_indir () =
   let id = Counter.next_int indir_counter in
   `Indir (id, ref None)
 ;;
-
-let make_var_mono name : mono = `Var (name, ref None)
 
 include struct
   module T = struct
@@ -336,8 +327,6 @@ module User_type_map = Map.Make (struct
     type t = user_type [@@deriving sexp, compare]
   end)
 
-let duplicate_user_type (name, _) = make_var_mono name
-
 let rec go_mono_map_rec ~user_type_mem (mono : mono) ~f ~on_var ~on_indir =
   let go = go_mono_map_rec ~user_type_mem ~f ~on_var ~on_indir in
   let mono = collapse_mono mono in
@@ -349,7 +338,6 @@ let rec go_mono_map_rec ~user_type_mem (mono : mono) ~f ~on_var ~on_indir =
     | `Function (a, b) -> `Function (go a, go b)
     | `Tuple l -> `Tuple (List.map l ~f:go)
     | `Indir r -> Option.value (on_indir r) ~default:mono
-    | `Var r -> Option.value (on_var r) ~default:mono
     | `User { monos; orig_user_type; insted_user_type } ->
       let user = go_user_type_map_rec ~user_type_mem ~f ~on_var ~on_indir in
       `User
@@ -367,9 +355,9 @@ and go_user_type_map_rec ~user_type_mem ~f ~on_var ~on_indir user_type =
     let res = { user_type with info = ref None } in
     user_type_mem := Map.set !user_type_mem ~key:user_type.repr_name ~data:res;
     res.info
-    := Option.map
-         ~f:(go_all_user_map_rec ~user_type_mem ~f ~on_var ~on_indir)
-         !(user_type.info);
+      := Option.map
+           ~f:(go_all_user_map_rec ~user_type_mem ~f ~on_var ~on_indir)
+           !(user_type.info);
     res
 
 and go_all_user_map_rec ~user_type_mem ~f ~on_var ~on_indir =
@@ -422,7 +410,7 @@ let rec show_mono (mono : mono) =
   | `Opaque x -> [%string "opaque(%{show_mono x})"]
   | `Pointer x -> "&(" ^ show_mono x ^ ")"
   | `Tuple l -> "(" ^ (List.map l ~f:show_mono |> String.concat ~sep:", ") ^ ")"
-  | `Indir (id, _) -> [%string "weak_%{id#Int}"]
+  | `Indir (id, _, _) -> [%string "weak_%{id#Int}"]
   | `Var (s, _) -> s
 
 and show_mono_deep mono =
@@ -502,10 +490,10 @@ let rec do_inst_user_type ~(cache : cache) ~rep_map inst_user_type =
 and do_inst_user_type_inner ~cache ~rep_map ~monos orig_user_type =
   let inst = { monos; orig_user_type; insted_user_type = ref None } in
   cache.inst_user_types
-  <- Map.set
-       cache.inst_user_types
-       ~key:(monos, orig_user_type.repr_name)
-       ~data:(`User inst);
+    <- Map.set
+         cache.inst_user_types
+         ~key:(monos, orig_user_type.repr_name)
+         ~data:(`User inst);
   let insted_user_type =
     do_inst_actual_user_type ~cache ~monos orig_user_type ~rep_map
   in
@@ -522,7 +510,7 @@ and do_inst_actual_user_type ~cache ~rep_map ~monos user_type : user_type option
   | None, Some info ->
     let res = { user_type with info = ref None } in
     cache.user_types
-    <- Map.set cache.user_types ~key:(monos, user_type.repr_name) ~data:res;
+      <- Map.set cache.user_types ~key:(monos, user_type.repr_name) ~data:res;
     let rep_map =
       match
         List.fold2 user_type.ty_vars monos ~init:rep_map ~f:(fun acc key data ->
@@ -550,7 +538,8 @@ and do_inst_mono ~cache ~rep_map mono =
   let mono = inner_mono mono in
   match mono with
   | `Var (s, _) when Map.mem rep_map s -> Map.find_exn rep_map s
-  | `Unit | `C_int | `I64 | `F64 | `Bool | `Char | `Bottom | `Indir _ | `Var _ -> mono
+  | `Unit | `C_int | `I64 | `F64 | `Bool | `Char | `Bottom | `Indir _ | `Var _
+    -> mono
   | `Pointer m -> `Pointer (go m)
   | `Opaque m -> `Opaque (go m)
   | `Function (a, b) -> `Function (go a, go b)
