@@ -1,0 +1,19 @@
+open_file "../stdlib/stdlib.el2"
+
+[* Z combinator *]
+let fix(f, x) := f(fix(f), x)
+
+[*
+let fact(rec, x) :=
+  if x == 0 || x == 1 then
+    1
+  else
+    rec(x - 1) + rec(x - 2)
+*]
+
+let main() := {
+  [*
+  print_int(fix(fact, 10));
+  *]
+  0
+}
